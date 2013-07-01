@@ -362,7 +362,7 @@ gHC_PRIM, gHC_TYPES, gHC_GENERICS, gHC_MAGIC, gHC_COERCIBLE,
     tYPEABLE, tYPEABLE_INTERNAL, oLDTYPEABLE, oLDTYPEABLE_INTERNAL, gENERICS,
     dOTNET, rEAD_PREC, lEX, gHC_INT, gHC_WORD, mONAD, mONAD_FIX, mONAD_ZIP,
     aRROW, cONTROL_APPLICATIVE, gHC_DESUGAR, rANDOM, gHC_EXTS,
-    cONTROL_EXCEPTION_BASE, gHC_TYPELITS, gHC_IP :: Module
+    cONTROL_EXCEPTION_BASE, gHC_TYPELITS, gHC_IP, gHC_RECORDS :: Module
 
 gHC_PRIM        = mkPrimModule (fsLit "GHC.Prim")   -- Primitive types and values
 gHC_TYPES       = mkPrimModule (fsLit "GHC.Types")
@@ -421,6 +421,7 @@ cONTROL_EXCEPTION_BASE = mkBaseModule (fsLit "Control.Exception.Base")
 gHC_GENERICS    = mkBaseModule (fsLit "GHC.Generics")
 gHC_TYPELITS    = mkBaseModule (fsLit "GHC.TypeLits")
 gHC_IP          = mkBaseModule (fsLit "GHC.IP")
+gHC_RECORDS     = mkBaseModule (fsLit "GHC.Records")
 
 gHC_PARR' :: Module
 gHC_PARR' = mkBaseModule (fsLit "GHC.PArr")
@@ -1144,6 +1145,9 @@ singIClassName      = clsQual gHC_TYPELITS (fsLit "SingI") singIClassNameKey
 ipClassName :: Name
 ipClassName         = clsQual gHC_IP (fsLit "IP")      ipClassNameKey
 
+-- Overloaded record fields
+recordHasClassName :: Name
+recordHasClassName = clsQual gHC_RECORDS (fsLit "Has") recordHasClassNameKey
 
 
 -- dotnet interop
@@ -1281,6 +1285,9 @@ oldTypeable4ClassKey       = mkPreludeClassUnique 50
 oldTypeable5ClassKey       = mkPreludeClassUnique 51
 oldTypeable6ClassKey       = mkPreludeClassUnique 52
 oldTypeable7ClassKey       = mkPreludeClassUnique 53
+
+recordHasClassNameKey :: Unique
+recordHasClassNameKey = mkPreludeClassUnique 54
 \end{code}
 
 %************************************************************************
