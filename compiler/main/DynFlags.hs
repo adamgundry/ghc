@@ -577,6 +577,7 @@ data ExtensionFlag
    | Opt_MultiWayIf
    | Opt_TypeHoles
    | Opt_NegativeLiterals
+   | Opt_OverloadedRecordFields
    | Opt_EmptyCase
    deriving (Eq, Enum, Show)
 
@@ -2816,6 +2817,7 @@ xFlags = [
   ( "PackageImports",                   Opt_PackageImports, nop ),
   ( "TypeHoles",                        Opt_TypeHoles, nop ),
   ( "NegativeLiterals",                 Opt_NegativeLiterals, nop ),
+  ( "OverloadedRecordFields",           Opt_OverloadedRecordFields, nop ),
   ( "EmptyCase",                        Opt_EmptyCase, nop )
   ]
 
