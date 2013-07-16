@@ -1103,7 +1103,7 @@ mkModuleImpExp name subs =
       | isVarNameSpace (rdrNameSpace name) -> IEVar       name
       | otherwise                          -> IEThingAbs  nameT
     ImpExpAll                              -> IEThingAll  nameT
-    ImpExpList xs                          -> IEThingWith nameT xs
+    ImpExpList xs                          -> IEThingWith nameT xs []
 
   where
     nameT = setRdrNameSpace name tcClsName

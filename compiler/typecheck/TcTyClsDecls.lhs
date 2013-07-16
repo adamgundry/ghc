@@ -56,6 +56,7 @@ import Module
 import Name
 import NameSet
 import NameEnv
+import RdrName
 import Outputable
 import Maybes
 import Unify
@@ -167,11 +168,11 @@ tcTyClGroup boot_details tyclds
 
 tcAddImplicits :: [TyThing] -> TcM TcGblEnv
 tcAddImplicits tyclss
- = tcExtendGlobalEnvImplicit implicit_things $
-   tcRecSelBinds rec_sel_binds
+ = do { rec_sel_binds <- mkRecSelBinds tyclss
+      ; tcExtendGlobalEnvImplicit implicit_things $
+            tcRecSelBinds rec_sel_binds }
  where
    implicit_things = concatMap implicitTyThings tyclss
-   rec_sel_binds   = mkRecSelBinds tyclss
 
 zipRecTyClss :: [(Name, Kind)]
              -> [TyThing]           -- Knot-tied
@@ -1156,7 +1157,7 @@ tcConDecl new_or_data tc_name rep_tycon tmpl_tvs res_tmpl        -- Data types
                 --      that way checkValidDataCon can complain if it's wrong.
        }
 
-tcConArgs :: NewOrData -> HsConDeclDetails Name -> TcM (Bool, [Name], [(TcType, HsBang)])
+tcConArgs :: NewOrData -> HsConDeclDetails Name -> TcM (Bool, [FieldLabel], [(TcType, HsBang)])
 tcConArgs new_or_data (PrefixCon btys)
   = do { btys' <- mapM (tcConArg new_or_data) btys
        ; return (False, [], btys') }
@@ -1168,7 +1169,7 @@ tcConArgs new_or_data (RecCon fields)
   = do { btys' <- mapM (tcConArg new_or_data) btys
        ; return (False, field_names, btys') }
   where
-    field_names = map (unLoc . cd_fld_name) fields
+    field_names = map cd_fld_fld fields
     btys        = map cd_fld_type fields
 
 tcConArg :: NewOrData -> LHsType Name -> TcM (TcType, HsBang)
@@ -1582,7 +1583,7 @@ checkValidClosedCoAxiom (CoAxiom { co_ax_branches = branches, co_ax_tc = tc })
               addErrTc $ inaccessibleCoAxBranch tc cur_branch
             ; return (cur_branch : prev_branches) }
 
-checkFieldCompat :: Name -> DataCon -> DataCon -> TyVarSet
+checkFieldCompat :: FieldLabel -> DataCon -> DataCon -> TyVarSet
                  -> Type -> Type -> Type -> Type -> TcM ()
 checkFieldCompat fld con1 con2 tvs1 res1 res2 fty1 fty2
   = do  { checkTc (isJust mb_subst1) (resultTypeMisMatch fld con1 con2)
@@ -1782,20 +1783,19 @@ must bring the default method Ids into scope first (so they can be seen
 when typechecking the [d| .. |] quote, and typecheck them later.
 
 \begin{code}
-mkRecSelBinds :: [TyThing] -> HsValBinds Name
+mkRecSelBinds :: [TyThing] -> TcM (HsValBinds Name)
 -- NB We produce *un-typechecked* bindings, rather like 'deriving'
 --    This makes life easier, because the later type checking will add
 --    all necessary type abstractions and applications
 mkRecSelBinds tycons
-  = ValBindsOut [(NonRecursive, b) | b <- binds] sigs
-  where
-    (sigs, binds) = unzip rec_sels
-    rec_sels = map mkRecSelBind [ (tc,fld)
-                                | ATyCon tc <- tycons
-                                , fld <- tyConFields tc ]
+  = do { let rec_sels = map mkRecSelBind [ (tc,fld)
+                                         | ATyCon tc <- tycons
+                                         , fld <- tyConFields tc ]
+       ; let (sigs, binds) = unzip rec_sels
+       ; return $ ValBindsOut [(NonRecursive, b) | b <- binds] sigs }
 
 mkRecSelBind :: (TyCon, FieldLabel) -> (LSig Name, LHsBinds Name)
-mkRecSelBind (tycon, sel_name)
+mkRecSelBind (tycon, fld@(lbl, sel_name))
   = (L loc (IdSig sel_id), unitBag (L loc sel_bind))
   where
     loc    = getSrcSpan sel_name
@@ -1806,11 +1806,11 @@ mkRecSelBind (tycon, sel_name)
     -- Find a representative constructor, con1
     all_cons     = tyConDataCons tycon
     cons_w_field = [ con | con <- all_cons
-                   , sel_name `elem` dataConFieldLabels con ]
+                   , lbl `elem` map fst (dataConFieldLabels con) ]
     con1 = ASSERT( not (null cons_w_field) ) head cons_w_field
 
     -- Selector type; Note [Polymorphic selectors]
-    field_ty   = dataConFieldType con1 sel_name
+    field_ty   = dataConFieldType con1 fld
     data_ty    = dataConOrigResTy con1
     data_tvs   = tyVarsOfType data_ty
     is_naughty = not (tyVarsOfType field_ty `subVarSet` data_tvs)
@@ -1831,7 +1831,8 @@ mkRecSelBind (tycon, sel_name)
                                  (L loc (HsVar field_var))
     mk_sel_pat con = ConPatIn (L loc (getName con)) (RecCon rec_fields)
     rec_fields = HsRecFields { rec_flds = [rec_field], rec_dotdot = Nothing }
-    rec_field  = HsRecField { hsRecFieldId = sel_lname
+    rec_field  = HsRecField { hsRecFieldLbl = L loc (mkRdrUnqual lbl)
+                            , hsRecFieldSel = Just sel_name
                             , hsRecFieldArg = L loc (VarPat field_var)
                             , hsRecPun = False }
     sel_lname = L loc sel_name
@@ -1995,13 +1996,13 @@ tcAddClosedTypeFamilyDeclCtxt tc
     ctxt = ptext (sLit "In the equations for closed type family") <+>
            quotes (ppr tc)
 
-resultTypeMisMatch :: Name -> DataCon -> DataCon -> SDoc
+resultTypeMisMatch :: FieldLabel -> DataCon -> DataCon -> SDoc
 resultTypeMisMatch field_name con1 con2
   = vcat [sep [ptext (sLit "Constructors") <+> ppr con1 <+> ptext (sLit "and") <+> ppr con2,
                 ptext (sLit "have a common field") <+> quotes (ppr field_name) <> comma],
           nest 2 $ ptext (sLit "but have different result types")]
 
-fieldTypeMisMatch :: Name -> DataCon -> DataCon -> SDoc
+fieldTypeMisMatch :: FieldLabel -> DataCon -> DataCon -> SDoc
 fieldTypeMisMatch field_name con1 con2
   = sep [ptext (sLit "Constructors") <+> ppr con1 <+> ptext (sLit "and") <+> ppr con2,
          ptext (sLit "give different types for field"), quotes (ppr field_name)]

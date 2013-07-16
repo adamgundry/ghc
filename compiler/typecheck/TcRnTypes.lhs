@@ -86,7 +86,7 @@ import HscTypes
 import TcEvidence
 import Type
 import Class    ( Class )
-import TyCon    ( TyCon )
+import TyCon    ( TyCon, FieldLabel )
 import DataCon  ( DataCon, dataConUserType )
 import TcType
 import Annotations
@@ -97,6 +97,7 @@ import RdrName
 import Name
 import NameEnv
 import NameSet
+import UniqSet
 import Avail
 import Var
 import VarEnv
@@ -319,12 +320,12 @@ instance ContainsModule TcGblEnv where
     extractModule env = tcg_mod env
 
 data RecFieldEnv
-  = RecFields (NameEnv [Name])  -- Maps a constructor name *in this module*
-                                -- to the fields for that constructor
-              NameSet           -- Set of all fields declared *in this module*;
-                                -- used to suppress name-shadowing complaints
-                                -- when using record wild cards
-                                -- E.g.  let fld = e in C {..}
+  = RecFields (NameEnv [FieldLabel])  -- Maps a constructor name *in this module*
+                                      -- to the fields for that constructor
+              (UniqSet OccName)       -- Set of all fields declared *in this module*;
+                                      -- used to suppress name-shadowing complaints
+                                      -- when using record wild cards
+                                      -- E.g.  let fld = e in C {..}
         -- This is used when dealing with ".." notation in record
         -- construction and pattern matching.
         -- The FieldEnv deals *only* with constructors defined in *this*

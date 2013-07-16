@@ -44,13 +44,13 @@ module RdrName (
 
         -- * Global mapping of 'RdrName' to 'GlobalRdrElt's
         GlobalRdrEnv, emptyGlobalRdrEnv, mkGlobalRdrEnv, plusGlobalRdrEnv,
-        lookupGlobalRdrEnv, extendGlobalRdrEnv,
+        lookupGlobalRdrEnv, extendGlobalRdrEnv, greOccName,
         pprGlobalRdrEnv, globalRdrEnvElts,
         lookupGRE_RdrName, lookupGRE_Name, getGRE_NameQualifier_maybes,
         transformGREs, findLocalDupsRdrEnv, pickGREs,
 
         -- ** Global 'RdrName' mapping elements: 'GlobalRdrElt', 'Provenance', 'ImportSpec'
-        GlobalRdrElt(..), isLocalGRE, unQualOK, qualSpecOK, unQualSpecOK,
+        GlobalRdrElt(..), isLocalGRE, isRecFldGRE, unQualOK, qualSpecOK, unQualSpecOK,
         Provenance(..), pprNameProvenance,
         Parent(..),
         ImportSpec(..), ImpDeclSpec(..), ImpItemSpec(..),
@@ -399,7 +399,7 @@ data GlobalRdrElt
 
 -- | The children of a Name are the things that are abbreviated by the ".."
 --   notation in export lists.  See Note [Parents]
-data Parent = NoParent | ParentIs Name
+data Parent = NoParent | ParentIs Name | FldParent Name OccName
               deriving (Eq)
 
 {- Note [Parents]
@@ -446,20 +446,29 @@ That's why plusParent picks the "best" case.
 instance Outputable Parent where
    ppr NoParent     = empty
    ppr (ParentIs n) = ptext (sLit "parent:") <> ppr n
-
+   ppr (FldParent n f) = ptext (sLit "fldparent:") <> ppr n <> colon <> ppr f
 
 plusParent :: Parent -> Parent -> Parent
 -- See Note [Combining parents]
-plusParent (ParentIs n) p2 = hasParent n p2
-plusParent p1 (ParentIs n) = hasParent n p1
-plusParent _ _ = NoParent
+plusParent (ParentIs n)    p2 = hasParentIs n p2
+plusParent (FldParent n f) p2 = hasFldParent n f p2
+plusParent p1 (ParentIs n)    = hasParentIs n p1
+plusParent p1 (FldParent n f) = hasFldParent n f p1
+plusParent NoParent NoParent  = NoParent
 
-hasParent :: Name -> Parent -> Parent
+hasParentIs :: Name -> Parent -> Parent
 #ifdef DEBUG
-hasParent n (ParentIs n')
-  | n /= n' = pprPanic "hasParent" (ppr n <+> ppr n')  -- Parents should agree
+hasParentIs n (ParentIs n')
+  | n /= n' = pprPanic "hasParentIs" (ppr n <+> ppr n')  -- Parents should agree
 #endif
-hasParent n _  = ParentIs n
+hasParentIs n _  = ParentIs n
+
+hasFldParent :: Name -> OccName -> Parent -> Parent
+#ifdef DEBUG
+hasFldParent n f (FldParent n' f')
+  | n /= n' || f /= f' = pprPanic "hasFldParent" (ppr n <+> ppr f <+> ppr n' <+> ppr f')  -- Parents should agree
+#endif
+hasFldParent n f _  = FldParent n f
 
 emptyGlobalRdrEnv :: GlobalRdrEnv
 emptyGlobalRdrEnv = emptyOccEnv
@@ -486,9 +495,11 @@ lookupGlobalRdrEnv env occ_name = case lookupOccEnv env occ_name of
                                   Just gres -> gres
 
 extendGlobalRdrEnv :: GlobalRdrEnv -> GlobalRdrElt -> GlobalRdrEnv
-extendGlobalRdrEnv env gre = extendOccEnv_Acc (:) singleton env occ gre
-  where
-    occ = nameOccName (gre_name gre)
+extendGlobalRdrEnv env gre = extendOccEnv_Acc (:) singleton env (greOccName gre) gre
+
+greOccName :: GlobalRdrElt -> OccName
+greOccName (GRE{gre_par = FldParent _ f}) = f
+greOccName gre                            = nameOccName (gre_name gre)
 
 lookupGRE_RdrName :: RdrName -> GlobalRdrEnv -> [GlobalRdrElt]
 lookupGRE_RdrName rdr_name env
@@ -566,6 +577,10 @@ isLocalGRE :: GlobalRdrElt -> Bool
 isLocalGRE (GRE {gre_prov = LocalDef}) = True
 isLocalGRE _                           = False
 
+isRecFldGRE :: GlobalRdrElt -> Bool
+isRecFldGRE (GRE {gre_par = FldParent _ _}) = True
+isRecFldGRE _                               = False
+
 unQualOK :: GlobalRdrElt -> Bool
 -- ^ Test if an unqualifed version of this thing would be in scope
 unQualOK (GRE {gre_prov = LocalDef})    = True
@@ -579,7 +594,7 @@ mkGlobalRdrEnv gres
   = foldr add emptyGlobalRdrEnv gres
   where
     add gre env = extendOccEnv_Acc insertGRE singleton env
-                                   (nameOccName (gre_name gre))
+                                   (greOccName gre)
                                    gre
 
 findLocalDupsRdrEnv :: GlobalRdrEnv -> [OccName] -> [[Name]]

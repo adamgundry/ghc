@@ -458,7 +458,7 @@ data TyCon
   deriving Typeable
 
 -- | Names of the fields in an algebraic record type
-type FieldLabel = Name
+type FieldLabel = (OccName, Name)
 
 -- | Represents right-hand-sides of 'TyCon's for algebraic types
 data AlgTyConRhs

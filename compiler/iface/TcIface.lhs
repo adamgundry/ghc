@@ -631,7 +631,6 @@ tcIfaceDataCons tycon_name tycon _ if_cons
                         -- The IfBang field can mention 
                         -- the type itself; hence inside forkM
                 ; return (eq_spec, theta, arg_tys, stricts) }
-        ; lbl_names <- mapM lookupIfaceTop field_lbls
 
         -- Remember, tycon is the representation tycon
         ; let orig_res_ty = mkFamilyTyConApp tycon 
@@ -639,7 +638,7 @@ tcIfaceDataCons tycon_name tycon _ if_cons
 
         ; con <- buildDataCon (pprPanic "tcIfaceDataCons: FamInstEnvs" (ppr name))
                        name is_infix
-                       stricts lbl_names
+                       stricts field_lbls
                        univ_tyvars ex_tyvars 
                        eq_spec theta 
                        arg_tys orig_res_ty tycon

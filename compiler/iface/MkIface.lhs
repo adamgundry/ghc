@@ -1036,10 +1036,10 @@ mkIfaceExports exports
   where
     sort_subs :: AvailInfo -> AvailInfo
     sort_subs (Avail n) = Avail n
-    sort_subs (AvailTC n []) = AvailTC n []
-    sort_subs (AvailTC n (m:ms))
-       | n==m      = AvailTC n (m:sortBy stableNameCmp ms)
-       | otherwise = AvailTC n (sortBy stableNameCmp (m:ms))
+    sort_subs (AvailTC n [] fs) = AvailTC n [] (sort fs)
+    sort_subs (AvailTC n (m:ms) fs)
+       | n==m      = AvailTC n (m:sortBy stableNameCmp ms) (sort fs)
+       | otherwise = AvailTC n (sortBy stableNameCmp (m:ms)) (sort fs)
        -- Maintain the AvailTC Invariant
 \end{code}
 
@@ -1547,8 +1547,7 @@ tyConToIfaceDecl env tycon
                     ifConEqSpec  = to_eq_spec eq_spec,
                     ifConCtxt    = tidyToIfaceContext env2 theta,
                     ifConArgTys  = map (tidyToIfaceType env2) arg_tys,
-                    ifConFields  = map getOccName
-                                       (dataConFieldLabels data_con),
+                    ifConFields  = dataConFieldLabels data_con,
                     ifConStricts = map (toIfaceBang env2) (dataConRepBangs data_con) }
         where
           (univ_tvs, ex_tvs, eq_spec, theta, arg_tys, _) = dataConFullSig data_con

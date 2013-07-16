@@ -18,7 +18,7 @@ module RnEnv (
         lookupFixityRn, lookupTyFixityRn,
         lookupInstDeclBndr, lookupSubBndrOcc, lookupFamInstName,
         greRdrName,
-        lookupSubBndrGREs, lookupConstructorFields,
+        lookupSubBndrGREs, lookupConstructorFields, lookupRecSelName,
         lookupSyntaxName, lookupSyntaxNames, lookupIfThenElse,
         lookupGreRn, lookupGreRn_maybe,
         lookupGlobalOccInThisModule, lookupGreLocalRn_maybe, 
@@ -50,9 +50,8 @@ import IfaceEnv
 import HsSyn
 import RdrName
 import HscTypes
-import TcEnv            ( tcLookupDataCon, tcLookupField, isBrackStage )
+import TcEnv            ( tcLookupDataCon, isBrackStage )
 import TcRnMonad
-import Id               ( isRecordSelector )
 import Name
 import NameSet
 import NameEnv
@@ -60,7 +59,7 @@ import Avail
 import Module
 import UniqFM
 import DataCon          ( dataConFieldLabels, dataConTyCon )
-import TyCon            ( isTupleTyCon, tyConArity )
+import TyCon            ( TyCon, FieldLabel, isTupleTyCon, tyConArity )
 import PrelNames        ( mkUnboundName, isUnboundName, rOOT_MAIN, forall_tv_RDR )
 import ErrUtils         ( MsgDoc )
 import BasicTypes       ( Fixity(..), FixityDirection(..), minPrecedence )
@@ -309,7 +308,7 @@ lookupFamInstName Nothing tc_rdr     -- Family instance; tc_rdr is an *occurrenc
   = lookupLocatedOccRn tc_rdr
 
 -----------------------------------------------
-lookupConstructorFields :: Name -> RnM [Name]
+lookupConstructorFields :: Name -> RnM [FieldLabel]
 -- Look up the fields of a given constructor
 --   *  For constructors from this module, use the record field env,
 --      which is itself gathered from the (as yet un-typechecked)
@@ -327,6 +326,11 @@ lookupConstructorFields con_name
           else
           do { con <- tcLookupDataCon con_name
              ; return (dataConFieldLabels con) } }
+
+lookupRecSelName :: OccName -> OccName -> RnM Name
+lookupRecSelName lbl tc
+  = lookupGlobalOccRn $ mkRdrUnqual $ mkRecSelOcc lbl tc
+
 
 -----------------------------------------------
 -- Used for record construction and pattern matching
@@ -404,12 +408,16 @@ lookupSubBndrGREs env parent rdr_name
       ParentIs p
         | isUnqual rdr_name -> filter (parent_is p) gres
         | otherwise         -> filter (parent_is p) (pickGREs rdr_name gres)
+      FldParent p _
+        | isUnqual rdr_name -> filter (parent_is p) gres
+        | otherwise         -> filter (parent_is p) (pickGREs rdr_name gres)
 
   where
     gres = lookupGlobalRdrEnv env (rdrNameOcc rdr_name)
 
-    parent_is p (GRE { gre_par = ParentIs p' }) = p == p'
-    parent_is _ _                               = False
+    parent_is p (GRE { gre_par = ParentIs p' })   = p == p'
+    parent_is p (GRE { gre_par = FldParent p' _}) = p == p'
+    parent_is _ _                                 = False
 \end{code}
 
 Note [Family instance binders]
@@ -788,8 +796,9 @@ lookupImpDeprec :: ModIface -> GlobalRdrElt -> Maybe WarningTxt
 lookupImpDeprec iface gre
   = mi_warn_fn iface (gre_name gre) `mplus`  -- Bleat if the thing,
     case gre_par gre of                      -- or its parent, is warn'd
-       ParentIs p -> mi_warn_fn iface p
-       NoParent   -> Nothing
+       ParentIs  p   -> mi_warn_fn iface p
+       FldParent p _ -> mi_warn_fn iface p
+       NoParent      -> Nothing
 \end{code}
 
 Note [Used names with interface not loaded]
@@ -1355,18 +1364,10 @@ checkShadowedOccs (global_env,local_env) loc_occs
     is_shadowed_gre :: GlobalRdrElt -> RnM Bool
         -- Returns False for record selectors that are shadowed, when
         -- punning or wild-cards are on (cf Trac #2723)
-    is_shadowed_gre gre@(GRE { gre_par = ParentIs _ })
+    is_shadowed_gre gre | isRecFldGRE gre
         = do { dflags <- getDynFlags
-             ; if (xopt Opt_RecordPuns dflags || xopt Opt_RecordWildCards dflags)
-               then do { is_fld <- is_rec_fld gre; return (not is_fld) }
-               else return True }
+             ; return $ not (xopt Opt_RecordPuns dflags || xopt Opt_RecordWildCards dflags) }
     is_shadowed_gre _other = return True
-
-    is_rec_fld gre      -- Return True for record selector ids
-        | isLocalGRE gre = do { RecFields _ fld_set <- getRecFieldEnv
-                              ; return (gre_name gre `elemNameSet` fld_set) }
-        | otherwise      = do { sel_id <- tcLookupField (gre_name gre)
-                              ; return (isRecordSelector sel_id) }
 \end{code}
 
 
@@ -1572,7 +1573,7 @@ warnUnusedTopBinds gres
     $ do isBoot <- tcIsHsBoot
          let noParent gre = case gre_par gre of
                             NoParent -> True
-                            ParentIs _ -> False
+                            _        -> False
              -- Don't warn about unused bindings with parents in
              -- .hs-boot files, as you are sometimes required to give
              -- unused bindings (trac #3449).

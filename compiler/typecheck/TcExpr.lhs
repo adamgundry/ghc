@@ -627,11 +627,11 @@ In the outgoing (HsRecordUpd scrut binds cons in_inst_tys out_inst_tys):
 
 \begin{code}
 tcExpr (RecordUpd record_expr rbinds _ _ _) res_ty
-  = ASSERT( notNull upd_fld_names )
+  = ASSERT( notNull upd_flds )
     do  {
         -- STEP 0
         -- Check that the field names are really field names
-        ; sel_ids <- mapM tcLookupField upd_fld_names
+        ; sel_ids <- mapM tcLookupId upd_fld_names
                         -- The renamer has already checked that
                         -- selectors are all in scope
         ; let bad_guys = [ setSrcSpan loc $ addErrTc (notSelector fld_name)
@@ -644,12 +644,12 @@ tcExpr (RecordUpd record_expr rbinds _ _ _) res_ty
         -- Figure out the tycon and data cons from the first field name
         ; let   -- It's OK to use the non-tc splitters here (for a selector)
               sel_id : _  = sel_ids
-              (tycon, _)  = recordSelectorFieldLabel sel_id     -- We've failed already if
+              tycon       = recordSelectorTyCon sel_id          -- We've failed already if
               data_cons   = tyConDataCons tycon                 -- it's not a field label
                 -- NB: for a data type family, the tycon is the instance tycon
 
               relevant_cons   = filter is_relevant data_cons
-              is_relevant con = all (`elem` dataConFieldLabels con) upd_fld_names
+              is_relevant con = all (`elem` map fst (dataConFieldLabels con)) upd_fld_occs
                 -- A constructor is only relevant to this process if
                 -- it contains *all* the fields that are being updated
                 -- Other ones will cause a runtime error if they occur
@@ -657,7 +657,7 @@ tcExpr (RecordUpd record_expr rbinds _ _ _) res_ty
                 -- Take apart a representative constructor
               con1 = ASSERT( not (null relevant_cons) ) head relevant_cons
               (con1_tvs, _, _, _, con1_arg_tys, _) = dataConFullSig con1
-              con1_flds = dataConFieldLabels con1
+              con1_flds = map fst $ dataConFieldLabels con1
               con1_res_ty = mkFamilyTyConApp tycon (mkTyVarTys con1_tvs)
 
         -- Step 2
@@ -670,11 +670,11 @@ tcExpr (RecordUpd record_expr rbinds _ _ _) res_ty
         -- mentions only the universally-quantified variables of the data con
         ; let flds1_w_tys = zipEqual "tcExpr:RecConUpd" con1_flds con1_arg_tys
               upd_flds1_w_tys = filter is_updated flds1_w_tys
-              is_updated (fld,_) = fld `elem` upd_fld_names
+              is_updated (fld,_) = fld `elem` upd_fld_occs
 
               bad_upd_flds = filter bad_fld upd_flds1_w_tys
               con1_tv_set = mkVarSet con1_tvs
-              bad_fld (fld, ty) = fld `elem` upd_fld_names &&
+              bad_fld (fld, ty) = fld `elem` upd_fld_occs &&
                                       not (tyVarsOfType ty `subVarSet` con1_tv_set)
         ; checkTc (null bad_upd_flds) (badFieldTypes bad_upd_flds)
 
@@ -685,7 +685,7 @@ tcExpr (RecordUpd record_expr rbinds _ _ _) res_ty
         -- These are variables that appear in *any* arg of *any* of the
         -- relevant constructors *except* in the updated fields
         --
-        ; let fixed_tvs = getFixedTyVars con1_tvs relevant_cons
+        ; let fixed_tvs = getFixedTyVars upd_fld_occs con1_tvs relevant_cons
               is_fixed_tv tv = tv `elemVarSet` fixed_tvs
 
               mk_inst_ty :: TvSubst -> (TKVar, TcType) -> TcM (TvSubst, TcType)
@@ -728,11 +728,13 @@ tcExpr (RecordUpd record_expr rbinds _ _ _) res_ty
           RecordUpd (mkLHsWrap scrut_co record_expr') rbinds'
                                    relevant_cons scrut_inst_tys result_inst_tys  }
   where
-    upd_fld_names = hsRecFields rbinds
+    upd_flds      = hsRecFields rbinds
+    upd_fld_occs  = map fst upd_flds
+    upd_fld_names = map snd upd_flds
 
-    getFixedTyVars :: [TyVar] -> [DataCon] -> TyVarSet
+    getFixedTyVars :: [OccName] -> [TyVar] -> [DataCon] -> TyVarSet
     -- These tyvars must not change across the updates
-    getFixedTyVars tvs1 cons
+    getFixedTyVars upd_fld_occs tvs1 cons
       = mkVarSet [tv1 | con <- cons
                       , let (tvs, theta, arg_tys, _) = dataConSig con
                             flds = dataConFieldLabels con
@@ -744,8 +746,8 @@ tcExpr (RecordUpd record_expr rbinds _ _ _) res_ty
                                     -- arguments to the constructor are fixed
                                     -- See Note [Implict type sharing]
 
-                            fixed_tys = [ty | (fld,ty) <- zip flds arg_tys
-                                            , not (fld `elem` upd_fld_names)]
+                            fixed_tys = [ty | ((fld, _),ty) <- zip flds arg_tys
+                                            , not (fld `elem` upd_fld_occs)]
                       , (tv1,tv) <- tvs1 `zip` tvs      -- Discards existentials in tvs
                       , tv `elemVarSet` fixed_tvs ]
 \end{code}
@@ -1393,22 +1395,25 @@ tcRecordBinds data_con arg_tys (HsRecFields rbinds dd)
   = do  { mb_binds <- mapM do_bind rbinds
         ; return (HsRecFields (catMaybes mb_binds) dd) }
   where
-    flds_w_tys = zipEqual "tcRecordBinds" (dataConFieldLabels data_con) arg_tys
-    do_bind fld@(HsRecField { hsRecFieldId = L loc field_lbl, hsRecFieldArg = rhs })
+    flds_w_tys = zipEqual "tcRecordBinds" (map fst $ dataConFieldLabels data_con) arg_tys
+    do_bind fld@(HsRecField { hsRecFieldLbl = L loc lbl, hsRecFieldSel = Just sel_name, hsRecFieldArg = rhs })
       | Just field_ty <- assocMaybe flds_w_tys field_lbl
       = addErrCtxt (fieldCtxt field_lbl)        $
         do { rhs' <- tcPolyExprNC rhs field_ty
-           ; let field_id = mkUserLocal (nameOccName field_lbl)
-                                        (nameUnique field_lbl)
+           ; let field_id = mkUserLocal (nameOccName sel_name)
+                                        (nameUnique sel_name)
                                         field_ty loc
                 -- Yuk: the field_id has the *unique* of the selector Id
                 --          (so we can find it easily)
                 --      but is a LocalId with the appropriate type of the RHS
                 --          (so the desugarer knows the type of local binder to make)
-           ; return (Just (fld { hsRecFieldId = L loc field_id, hsRecFieldArg = rhs' })) }
+           ; return (Just (fld { hsRecFieldSel = Just field_id, hsRecFieldArg = rhs' })) }
       | otherwise
       = do { addErrTc (badFieldCon data_con field_lbl)
            ; return Nothing }
+      where
+        field_lbl = rdrNameOcc lbl
+    do_bind _ = panic "tcRecordBinds/do_bind: field with no selector"
 
 checkMissingFields :: DataCon -> HsRecordBinds Name -> TcM ()
 checkMissingFields data_con rbinds
@@ -1440,8 +1445,8 @@ checkMissingFields data_con rbinds
                  not (fl `elem` field_names_used)
           ]
 
-    field_names_used = hsRecFields rbinds
-    field_labels     = dataConFieldLabels data_con
+    field_names_used = map (getOccName . snd) $ hsRecFields rbinds
+    field_labels     = map (getOccName . snd) $ dataConFieldLabels data_con
 
     field_info = zipEqual "missingFields"
                           field_labels
@@ -1465,7 +1470,7 @@ exprCtxt :: LHsExpr Name -> SDoc
 exprCtxt expr
   = hang (ptext (sLit "In the expression:")) 2 (ppr expr)
 
-fieldCtxt :: Name -> SDoc
+fieldCtxt :: OccName -> SDoc
 fieldCtxt field_name
   = ptext (sLit "In the") <+> quotes (ppr field_name) <+> ptext (sLit "field of a record")
 
@@ -1506,7 +1511,7 @@ funResCtxt has_args fun fun_res_ty env_ty tidy_env
           Just (tc, _) -> isAlgTyCon tc
           Nothing      -> False
 
-badFieldTypes :: [(Name,TcType)] -> SDoc
+badFieldTypes :: [(OccName,TcType)] -> SDoc
 badFieldTypes prs
   = hang (ptext (sLit "Record update for insufficiently polymorphic field")
                          <> plural prs <> colon)
@@ -1532,7 +1537,7 @@ badFieldsUpd rbinds data_cons
 
             -- Each field, together with a list indicating which constructors
             -- have all the fields so far.
-            growingSets :: [(Name, [Bool])]
+            growingSets :: [(OccName, [Bool])]
             growingSets = scanl1 combine membership
             combine (_, setMem) (field, fldMem)
               = (field, zipWith (&&) setMem fldMem)
@@ -1545,13 +1550,13 @@ badFieldsUpd rbinds data_cons
     (members, nonMembers) = partition (or . snd) membership
 
     -- For each field, which constructors contain the field?
-    membership :: [(Name, [Bool])]
+    membership :: [(OccName, [Bool])]
     membership = sortMembership $
         map (\fld -> (fld, map (Set.member fld) fieldLabelSets)) $
-          hsRecFields rbinds
+          map (getOccName . snd) $ hsRecFields rbinds
 
-    fieldLabelSets :: [Set.Set Name]
-    fieldLabelSets = map (Set.fromList . dataConFieldLabels) data_cons
+    fieldLabelSets :: [Set.Set OccName]
+    fieldLabelSets = map (Set.fromList . map fst . dataConFieldLabels) data_cons
 
     -- Sort in order of increasing number of True, so that a smaller
     -- conflicting set can be found.
@@ -1597,7 +1602,7 @@ notSelector :: Name -> SDoc
 notSelector field
   = hsep [quotes (ppr field), ptext (sLit "is not a record selector")]
 
-missingStrictFields :: DataCon -> [FieldLabel] -> SDoc
+missingStrictFields :: DataCon -> [OccName] -> SDoc
 missingStrictFields con fields
   = header <> rest
   where
@@ -1608,7 +1613,7 @@ missingStrictFields con fields
     header = ptext (sLit "Constructor") <+> quotes (ppr con) <+>
              ptext (sLit "does not have the required strict field(s)")
 
-missingFields :: DataCon -> [FieldLabel] -> SDoc
+missingFields :: DataCon -> [OccName] -> SDoc
 missingFields con fields
   = ptext (sLit "Fields of") <+> quotes (ppr con) <+> ptext (sLit "not initialised:")
         <+> pprWithCommas ppr fields

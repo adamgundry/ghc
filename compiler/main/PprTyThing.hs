@@ -208,7 +208,7 @@ pprAlgTyCon pefas ss tyCon
     datacons = GHC.tyConDataCons tyCon
     gadt = any (not . GHC.isVanillaDataCon) datacons
 
-    ok_con dc = showSub ss dc || any (showSub ss) (dataConFieldLabels dc)
+    ok_con dc = showSub ss dc || any (showSub ss . snd) (dataConFieldLabels dc)
     show_con dc
       | ok_con dc = Just (pprDataConDecl pefas ss gadt dc)
       | otherwise = Nothing
@@ -241,9 +241,9 @@ pprDataConDecl pefas ss gadt_style dataCon
     user_ify (HsUnpack {})             = HsUserBang (Just True) True
     user_ify bang                      = bang
 
-    maybe_show_label (lbl,bty)
-	| showSub ss lbl = Just (ppr_bndr lbl <+> dcolon <+> pprBangTy bty)
-	| otherwise      = Nothing
+    maybe_show_label ((lbl, sel_name),bty)
+	| showSub ss sel_name = Just (ppr_bndr_occ lbl <+> dcolon <+> pprBangTy bty)
+	| otherwise           = Nothing
 
     ppr_fields [ty1, ty2]
 	| GHC.dataConIsInfix dataCon && null labels
@@ -309,6 +309,9 @@ add_bars (c:cs)  = sep ((equals <+> c) : map (char '|' <+>) cs)
 -- Wrap operators in ()
 ppr_bndr :: GHC.NamedThing a => a -> SDoc
 ppr_bndr a = GHC.pprParenSymName a
+
+ppr_bndr_occ :: OccName -> SDoc
+ppr_bndr_occ a = parenSymOcc a (ppr a)
 
 showWithLoc :: SDoc -> SDoc -> SDoc
 showWithLoc loc doc

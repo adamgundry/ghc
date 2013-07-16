@@ -524,15 +524,16 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
             Nothing  -> ptext (sLit "constructor field name")
             Just con -> ptext (sLit "field of constructor") <+> quotes (ppr con)
 
-    rn_fld pun_ok parent (HsRecField { hsRecFieldId = fld
+    rn_fld pun_ok parent (HsRecField { hsRecFieldLbl = L loc lbl
                                      , hsRecFieldArg = arg
                                      , hsRecPun = pun })
-      = do { fld'@(L loc fld_nm) <- wrapLocM (lookupSubBndrOcc True parent doc) fld
+      = do { sel <- lookupSubBndrOcc True parent doc lbl
            ; arg' <- if pun 
-                     then do { checkErr pun_ok (badPun fld)
-                             ; return (L loc (mk_arg (mkRdrUnqual (nameOccName fld_nm)))) }
+                     then do { checkErr pun_ok (badPun (L loc lbl))
+                             ; return (L loc (mk_arg lbl)) }
                      else return arg
-           ; return (HsRecField { hsRecFieldId = fld'
+           ; return (HsRecField { hsRecFieldLbl = L loc lbl
+                                , hsRecFieldSel = Just sel
                                 , hsRecFieldArg = arg'
                                 , hsRecPun = pun }) }
 
@@ -552,7 +553,7 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
            ; checkErr dd_flag (needFlagDotDot ctxt)
            ; (rdr_env, lcl_env) <- getRdrEnvs
            ; con_fields <- lookupConstructorFields con
-           ; let present_flds = getFieldIds flds
+           ; let present_flds = map rdrNameOcc $ getFieldLbls flds
                  parent_tc = find_tycon rdr_env con
 
                    -- For constructor uses (but not patterns)
@@ -560,32 +561,33 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
                    -- ignoring the record field itself
                    -- Eg.  data R = R { x,y :: Int }
                    --      f x = R { .. }   -- Should expand to R {x=x}, not R{x=x,y=y}
-                 arg_in_scope fld 
+                 arg_in_scope lbl 
                    = rdr `elemLocalRdrEnv` lcl_env
                    || notNull [ gre | gre <- lookupGRE_RdrName rdr rdr_env
                                     , case gre_par gre of
                                         ParentIs p -> p /= parent_tc
                                         _          -> True ]
                    where
-                     rdr = mkRdrUnqual (nameOccName fld)
+                     rdr = mkRdrUnqual lbl
 
-                 dot_dot_gres = [ head gres
-                                | fld <- con_fields
-                                , not (fld `elem` present_flds)
+                 dot_dot_gres = [ (lbl, head gres)
+                                | (lbl, fld) <- con_fields
+                                , not (lbl `elem` present_flds)
                                 , let gres = lookupGRE_Name rdr_env fld
-                                , not (null gres)  -- Check field is in scope
+                                , not (null gres)  -- Check selector is in scope
                                 , case ctxt of
-                                    HsRecFieldCon {} -> arg_in_scope fld
+                                    HsRecFieldCon {} -> arg_in_scope lbl
                                     _other           -> True ] 
 
-           ; addUsedRdrNames (map greRdrName dot_dot_gres)
+           ; addUsedRdrNames (map (greRdrName . snd) dot_dot_gres)
            ; return [ HsRecField
-                        { hsRecFieldId  = L loc fld
+                        { hsRecFieldLbl = L loc arg_rdr
+                        , hsRecFieldSel = Just fld
                         , hsRecFieldArg = L loc (mk_arg arg_rdr)
                         , hsRecPun      = False }
-                    | gre <- dot_dot_gres
+                    | (lbl, gre) <- dot_dot_gres
                     , let fld     = gre_name gre
-                          arg_rdr = mkRdrUnqual (nameOccName fld) ] }
+                          arg_rdr = mkRdrUnqual lbl ] }
 
     check_disambiguation :: Bool -> Maybe Name -> RnM Parent
     -- When disambiguation is on, 
@@ -607,10 +609,13 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
         -- Each list represents a RdrName that occurred more than once
         -- (the list contains all occurrences)
         -- Each list in dup_fields is non-empty
-    (_, dup_flds) = removeDups compare (getFieldIds flds)
+    (_, dup_flds) = removeDups compare (getFieldLbls flds)
 
 getFieldIds :: [HsRecField id arg] -> [id]
 getFieldIds flds = map (unLoc . hsRecFieldId) flds
+
+getFieldLbls :: [HsRecField id arg] -> [RdrName]
+getFieldLbls flds = map (unLoc . hsRecFieldLbl) flds
 
 needFlagDotDot :: HsRecFieldContext -> SDoc
 needFlagDotDot ctxt = vcat [ptext (sLit "Illegal `..' in record") <+> pprRFC ctxt,

@@ -59,6 +59,7 @@ import DynFlags
 import FastString
 import ForeignCall
 import Util
+import Maybes
 
 import Data.Maybe
 import Control.Monad
@@ -1780,7 +1781,7 @@ repConstr con (RecCon ips)
     = do { arg_vtys <- repList varStrictTypeQTyConName rep_ip ips
          ; rep2 recCName [unC con, unC arg_vtys] }
     where
-      rep_ip ip = do { MkC v  <- lookupLOcc (cd_fld_name ip)
+      rep_ip ip = do { MkC v  <- lookupLOcc (expectJust "repConstr/cd_fld_name" . cd_fld_name ip)
                      ; MkC ty <- repBangTy  (cd_fld_type ip)
                      ; rep2 varStrictTypeName [v,ty] }
 

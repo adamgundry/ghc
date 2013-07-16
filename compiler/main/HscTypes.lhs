@@ -1220,7 +1220,7 @@ setInteractivePrintName ic n = ic{ic_int_print = n}
 icPlusGblRdrEnv :: [TyThing] -> GlobalRdrEnv -> GlobalRdrEnv
 icPlusGblRdrEnv tythings env = extendOccEnvList env list
   where new_gres = gresFromAvails LocalDef (map tyThingAvailInfo tythings)
-        list = [ (nameOccName (gre_name gre), [gre]) | gre <- new_gres ]
+        list = [ (greOccName gre, [gre]) | gre <- new_gres ]
 
 substInteractiveContext :: InteractiveContext -> TvSubst -> InteractiveContext
 substInteractiveContext ictxt subst
@@ -1493,10 +1493,11 @@ tyThingAvailInfo :: TyThing -> AvailInfo
 tyThingAvailInfo (ATyCon t)
    = case tyConClass_maybe t of
         Just c  -> AvailTC n (n : map getName (classMethods c)
-                  ++ map getName (classATs c))
+                                 ++ map getName (classATs c))
+                             []
              where n = getName c
-        Nothing -> AvailTC n (n : map getName dcs ++
-                                   concatMap dataConFieldLabels dcs)
+        Nothing -> AvailTC n (n : map getName dcs ++ concatMap (map snd . dataConFieldLabels) dcs)
+                             (concatMap (map fst . dataConFieldLabels) dcs)
              where n = getName t
                    dcs = tyConDataCons t
 tyThingAvailInfo t

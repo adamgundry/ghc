@@ -16,7 +16,7 @@ module TcEnv(
         tcExtendGlobalEnv, tcExtendGlobalEnvImplicit, setGlobalTypeEnv,
         tcExtendGlobalValEnv,
         tcLookupLocatedGlobal, tcLookupGlobal, 
-        tcLookupField, tcLookupTyCon, tcLookupClass, tcLookupDataCon,
+        tcLookupTyCon, tcLookupClass, tcLookupDataCon,
         tcLookupLocatedGlobalId, tcLookupLocatedTyCon,
         tcLookupLocatedClass, tcLookupInstance, tcLookupAxiom,
         
@@ -136,9 +136,6 @@ tcLookupGlobal name
             Failed msg      -> failWithTc msg
         }}}}
 
-tcLookupField :: Name -> TcM Id         -- Returns the selector Id
-tcLookupField name 
-  = tcLookupId name     -- Note [Record field lookup]
 
 {- Note [Record field lookup]
    ~~~~~~~~~~~~~~~~~~~~~~~~~~

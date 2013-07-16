@@ -43,6 +43,7 @@ import HscTypes         ( HscEnv, hsc_dflags )
 import ListSetOps       ( findDupsEq, removeDups )
 import Digraph          ( SCC, flattenSCC, stronglyConnCompFromEdgedVertices )
 import Util             ( mapSnd )
+import UniqSet
 
 import Control.Monad
 import Data.List( partition, sortBy )
@@ -178,7 +179,7 @@ rnSrcDecls extra_deps group@(HsGroup { hs_valds   = val_decls,
                              hs_vects  = rn_vect_decls,
                              hs_docs   = rn_docs } ;
 
-        tycl_bndrs = hsTyClDeclsBinders rn_tycl_decls rn_inst_decls ;
+        (tycl_bndrs, _) = hsTyClDeclsBinders rn_tycl_decls rn_inst_decls ;
         ford_bndrs = hsForeignDeclsBinders rn_foreign_decls ;
         other_def  = (Just (mkNameSet tycl_bndrs `unionNameSets` mkNameSet ford_bndrs), emptyNameSet) ;
         other_fvs  = plusFVs [src_fvs1, src_fvs2, src_fvs3, src_fvs4,
@@ -1362,20 +1363,24 @@ extendRecordFieldEnv tycl_decls inst_decls
     lookup x = do { x' <- lookupLocatedTopBndrRn x
                     ; return $ unLoc x'}
 
-    all_data_cons :: [ConDecl RdrName]
-    all_data_cons = [con | HsDataDefn { dd_cons = cons } <- all_ty_defs
-                         , L _ con <- cons ]
-    all_ty_defs = [ defn | L _ (DataDecl { tcdDataDefn = defn }) <- tyClGroupConcat tycl_decls ]
-               ++ map dfid_defn (instDeclDataFamInsts inst_decls)  -- Do not forget associated types!
+    all_data_cons :: [(RdrName, ConDecl RdrName)]
+    all_data_cons = [(tc, con) | (tc, HsDataDefn { dd_cons = cons }) <- all_ty_defs
+                    , L _ con <- cons ]
+    all_ty_defs = [ (tc, defn) | L _ (DataDecl { tcdLName = L _ tc, tcdDataDefn = defn }) <- tyClGroupConcat tycl_decls ]
+               ++ [ (tc, defn) | DataFamInstDecl { dfid_tycon = L _ tc, dfid_defn = defn } <- instDeclDataFamInsts inst_decls ]  -- Do not forget associated types!
 
-    get_con (ConDecl { con_name = con, con_details = RecCon flds })
+    get_con (tc, ConDecl { con_name = con, con_details = RecCon flds })
             (RecFields env fld_set)
         = do { con' <- lookup con
-             ; flds' <- mapM lookup (map cd_fld_name flds)
-             ; let env'    = extendNameEnv env con' flds'
-                   fld_set' = addListToNameSet fld_set flds'
-             ; return $ (RecFields env' fld_set') }
+             ; flds' <- mapM (lookFld (rdrNameOcc tc)) flds
+             ; let env'     = extendNameEnv env con' flds'
+                   fld_set' = addListToUniqSet fld_set (map fst flds')
+             ; return $ RecFields env' fld_set' }
     get_con _ env = return env
+
+    lookFld tc x = do { sel_name <- lookupRecSelName lbl tc
+                      ; return (lbl, sel_name) }
+       where lbl = fst $ cd_fld_fld x
 \end{code}
 
 %*********************************************************

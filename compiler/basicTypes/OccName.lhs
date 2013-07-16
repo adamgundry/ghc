@@ -73,6 +73,7 @@ module OccName (
 	mkPDatasTyConOcc, mkPDatasDataConOcc,
         mkPReprTyConOcc, 
         mkPADFunOcc,
+        mkRecSelOcc,
 
 	-- ** Deconstruction
 	occNameFS, occNameString, occNameSpace, 
@@ -697,6 +698,16 @@ mkDFunOcc info_str is_boot set
     prefix | is_boot   = "$fx"
 	   | otherwise = "$f"
 \end{code}
+
+
+Record selector OccNames are built from the underlying field name and
+the name of the type constructor, to support overloaded record fields.
+
+\begin{code}
+mkRecSelOcc :: OccName -> OccName -> OccName
+mkRecSelOcc lbl tc = mk_deriv varName "$sel_" (occNameString lbl ++ "_" ++ occNameString tc)
+\end{code}
+
 
 Sometimes we need to pick an OccName that has not already been used,
 given a set of in-use OccNames.

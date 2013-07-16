@@ -151,7 +151,7 @@ module GHC (
         isPrimOpId, isFCallId, isClassOpId_maybe,
         isDataConWorkId, idDataCon,
         isBottomingId, isDictonaryId,
-        recordSelectorFieldLabel,
+        recordSelectorTyCon,
 
         -- ** Type constructors
         TyCon, 

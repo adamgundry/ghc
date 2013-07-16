@@ -7,7 +7,7 @@ module Avail (
     AvailInfo(..),
     availsToNameSet,
     availsToNameEnv,
-    availName, availNames,
+    availName, availNames, availFlds, availRecSel,
     stableAvailCmp,
     gresFromAvails,
     gresFromAvail
@@ -17,10 +17,14 @@ import Name
 import NameEnv
 import NameSet
 import RdrName
+import OccName
 
 import Binary
 import Outputable
 import Util
+
+import Data.List
+import Data.Maybe
 
 -- -----------------------------------------------------------------------------
 -- The AvailInfo type
@@ -28,16 +32,21 @@ import Util
 -- | Records what things are "available", i.e. in scope
 data AvailInfo = Avail Name      -- ^ An ordinary identifier in scope
                | AvailTC Name
-                         [Name]  -- ^ A type or class in scope. Parameters:
+                         [Name]
+                         [OccName]
+                                 -- ^ A type or class in scope. Parameters:
                                  --
                                  --  1) The name of the type or class
                                  --  2) The available pieces of type or class.
+                                 --  3) The record fields of the type.
                                  --
                                  -- The AvailTC Invariant:
                                  --   * If the type or class is itself
                                  --     to be in scope, it must be
                                  --     *first* in this list.  Thus,
                                  --     typically: @AvailTC Eq [Eq, ==, \/=]@
+                                 --   * For every field, the corresponding
+                                 --     selector must also be available.
                 deriving( Eq )
                         -- Equality used when deciding if the
                         -- interface has changed
@@ -47,11 +56,13 @@ type Avails = [AvailInfo]
 
 -- | Compare lexicographically
 stableAvailCmp :: AvailInfo -> AvailInfo -> Ordering
-stableAvailCmp (Avail n1)     (Avail n2)     = n1 `stableNameCmp` n2
-stableAvailCmp (Avail {})     (AvailTC {})   = LT
-stableAvailCmp (AvailTC n ns) (AvailTC m ms) = (n `stableNameCmp` m) `thenCmp`
-                                               (cmpList stableNameCmp ns ms)
-stableAvailCmp (AvailTC {})   (Avail {})     = GT
+stableAvailCmp (Avail n1)         (Avail n2)     = n1 `stableNameCmp` n2
+stableAvailCmp (Avail {})         (AvailTC {})   = LT
+stableAvailCmp (AvailTC n ns nfs) (AvailTC m ms mfs) =
+    (n `stableNameCmp` m) `thenCmp`
+    (cmpList stableNameCmp ns ms) `thenCmp`
+    (cmpList compare nfs mfs)
+stableAvailCmp (AvailTC {})       (Avail {})     = GT
 
 
 -- -----------------------------------------------------------------------------
@@ -69,31 +80,51 @@ availsToNameEnv avails = foldr add emptyNameEnv avails
 -- | Just the main name made available, i.e. not the available pieces
 -- of type or class brought into scope by the 'GenAvailInfo'
 availName :: AvailInfo -> Name
-availName (Avail n)     = n
-availName (AvailTC n _) = n
+availName (Avail n)       = n
+availName (AvailTC n _ _) = n
 
 -- | All names made available by the availability information
 availNames :: AvailInfo -> [Name]
-availNames (Avail n)      = [n]
-availNames (AvailTC _ ns) = ns
+availNames (Avail n)        = [n]
+availNames (AvailTC _ ns _) = ns
+
+-- | Fields made available by the availability information
+availFlds :: AvailInfo -> [OccName]
+availFlds (AvailTC _ _ fs) = fs
+availFlds _                = []
+
+-- | Find the name of the record selector for a field label
+availRecSel :: AvailInfo -> OccName -> Maybe Name
+availRecSel (AvailTC p ns fs) lbl = find it ns
+  where
+    it n    = nameOccName n == sel_occ
+    sel_occ = mkRecSelOcc lbl (nameOccName p) 
 
 -- | make a 'GlobalRdrEnv' where all the elements point to the same
 -- Provenance (useful for "hiding" imports, or imports with
 -- no details).
 gresFromAvails :: Provenance -> [AvailInfo] -> [GlobalRdrElt]
 gresFromAvails prov avails
-  = concatMap (gresFromAvail (const prov)) avails
+  = concatMap (gresFromAvail (const prov) (const prov)) avails
 
-gresFromAvail :: (Name -> Provenance) -> AvailInfo -> [GlobalRdrElt]
-gresFromAvail prov_fn avail
-  = [ GRE {gre_name = n,
+gresFromAvail :: (Name -> Provenance) -> ((OccName, Name) -> Provenance) ->
+                     AvailInfo -> [GlobalRdrElt]
+gresFromAvail prov_fn prov_fld avail
+  = [ GRE {gre_name = sel_name,
+           gre_par = fldParent fld avail,
+           gre_prov = prov_fld (fld, sel_name)}
+    | fld <- availFlds avail, let sel = availRecSel avail fld, isJust sel, let sel_name = fromJust sel ]
+    ++
+    [ GRE {gre_name = n,
            gre_par = parent n avail,
            gre_prov = prov_fn n}
     | n <- availNames avail ]
   where
-    parent _ (Avail _)                 = NoParent
-    parent n (AvailTC m _) | n == m    = NoParent
-                           | otherwise = ParentIs m
+    parent _ (Avail _)                   = NoParent
+    parent n (AvailTC m _ _) | n == m    = NoParent
+                             | otherwise = ParentIs m
+
+    fldParent fld (AvailTC p _ _) = FldParent p fld
 
 -- -----------------------------------------------------------------------------
 -- Printing
@@ -102,17 +133,18 @@ instance Outputable AvailInfo where
    ppr = pprAvail
 
 pprAvail :: AvailInfo -> SDoc
-pprAvail (Avail n)      = ppr n
-pprAvail (AvailTC n ns) = ppr n <> braces (hsep (punctuate comma (map ppr ns)))
+pprAvail (Avail n)          = ppr n
+pprAvail (AvailTC n ns nfs) = ppr n <> braces (hsep (punctuate comma (map ppr ns ++ map ppr nfs)))
 
 instance Binary AvailInfo where
     put_ bh (Avail aa) = do
             putByte bh 0
             put_ bh aa
-    put_ bh (AvailTC ab ac) = do
+    put_ bh (AvailTC ab ac ad) = do
             putByte bh 1
             put_ bh ab
             put_ bh ac
+            put_ bh ad
     get bh = do
             h <- getByte bh
             case h of
@@ -120,5 +152,6 @@ instance Binary AvailInfo where
                       return (Avail aa)
               _ -> do ab <- get bh
                       ac <- get bh
-                      return (AvailTC ab ac)
+                      ad <- get bh
+                      return (AvailTC ab ac ad)
 

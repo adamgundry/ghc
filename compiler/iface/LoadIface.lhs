@@ -738,14 +738,14 @@ When printing export lists, we print like this:
 
 \begin{code}
 pprExport :: IfaceExport -> SDoc
-pprExport (Avail n)      = ppr n
-pprExport (AvailTC _ []) = empty
-pprExport (AvailTC n (n':ns)) 
+pprExport (Avail n)        = ppr n
+pprExport (AvailTC _ [] _) = empty
+pprExport (AvailTC n (n':ns) fs) 
   | n==n'     = ppr n <> pp_export ns
   | otherwise = ppr n <> char '|' <> pp_export (n':ns)
   where  
     pp_export []    = empty
-    pp_export names = braces (hsep (map ppr names))
+    pp_export names = braces (hsep (map ppr names ++ map ppr fs))
 
 pprUsage :: Usage -> SDoc
 pprUsage usage@UsagePackageModule{}

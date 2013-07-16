@@ -122,7 +122,7 @@ matchOneCon vars ty (eqn1 : eqns)	-- All eqns for a single constructor
     ConPatOut { pat_con = L _ con1, pat_ty = pat_ty1,
 	        pat_tvs = tvs1, pat_dicts = dicts1, pat_args = args1 }
 	      = firstPat eqn1
-    fields1 = dataConFieldLabels con1
+    fields1 = map snd $ dataConFieldLabels con1
 	
     arg_tys  = dataConInstOrigArgTys con1 inst_tys
     inst_tys = tcTyConAppArgs pat_ty1 ++ 
@@ -180,8 +180,8 @@ compatible_pats _                 _                 = True -- Prefix or infix co
 
 same_fields :: HsRecFields Id (LPat Id) -> HsRecFields Id (LPat Id) -> Bool
 same_fields flds1 flds2 
-  = all2 (\f1 f2 -> unLoc (hsRecFieldId f1) == unLoc (hsRecFieldId f2))
-	 (rec_flds flds1) (rec_flds flds2)
+  = all2 (\f1 f2 -> hsRecFieldSel f1 == hsRecFieldSel f2)
+         (rec_flds flds1) (rec_flds flds2)
 
 
 -----------------

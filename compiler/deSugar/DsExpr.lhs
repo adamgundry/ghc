@@ -416,8 +416,8 @@ dsExpr (RecordCon (L _ data_con_id) con_expr rbinds) = do
         -- A newtype in the corner should be opaque; 
         -- hence TcType.tcSplitFunTys
 
-        mk_arg (arg_ty, lbl)    -- Selector id has the field label as its name
-          = case findField (rec_flds rbinds) lbl of
+        mk_arg (arg_ty, (lbl, sel_name))
+          = case findField (rec_flds rbinds) sel_name of
               (rhs:rhss) -> ASSERT( null rhss )
                             dsLExpr rhs
               []         -> mkErrorAppDs rEC_CON_ERROR_ID arg_ty (ppr lbl)
@@ -520,8 +520,8 @@ dsExpr expr@(RecordUpd record_expr (HsRecFields { rec_flds = fields })
            ; arg_ids    <- newSysLocalsDs (substTys subst arg_tys)
            ; let val_args = zipWithEqual "dsExpr:RecordUpd" mk_val_arg
                                          (dataConFieldLabels con) arg_ids
-                 mk_val_arg field_name pat_arg_id 
-                     = nlHsVar (lookupNameEnv upd_fld_env field_name `orElse` pat_arg_id)
+                 mk_val_arg (_, sel_name) pat_arg_id
+                     = nlHsVar (lookupNameEnv upd_fld_env sel_name `orElse` pat_arg_id)
                  inst_con = noLoc $ HsWrap wrap (HsVar (dataConWrapId con))
                         -- Reconstruct with the WrapId so that unpacking happens
                  wrap = mkWpEvVarApps theta_vars          <.>
@@ -606,9 +606,8 @@ dsExpr (HsDo          {})  = panic "dsExpr:HsDo"
 
 
 findField :: [HsRecField Id arg] -> Name -> [arg]
-findField rbinds lbl 
-  = [rhs | HsRecField { hsRecFieldId = id, hsRecFieldArg = rhs } <- rbinds 
-         , lbl == idName (unLoc id) ]
+findField rbinds sel_name 
+  = [hsRecFieldArg x | x <- rbinds, fmap idName (hsRecFieldSel x) == Just sel_name]
 \end{code}
 
 %--------------------------------------------------------------------
