@@ -631,6 +631,7 @@ tcIfaceDataCons tycon_name tycon _ if_cons
                         -- The IfBang field can mention 
                         -- the type itself; hence inside forkM
                 ; return (eq_spec, theta, arg_tys, stricts) }
+        ; lbl_names <- mapM tc_fld_lbl field_lbls
 
         -- Remember, tycon is the representation tycon
         ; let orig_res_ty = mkFamilyTyConApp tycon 
@@ -638,13 +639,17 @@ tcIfaceDataCons tycon_name tycon _ if_cons
 
         ; con <- buildDataCon (pprPanic "tcIfaceDataCons: FamInstEnvs" (ppr name))
                        name is_infix
-                       stricts field_lbls
+                       stricts lbl_names
                        univ_tyvars ex_tyvars 
                        eq_spec theta 
                        arg_tys orig_res_ty tycon
         ; traceIf (text "Done interface-file tc_con_decl" <+> ppr name)
         ; return con } 
     mk_doc con_name = ptext (sLit "Constructor") <+> ppr con_name
+
+    tc_fld_lbl (lbl, sel_occ)
+      = do { sel <- lookupIfaceTop sel_occ
+           ; return (lbl, sel) }
 
     tc_strict IfNoBang = return HsNoBang
     tc_strict IfStrict = return HsStrict

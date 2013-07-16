@@ -49,7 +49,6 @@ import Literal
 import ForeignCall
 import Serialized
 import BasicTypes
-import TyCon
 import Outputable
 import FastString
 import Module
@@ -357,7 +356,7 @@ data IfaceConDecl
         ifConEqSpec  :: [(OccName,IfaceType)],  -- Equality constraints
         ifConCtxt    :: IfaceContext,           -- Non-stupid context
         ifConArgTys  :: [IfaceType],            -- Arg types
-        ifConFields  :: [FieldLabel],           -- ...ditto... (field labels)
+        ifConFields  :: [(OccName, OccName)],   -- Field labels and selectors
         ifConStricts :: [IfaceBang]}            -- Empty (meaning all lazy),
                                                 -- or 1-1 corresp with arg tys
 

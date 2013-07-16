@@ -1547,7 +1547,7 @@ tyConToIfaceDecl env tycon
                     ifConEqSpec  = to_eq_spec eq_spec,
                     ifConCtxt    = tidyToIfaceContext env2 theta,
                     ifConArgTys  = map (tidyToIfaceType env2) arg_tys,
-                    ifConFields  = dataConFieldLabels data_con,
+                    ifConFields  = map (fmap nameOccName) (dataConFieldLabels data_con),
                     ifConStricts = map (toIfaceBang env2) (dataConRepBangs data_con) }
         where
           (univ_tvs, ex_tvs, eq_spec, theta, arg_tys, _) = dataConFullSig data_con
