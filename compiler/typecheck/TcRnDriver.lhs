@@ -62,7 +62,6 @@ import Id
 import VarEnv
 import Module
 import UniqFM
-import UniqSet
 import Name
 import NameEnv
 import NameSet
@@ -1469,8 +1468,7 @@ setInteractiveContext hsc_env icxt thing_inside
                               (extendFamInstEnvList (tcg_fam_inst_env env)
                                                     ic_finsts)
                               home_fam_insts
-        , tcg_field_env    = RecFields (mkNameEnv con_fields)
-                                       (mkUniqSet (concatMap (map fst . snd) con_fields))
+        , tcg_field_env    = mkNameEnv con_fields
              -- setting tcg_field_env is necessary to make RecordWildCards work
              -- (test: ghci049)
         , tcg_fix_env      = ic_fix_env icxt

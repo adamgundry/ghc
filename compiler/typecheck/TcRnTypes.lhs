@@ -26,7 +26,7 @@ module TcRnTypes(
         IfGblEnv(..), IfLclEnv(..),
 
         -- Ranamer types
-        ErrCtxt, RecFieldEnv(..),
+        ErrCtxt, RecFieldEnv,
         ImportAvails(..), emptyImportAvails, plusImportAvails,
         WhereFrom(..), mkModDeps,
 
@@ -97,7 +97,6 @@ import RdrName
 import Name
 import NameEnv
 import NameSet
-import UniqSet
 import Avail
 import Var
 import VarEnv
@@ -319,13 +318,9 @@ data TcGblEnv
 instance ContainsModule TcGblEnv where
     extractModule env = tcg_mod env
 
-data RecFieldEnv
-  = RecFields (NameEnv [FieldLabel])  -- Maps a constructor name *in this module*
-                                      -- to the fields for that constructor
-              (UniqSet OccName)       -- Set of all fields declared *in this module*;
-                                      -- used to suppress name-shadowing complaints
-                                      -- when using record wild cards
-                                      -- E.g.  let fld = e in C {..}
+type RecFieldEnv = NameEnv [FieldLabel]
+        -- Maps a constructor name *in this module*
+        -- to the fields for that constructor.
         -- This is used when dealing with ".." notation in record
         -- construction and pattern matching.
         -- The FieldEnv deals *only* with constructors defined in *this*

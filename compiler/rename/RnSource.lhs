@@ -43,7 +43,6 @@ import HscTypes         ( HscEnv, hsc_dflags )
 import ListSetOps       ( findDupsEq, removeDups )
 import Digraph          ( SCC, flattenSCC, stronglyConnCompFromEdgedVertices )
 import Util             ( mapSnd )
-import UniqSet
 
 import Control.Monad
 import Data.List( partition, sortBy )
@@ -1369,13 +1368,10 @@ extendRecordFieldEnv tycl_decls inst_decls
     all_ty_defs = [ (tc, defn) | L _ (DataDecl { tcdLName = L _ tc, tcdDataDefn = defn }) <- tyClGroupConcat tycl_decls ]
                ++ [ (tc, defn) | DataFamInstDecl { dfid_tycon = L _ tc, dfid_defn = defn } <- instDeclDataFamInsts inst_decls ]  -- Do not forget associated types!
 
-    get_con (tc, ConDecl { con_name = con, con_details = RecCon flds })
-            (RecFields env fld_set)
-        = do { con' <- lookup con
+    get_con (tc, ConDecl { con_name = con, con_details = RecCon flds }) env
+        = do { con'  <- lookup con
              ; flds' <- mapM (lookFld (rdrNameOcc tc)) flds
-             ; let env'     = extendNameEnv env con' flds'
-                   fld_set' = addListToUniqSet fld_set (map fst flds')
-             ; return $ RecFields env' fld_set' }
+             ; return $ extendNameEnv env con' flds' }
     get_con _ env = return env
 
     lookFld tc x = do { sel_name <- lookupRecSelName lbl tc

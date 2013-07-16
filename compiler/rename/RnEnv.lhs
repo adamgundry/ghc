@@ -321,7 +321,7 @@ lookupConstructorFields :: Name -> RnM [FieldLabel]
 lookupConstructorFields con_name
   = do  { this_mod <- getModule
         ; if nameIsLocalOrFrom this_mod con_name then
-          do { RecFields field_env _ <- getRecFieldEnv
+          do { field_env <- getRecFieldEnv
              ; return (lookupNameEnv field_env con_name `orElse` []) }
           else
           do { con <- tcLookupDataCon con_name

@@ -43,7 +43,6 @@ import Bag
 import Outputable
 import UniqSupply
 import UniqFM
-import UniqSet
 import DynFlags
 import StaticFlags
 import FastString
@@ -102,7 +101,7 @@ initTc hsc_env hsc_src keep_rn_syntax mod do_this
                 tcg_src            = hsc_src,
                 tcg_rdr_env        = emptyGlobalRdrEnv,
                 tcg_fix_env        = emptyNameEnv,
-                tcg_field_env      = RecFields emptyNameEnv emptyUniqSet,
+                tcg_field_env      = emptyNameEnv,
                 tcg_default        = Nothing,
                 tcg_type_env       = emptyNameEnv,
                 tcg_type_env_var   = type_env_var,
