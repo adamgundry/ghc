@@ -1667,8 +1667,9 @@ addUnusedWarning name span msg
 \begin{code}
 addNameClashErrRn :: RdrName -> [GlobalRdrElt] -> RnM ()
 addNameClashErrRn rdr_name gres
-  | all isLocalGRE gres  -- If there are two or more *local* defns, we'll have reported
-  = return ()            -- that already, and we don't want an error cascade
+  | all isLocalGRE gres && not (all isRecFldGRE gres)
+               -- If there are two or more *local* defns, we'll have reported
+  = return ()  -- that already, and we don't want an error cascade
   | otherwise
   = addErr (vcat [ptext (sLit "Ambiguous occurrence") <+> quotes (ppr rdr_name),
                   ptext (sLit "It could refer to") <+> vcat (msg1 : msgs)])
