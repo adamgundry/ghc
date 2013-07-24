@@ -1612,6 +1612,7 @@ data CtOrigin
   | PatSigOrigin        -- p :: ty
   | PatOrigin           -- Instantiating a polytyped pattern at a constructor
   | RecordUpdOrigin
+  | RecordProjOrigin    -- Overloaded record field projection
   | ViewPatOrigin
 
   | ScOrigin            -- Typechecking superclasses of an instance declaration
@@ -1635,6 +1636,7 @@ pprO AppOrigin             = ptext (sLit "an application")
 pprO (SpecPragOrigin name) = hsep [ptext (sLit "a specialisation pragma for"), quotes (ppr name)]
 pprO (IPOccOrigin name)    = hsep [ptext (sLit "a use of implicit parameter"), quotes (ppr name)]
 pprO RecordUpdOrigin       = ptext (sLit "a record update")
+pprO RecordProjOrigin      = ptext (sLit "an overloaded record field")
 pprO (AmbigOrigin ctxt)    = ptext (sLit "the ambiguity check for") 
                              <+> case ctxt of 
                                     FunSigCtxt name -> quotes (ppr name)

@@ -40,6 +40,7 @@ import RdrName
 import Name
 import TyCon
 import Type
+import Class
 import TcEvidence
 import Var
 import VarSet
@@ -750,6 +751,26 @@ tcExpr (RecordUpd record_expr rbinds _ _ _) res_ty
                                             , not (fld `elem` upd_fld_occs)]
                       , (tv1,tv) <- tvs1 `zip` tvs      -- Discards existentials in tvs
                       , tv `elemVarSet` fixed_tvs ]
+\end{code}
+
+
+\begin{code}
+tcExpr (HsOverloadedRecFld fld) res_ty
+  = do { hasClass <- tcLookupClass recordHasClassName
+       ; rec_ty <- newFlexiTyVarTy openTypeKind
+       ; fld_ty <- newFlexiTyVarTy openTypeKind
+       ; let fld_name = mkStrLitTy $ occNameFS fld
+       ; has_var <- emitWanted RecordProjOrigin (mkClassPred hasClass [rec_ty, fld_name, fld_ty])
+       ; tcWrapResult (fromHasDict hasClass rec_ty fld_name fld_ty (HsVar has_var)) (mkFunTy rec_ty fld_ty) res_ty }
+  where
+    fromHasDict :: Class -> TcType -> TcType -> TcType -> HsExpr id -> HsExpr id
+    fromHasDict hasClass rec_ty fld_name fld_ty =
+        case unwrapNewTyCon_maybe (classTyCon hasClass) of
+          Just (_,_,ax) -> HsWrap $ WpCast $ mkTcUnbranchedAxInstCo ax [rec_ty, fld_name, fld_ty]
+          Nothing       -> panic "The dictionary for `Has` is not a newtype?"
+
+
+tcExpr (HsSingleRecFld f sel_name) res_ty = tcCheckId sel_name res_ty
 \end{code}
 
 %************************************************************************

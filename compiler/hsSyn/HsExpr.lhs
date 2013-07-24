@@ -324,6 +324,8 @@ data HsExpr id
   |  HsWrap     HsWrapper    -- TRANSLATION
                 (HsExpr id)
   |  HsUnboundVar RdrName
+  |  HsOverloadedRecFld OccName
+  |  HsSingleRecFld OccName id
   deriving (Data, Typeable)
 
 -- | HsTupArg is used for tuple sections
@@ -592,7 +594,8 @@ ppr_expr (HsArrForm op _ args)
          4 (sep (map (pprCmdArg.unLoc) args) <+> ptext (sLit "|)"))
 ppr_expr (HsUnboundVar nm)
   = ppr nm
-
+ppr_expr (HsOverloadedRecFld f) = ppr f
+ppr_expr (HsSingleRecFld f _) = ppr f
 \end{code}
 
 HsSyn records exactly where the user put parens, with HsPar.

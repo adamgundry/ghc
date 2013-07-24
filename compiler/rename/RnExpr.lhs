@@ -102,18 +102,25 @@ finishHsVar name
                 ; return (e, unitFV name) } }
 
 rnExpr (HsVar v)
-  = do { mb_name <- lookupOccRn_maybe v
+  = do { mb_name <- lookupOccRn_overloaded v
        ; case mb_name of {
            Nothing -> do { opt_TypeHoles <- xoptM Opt_TypeHoles
                          ; if opt_TypeHoles && startsWithUnderscore (rdrNameOcc v)
                            then return (HsUnboundVar v, emptyFVs)
                            else do { n <- reportUnboundName v; finishHsVar n } } ;
-           Just name
+           Just (Left name)
               | name == nilDataConName -- Treat [] as an ExplicitList, so that
                                        -- OverloadedLists works correctly
               -> rnExpr (ExplicitList placeHolderType Nothing [])
               | otherwise
-              -> finishHsVar name } }
+              -> finishHsVar name ;
+           Just (Right (fld, solo)) ->
+               do { overloaded <- xoptM Opt_OverloadedRecordFields
+                  ; if overloaded
+                    then return (HsOverloadedRecFld fld, emptyFVs)
+                    else case solo of
+                         Just sel_name -> return (HsSingleRecFld fld sel_name, unitFV sel_name)
+                         Nothing -> error "rnExpr/HsVar" } } }
 
 rnExpr (HsIPVar v)
   = return (HsIPVar v, emptyFVs)

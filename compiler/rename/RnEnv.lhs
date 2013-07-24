@@ -11,6 +11,7 @@ module RnEnv (
         lookupLocalOccRn_maybe,
         lookupTypeOccRn, lookupKindOccRn,
         lookupGlobalOccRn, lookupGlobalOccRn_maybe,
+        lookupOccRn_overloaded, lookupGlobalOccRn_overloaded,
         reportUnboundName,
 
         HsSigCtxt(..), lookupLocalTcNames, lookupSigOccRn,
@@ -669,6 +670,35 @@ lookupGlobalOccRn_maybe rdr_name
         ; case mb_gre of
                 Nothing  -> return Nothing
                 Just gre -> return (Just (gre_name gre)) }
+
+
+lookupOccRn_overloaded  :: RdrName -> RnM (Maybe (Either Name (OccName, Maybe Name)))
+lookupOccRn_overloaded rdr_name
+  = do { local_env <- getLocalRdrEnv
+       ; case lookupLocalRdrEnv local_env rdr_name of {
+          Just name -> return (Just (Left name)) ;
+          Nothing   -> lookupGlobalOccRn_overloaded rdr_name } }
+
+lookupGlobalOccRn_overloaded :: RdrName -> RnM (Maybe (Either Name (OccName, Maybe Name)))
+lookupGlobalOccRn_overloaded rdr_name
+  | Just n <- isExact_maybe rdr_name   -- This happens in derived code
+  = do { n' <- lookupExactOcc n; return (Just (Left n')) }
+
+  | Just (rdr_mod, rdr_occ) <- isOrig_maybe rdr_name
+  = do { n <- lookupOrig rdr_mod rdr_occ
+       ; return (Just (Left n)) }
+
+  | otherwise
+  = do  { env <- getGlobalRdrEnv
+        ; overload_ok <- xoptM Opt_OverloadedRecordFields
+        ; case lookupGRE_RdrName rdr_name env of
+                []    -> return Nothing
+                [gre] | isRecFldGRE gre -> return (Just (Right (greOccName gre, Just (gre_name gre))))
+                [gre]                   -> return (Just (Left (gre_name gre)))
+                gres  | all isRecFldGRE gres
+                        && overload_ok  -> return (Just (Right (greOccName (head gres), Nothing)))
+                gres                    -> do { addNameClashErrRn rdr_name gres
+                                              ; return (Just (Left (gre_name (head gres)))) } }
 
 
 --------------------------------------------------
