@@ -1676,7 +1676,10 @@ addNameClashErrRn rdr_name gres
     (np1:nps) = gres
     msg1 = ptext  (sLit "either") <+> mk_ref np1
     msgs = [ptext (sLit "    or") <+> mk_ref np | np <- nps]
-    mk_ref gre = sep [quotes (ppr (gre_name gre)) <> comma, pprNameProvenance gre]
+    mk_ref gre = sep [nom <> comma, pprNameProvenance gre]
+      where nom = case gre_par gre of
+                    FldParent _ fld  -> text "the field" <+> quotes (ppr fld)
+                    _                -> quotes (ppr (gre_name gre))
 
 shadowedNameWarn :: OccName -> [SDoc] -> SDoc
 shadowedNameWarn occ shadowed_locs
