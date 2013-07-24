@@ -23,6 +23,7 @@ import Binary
 import Outputable
 import Util
 
+import Data.Foldable (foldMap)
 import Data.List
 import Data.Maybe
 
@@ -97,8 +98,16 @@ availFlds _                = []
 availRecSel :: AvailInfo -> OccName -> Maybe Name
 availRecSel (AvailTC p ns fs) lbl = find it ns
   where
-    it n    = nameOccName n == sel_occ
+    it n    = (nameOccName n == sel_occ) || (nameOccName n == lbl)
     sel_occ = mkRecSelOcc lbl (nameOccName p) 
+availRecSel a l = pprPanic "availRecSel" (ppr l <+> ppr a)
+
+availOverloadedFlds :: AvailInfo -> [(OccName, Name)]
+availOverloadedFlds a = foldMap overloaded (availFlds a)
+  where
+    overloaded fld = case availRecSel a fld of
+        Just name | nameOccName name /= fld -> [(fld, name)]
+        _                                   -> []
 
 -- | make a 'GlobalRdrEnv' where all the elements point to the same
 -- Provenance (useful for "hiding" imports, or imports with
@@ -113,7 +122,7 @@ gresFromAvail prov_fn prov_fld avail
   = [ GRE {gre_name = sel_name,
            gre_par = fldParent fld avail,
            gre_prov = prov_fld (fld, sel_name)}
-    | fld <- availFlds avail, let sel = availRecSel avail fld, isJust sel, let sel_name = fromJust sel ]
+    | (fld, sel_name) <- availOverloadedFlds avail ]
     ++
     [ GRE {gre_name = n,
            gre_par = parent n avail,
@@ -125,6 +134,7 @@ gresFromAvail prov_fn prov_fld avail
                              | otherwise = ParentIs m
 
     fldParent fld (AvailTC p _ _) = FldParent p fld
+    fldParent _   _               = panic "gresFromAvail/fldParent"
 
 -- -----------------------------------------------------------------------------
 -- Printing

@@ -183,7 +183,7 @@ rnHsTyKi isType doc (HsBangTy b ty)
 rnHsTyKi _ doc ty@(HsRecTy flds)
   = do { addErr (hang (ptext (sLit "Record syntax is illegal here:"))
                     2 (ppr ty))
-       ; (flds', fvs) <- rnConDeclFields doc flds
+       ; (flds', fvs) <- rnConDeclFields (error "rnHsTyKi/rnConDeclFields") doc flds
        ; return (HsRecTy flds', fvs) }
 
 rnHsTyKi isType doc (HsFunTy ty1 ty2)
@@ -501,13 +501,13 @@ but it seems tiresome to do so.
 %*********************************************************
 
 \begin{code}
-rnConDeclFields :: HsDocContext -> [ConDeclField RdrName]
+rnConDeclFields :: Name -> HsDocContext -> [ConDeclField RdrName]
                 -> RnM ([ConDeclField Name], FreeVars)
-rnConDeclFields doc fields = mapFvRn (rnField doc) fields
+rnConDeclFields tycon doc fields = mapFvRn (rnField tycon doc) fields
 
-rnField :: HsDocContext -> ConDeclField RdrName -> RnM (ConDeclField Name, FreeVars)
-rnField doc (ConDeclField name _ ty haddock_doc)
-  = do { new_name <- lookupTopBndrRn $ unLoc name
+rnField :: Name -> HsDocContext -> ConDeclField RdrName -> RnM (ConDeclField Name, FreeVars)
+rnField tycon doc (ConDeclField name _ ty haddock_doc)
+  = do { new_name <- lookupRecSelName (rdrNameOcc $ unLoc name) (nameOccName tycon)
        ; (new_ty, fvs) <- rnLHsType doc ty
        ; new_haddock_doc <- rnMbLHsDoc haddock_doc
        ; return (ConDeclField name (Just new_name) new_ty new_haddock_doc, fvs) }

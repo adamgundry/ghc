@@ -534,8 +534,10 @@ getLocalNonValBinders fixity_env
              ; return (AvailTC main_name names' (map fst flds')) }
 
     new_rec_sel tc (L loc fld) = 
-      do { sel_name <- newTopSrcBinder . L loc . mkRdrUnqual $
-                                     mkRecSelOcc (rdrNameOcc fld) tc
+      do { overloaded <- xoptM Opt_OverloadedRecordFields
+         ; let occ | overloaded = mkRecSelOcc (rdrNameOcc fld) tc
+                   | otherwise  = rdrNameOcc fld
+         ; sel_name <- newTopSrcBinder . L loc . mkRdrUnqual $ occ
          ; return (rdrNameOcc fld, sel_name) }
 
     new_assoc :: LInstDecl RdrName -> RnM [AvailInfo]

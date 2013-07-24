@@ -329,7 +329,10 @@ lookupConstructorFields con_name
 
 lookupRecSelName :: OccName -> OccName -> RnM Name
 lookupRecSelName lbl tc
-  = lookupGlobalOccRn $ mkRdrUnqual $ mkRecSelOcc lbl tc
+  = do { mn <- lookupGlobalOccRn_maybe $ mkRdrUnqual $ mkRecSelOcc lbl tc
+       ; case mn of
+           Just n  -> return n
+           Nothing -> lookupGlobalOccRn $ mkRdrUnqual lbl }
 
 
 -----------------------------------------------

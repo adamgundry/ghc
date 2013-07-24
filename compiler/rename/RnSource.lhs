@@ -502,7 +502,7 @@ rnFamInstDecl :: HsDocContext
               -> Located RdrName
               -> [LHsType RdrName]
               -> rhs
-              -> (HsDocContext -> rhs -> RnM (rhs', FreeVars))
+              -> (Name -> HsDocContext -> rhs -> RnM (rhs', FreeVars))
               -> RnM (Located Name, HsWithBndrs [LHsType Name], rhs', FreeVars)
 rnFamInstDecl doc mb_cls tycon pats payload rnPayload
   = do { tycon'   <- lookupFamInstName (fmap fst mb_cls) tycon
@@ -522,7 +522,7 @@ rnFamInstDecl doc mb_cls tycon pats payload rnPayload
               <- bindLocalNamesFV kv_names $ 
                  bindLocalNamesFV tv_names $ 
                  do { (pats', pat_fvs) <- rnLHsTypes doc pats
-                    ; (payload', rhs_fvs) <- rnPayload doc payload
+                    ; (payload', rhs_fvs) <- rnPayload (unLoc tycon') doc payload
 
                          -- See Note [Renaming associated types]
                     ; let bad_tvs = case mb_cls of
@@ -556,7 +556,7 @@ rnTyFamInstEqn mb_cls (TyFamInstEqn { tfie_tycon = tycon
                                     , tfie_pats  = HsWB { hswb_cts = pats }
                                     , tfie_rhs   = rhs })
   = do { (tycon', pats', rhs', fvs) <-
-           rnFamInstDecl (TySynCtx tycon) mb_cls tycon pats rhs rnTySyn
+           rnFamInstDecl (TySynCtx tycon) mb_cls tycon pats rhs (const rnTySyn)
        ; return (TyFamInstEqn { tfie_tycon = tycon'
                               , tfie_pats  = pats'
                               , tfie_rhs   = rhs' }, fvs) }
@@ -930,7 +930,7 @@ rnTyClDecl (DataDecl { tcdLName = tycon, tcdTyVars = tyvars, tcdDataDefn = defn 
              doc = TyDataCtx tycon
        ; traceRn (text "rntycl-data" <+> ppr tycon <+> ppr kvs)
        ; ((tyvars', defn'), fvs) <- bindHsTyVars doc Nothing kvs tyvars $ \ tyvars' ->
-                                    do { (defn', fvs) <- rnDataDefn doc defn
+                                    do { (defn', fvs) <- rnDataDefn (unLoc tycon') doc defn
                                        ; return ((tyvars', defn'), fvs) }
        ; return (DataDecl { tcdLName = tycon', tcdTyVars = tyvars'
                           , tcdDataDefn = defn', tcdFVs = fvs }, fvs) }
@@ -1045,10 +1045,10 @@ dupRoleAnnotErr list
 
       cmp_annot (L loc1 _) (L loc2 _) = loc1 `compare` loc2
 
-rnDataDefn :: HsDocContext -> HsDataDefn RdrName -> RnM (HsDataDefn Name, FreeVars)
-rnDataDefn doc (HsDataDefn { dd_ND = new_or_data, dd_cType = cType
-                           , dd_ctxt = context, dd_cons = condecls 
-                           , dd_kindSig = sig, dd_derivs = derivs })
+rnDataDefn :: Name -> HsDocContext -> HsDataDefn RdrName -> RnM (HsDataDefn Name, FreeVars)
+rnDataDefn tycon doc (HsDataDefn { dd_ND = new_or_data, dd_cType = cType
+                                 , dd_ctxt = context, dd_cons = condecls 
+                                 , dd_kindSig = sig, dd_derivs = derivs })
   = do  { checkTc (h98_style || null (unLoc context)) 
                   (badGadtStupidTheta doc)
 
@@ -1063,7 +1063,7 @@ rnDataDefn doc (HsDataDefn { dd_ND = new_or_data, dd_cType = cType
         ; let { zap_lcl_env | h98_style = \ thing -> thing
                             | otherwise = setLocalRdrEnv emptyLocalRdrEnv }
         ; (condecls', con_fvs) <- zap_lcl_env $
-                                  rnConDecls condecls
+                                  rnConDecls tycon condecls
            -- No need to check for duplicate constructor decls
            -- since that is done by RnNames.extendGlobalRdrEnvRn
 
@@ -1206,14 +1206,14 @@ badAssocRhs ns
                2 (ptext (sLit "All such variables must be bound on the LHS")))
 
 -----------------
-rnConDecls :: [LConDecl RdrName] -> RnM ([LConDecl Name], FreeVars)
-rnConDecls = mapFvRn (wrapLocFstM rnConDecl)
+rnConDecls :: Name -> [LConDecl RdrName] -> RnM ([LConDecl Name], FreeVars)
+rnConDecls tycon = mapFvRn (wrapLocFstM (rnConDecl tycon))
 
-rnConDecl :: ConDecl RdrName -> RnM (ConDecl Name, FreeVars)
-rnConDecl decl@(ConDecl { con_name = name, con_qvars = tvs
-                        , con_cxt = lcxt@(L loc cxt), con_details = details
-                        , con_res = res_ty, con_doc = mb_doc
-                        , con_old_rec = old_rec, con_explicit = expl })
+rnConDecl :: Name -> ConDecl RdrName -> RnM (ConDecl Name, FreeVars)
+rnConDecl tycon decl@(ConDecl { con_name = name, con_qvars = tvs
+                              , con_cxt = lcxt@(L loc cxt), con_details = details
+                              , con_res = res_ty, con_doc = mb_doc
+                              , con_old_rec = old_rec, con_explicit = expl })
   = do  { addLocM checkConName name
         ; when old_rec (addWarn (deprecRecSyntax decl))
         ; new_name <- lookupLocatedTopBndrRn name
@@ -1238,7 +1238,7 @@ rnConDecl decl@(ConDecl { con_name = name, con_qvars = tvs
 
         ; bindHsTyVars doc Nothing free_kvs new_tvs $ \new_tyvars -> do
         { (new_context, fvs1) <- rnContext doc lcxt
-        ; (new_details, fvs2) <- rnConDeclDetails doc details
+        ; (new_details, fvs2) <- rnConDeclDetails tycon doc details
         ; (new_details', new_res_ty, fvs3) <- rnConResult doc (unLoc new_name) new_details res_ty
         ; return (decl { con_name = new_name, con_qvars = new_tyvars, con_cxt = new_context
                        , con_details = new_details', con_res = new_res_ty, con_doc = mb_doc' },
@@ -1278,20 +1278,21 @@ rnConResult doc con details (ResTyGADT ty)
                         | otherwise
                         -> return (PrefixCon arg_tys, ResTyGADT res_ty, fvs) }
 
-rnConDeclDetails :: HsDocContext
+rnConDeclDetails :: Name
+                 -> HsDocContext
                  -> HsConDetails (LHsType RdrName) [ConDeclField RdrName]
                  -> RnM (HsConDetails (LHsType Name) [ConDeclField Name], FreeVars)
-rnConDeclDetails doc (PrefixCon tys)
+rnConDeclDetails _ doc (PrefixCon tys)
   = do { (new_tys, fvs) <- rnLHsTypes doc tys
        ; return (PrefixCon new_tys, fvs) }
 
-rnConDeclDetails doc (InfixCon ty1 ty2)
+rnConDeclDetails _ doc (InfixCon ty1 ty2)
   = do { (new_ty1, fvs1) <- rnLHsType doc ty1
        ; (new_ty2, fvs2) <- rnLHsType doc ty2
        ; return (InfixCon new_ty1 new_ty2, fvs1 `plusFV` fvs2) }
 
-rnConDeclDetails doc (RecCon fields)
-  = do  { (new_fields, fvs) <- rnConDeclFields doc fields
+rnConDeclDetails tycon doc (RecCon fields)
+  = do  { (new_fields, fvs) <- rnConDeclFields tycon doc fields
                 -- No need to check for duplicate fields
                 -- since that is done by RnNames.extendGlobalRdrEnvRn
         ; return (RecCon new_fields, fvs) }
