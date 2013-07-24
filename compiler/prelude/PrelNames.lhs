@@ -326,6 +326,10 @@ basicKnownKeyNames
 
         -- GHCi Sandbox
         , ghciIoClassName, ghciStepIoMName
+
+        -- Overloaded record fields
+        , recordHasClassName
+        , getFieldName
     ]
 
 genericTyConNames :: [Name]
@@ -1149,6 +1153,9 @@ ipClassName         = clsQual gHC_IP (fsLit "IP")      ipClassNameKey
 recordHasClassName :: Name
 recordHasClassName = clsQual gHC_RECORDS (fsLit "Has") recordHasClassNameKey
 
+getFieldName :: Name
+getFieldName = varQual gHC_RECORDS (fsLit "getField") getFieldKey
+
 
 -- dotnet interop
 objectTyConName :: Name
@@ -1805,6 +1812,10 @@ toListClassOpKey = mkPreludeMiscIdUnique 501
 
 proxyHashKey :: Unique
 proxyHashKey = mkPreludeMiscIdUnique 502
+
+-- Overloaded record fields
+getFieldKey :: Unique
+getFieldKey = mkPreludeMiscIdUnique 503
 
 ---------------- Template Haskell -------------------
 --      USES IdUniques 200-499
