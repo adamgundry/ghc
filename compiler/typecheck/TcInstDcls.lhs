@@ -425,15 +425,9 @@ tcInstDecls1 tycl_decls inst_decls deriv_decls
              mapM_ (\x -> when (typInstCheck x) recordUnsafeInfer) local_infos
 
        -- Create overloaded record field instances
-       ; fld_infos <- if not (xopt Opt_OverloadedRecordFields dflags)
-                      then return [] else
-             do { env <- getGblEnv
-                ; let gres = filter isRecFldGRE . concat . occEnvElts $
-                                 tcg_rdr_env env
-                ; mapM greToFldInst gres
-                }
-       ; let gbl_env' = gbl_env{ tcg_inst_env =
-                          extendInstEnvList (tcg_inst_env gbl_env) (map iSpec fld_infos) }
+       ; (gbl_env', fld_infos) <- if xopt Opt_OverloadedRecordFields dflags
+                                  then makeOverloadedRecFldInstances gbl_env
+                                  else return (gbl_env, [])
 
        ; return ( gbl_env'
                 , fld_infos ++ bagToList deriv_inst_info ++ local_infos
@@ -460,23 +454,6 @@ tcInstDecls1 tycl_decls inst_decls deriv_decls
     instMsg i = hang (ptext (sLit $ "Typeable instances can only be derived; replace "
                                  ++ "the following instance:"))
                      2 (pprInstance (iSpec i))
-
-    greToFldInst (GRE {gre_name = sel_name, gre_par = FldParent p fld})
-      = do { hasClass <- tcLookupClass recordHasClassName
-           ; dfun_name <- newDFunName hasClass [] noSrcSpan
-           ; fld_tv_name <- newName (mkVarOccFS (fsLit "fld"))
-           ; let fld_tv = mkTyVar fld_tv_name liftedTypeKind
-           ; tycon <- tcLookupTyCon p
-           ; sel_id <- tcLookupId sel_name
-           ; let (tyvars, sel_ty) = splitForAllTys (idType sel_id)
-                 fld_ty = snd (splitFunTy sel_ty)
-                 t_ty = mkTyConApp tycon (map mkTyVarTy tyvars)
-                 args = [t_ty, mkStrLitTy (occNameFS fld), mkTyVarTy fld_tv]
-                 theta = [mkEqPred (mkTyVarTy fld_tv) fld_ty]
-                 dfun = mkDictFunId dfun_name (fld_tv:tyvars) theta hasClass args
-                 cls_inst = mkLocalInstance dfun (NoOverlap False) (fld_tv:tyvars) hasClass args
-                 binds = unitBag $ noLoc $ FunBind (noLoc getFieldName) False (MG [noLoc (Match [] Nothing (GRHSs [noLoc (GRHS [] (noLoc (HsVar sel_name)))] EmptyLocalBinds))] [] (error "greToFldInst PostTyType")) (error "greToFldInst HsWrapper") (error "greToFldInst NameSet") Nothing
-           ; return (InstInfo cls_inst (VanillaInst binds [] False)) }
 
 addClsInsts :: [InstInfo Name] -> TcM a -> TcM a
 addClsInsts infos thing_inside
@@ -1561,6 +1538,50 @@ Note carefullly:
 * To communicate the need for an InlineCompulsory to the desugarer
   (which makes the Unfoldings), we use the IsDefaultMethod constructor
   in TcSpecPrags.
+
+
+%************************************************************************
+%*                                                                      *
+\subsection{Creating instances for OverloadedRecordFields}
+%*                                                                      *
+%************************************************************************
+
+\begin{code}
+makeOverloadedRecFldInstances :: TcGblEnv -> TcM (TcGblEnv, [InstInfo Name])
+makeOverloadedRecFldInstances gbl_env
+  = do { fld_infos <- concatMapM greToFldInst fld_gres
+       ; let gbl_env' = gbl_env{ tcg_inst_env =
+                          extendInstEnvList (tcg_inst_env gbl_env) (map iSpec fld_infos) }
+       ; return (gbl_env', fld_infos) }
+  where
+    fld_gres = filter isRecFldGRE . concat . occEnvElts $ tcg_rdr_env gbl_env
+
+    greToFldInst :: GlobalRdrElt -> TcM [InstInfo Name]
+    greToFldInst (GRE {gre_name = sel_name, gre_par = FldParent p fld})
+      = do { hasClass <- tcLookupClass recordHasClassName
+           ; dfun_name <- newDFunName hasClass [] noSrcSpan
+           ; fld_tv_name <- newName (mkVarOccFS (fsLit "fld"))
+           ; let fld_tv = mkTyVar fld_tv_name liftedTypeKind
+           ; tycon <- tcLookupTyCon p
+           ; sel_id <- tcLookupId sel_name
+           ; if not (isNaughtyRecordSelector sel_id)
+             then
+             let (tyvars, sel_ty) = splitForAllTys (idType sel_id)
+                 fld_ty   = snd (splitFunTy sel_ty)
+                 t_ty     = mkTyConApp tycon (map mkTyVarTy tyvars)
+                 args     = [t_ty, mkStrLitTy (occNameFS fld), mkTyVarTy fld_tv]
+                 theta    = [mkEqPred (mkTyVarTy fld_tv) fld_ty]
+                 dfun     = mkDictFunId dfun_name (fld_tv:tyvars) theta hasClass args
+                 cls_inst = mkLocalInstance dfun (NoOverlap False) (fld_tv:tyvars) hasClass args
+                 binds    = unitBag $ noLoc $ FunBind (noLoc getFieldName) False
+                             (MG [noLoc (Match [] Nothing (GRHSs
+                                     [noLoc (GRHS [] (noLoc (HsVar sel_name)))]
+                                     EmptyLocalBinds))] []
+                                 (error "greToFldInst PostTyType"))
+                             (error "greToFldInst HsWrapper") (error "greToFldInst NameSet") Nothing
+             in   return [(InstInfo cls_inst (VanillaInst binds [] False))]
+             else return [] }
+\end{code}
 
 
 %************************************************************************
