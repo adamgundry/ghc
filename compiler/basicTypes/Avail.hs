@@ -7,7 +7,7 @@ module Avail (
     AvailInfo(..),
     availsToNameSet,
     availsToNameEnv,
-    availName, availNames, availFlds, availRecSel,
+    availName, availNames, availFlds, availRecSel, availOverloadedRecSel,
     stableAvailCmp,
     gresFromAvails,
     gresFromAvail
@@ -96,18 +96,27 @@ availFlds _                = []
 
 -- | Find the name of the record selector for a field label
 availRecSel :: AvailInfo -> OccName -> Maybe Name
-availRecSel (AvailTC p ns fs) lbl = find it ns
+availRecSel (AvailTC p ns _) lbl = find it ns
   where
     it n    = (nameOccName n == sel_occ) || (nameOccName n == lbl)
     sel_occ = mkRecSelOcc lbl (nameOccName p) 
-availRecSel a l = pprPanic "availRecSel" (ppr l <+> ppr a)
+availRecSel _ _ = Nothing
 
+-- | Find the name of the overloaded record selector for a field label
+availOverloadedRecSel :: AvailInfo -> OccName -> Maybe Name
+availOverloadedRecSel (AvailTC p ns _) lbl = find it ns
+  where
+    it n    = nameOccName n == sel_occ
+    sel_occ = mkRecSelOcc lbl (nameOccName p) 
+availOverloadedRecSel _ _ = Nothing
+
+-- | List the (field label, selector) pairs for any overloaded fields
 availOverloadedFlds :: AvailInfo -> [(OccName, Name)]
 availOverloadedFlds a = foldMap overloaded (availFlds a)
   where
-    overloaded fld = case availRecSel a fld of
-        Just name | nameOccName name /= fld -> [(fld, name)]
-        _                                   -> []
+    overloaded fld = case availOverloadedRecSel a fld of
+        Just name -> [(fld, name)]
+        _         -> []
 
 -- | make a 'GlobalRdrEnv' where all the elements point to the same
 -- Provenance (useful for "hiding" imports, or imports with
