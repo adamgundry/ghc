@@ -696,10 +696,13 @@ lookupGlobalOccRn_overloaded rdr_name
         ; overload_ok <- xoptM Opt_OverloadedRecordFields
         ; case lookupGRE_RdrName rdr_name env of
                 []    -> return Nothing
-                [gre] | isRecFldGRE gre -> return (Just (Right (greOccName gre, Just (gre_name gre))))
-                [gre]                   -> return (Just (Left (gre_name gre)))
+                [gre] | isRecFldGRE gre -> do { addUsedRdrName True gre rdr_name
+                                              ; return (Just (Right (greOccName gre, Just (gre_name gre)))) }
+                [gre]                   -> do { addUsedRdrName True gre rdr_name
+                                              ; return (Just (Left (gre_name gre))) }
                 gres  | all isRecFldGRE gres
-                        && overload_ok  -> return (Just (Right (greOccName (head gres), Nothing)))
+                        && overload_ok  -> do { addUsedRdrName True (head gres) rdr_name
+                                              ; return (Just (Right (greOccName (head gres), Nothing))) }
                 gres                    -> do { addNameClashErrRn rdr_name gres
                                               ; return (Just (Left (gre_name (head gres)))) } }
 
