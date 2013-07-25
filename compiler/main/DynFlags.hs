@@ -2900,6 +2900,8 @@ impliedFlags
     , (Opt_ImplicitParams, turnOn, Opt_FlexibleInstances)
 
     , (Opt_JavaScriptFFI, turnOn, Opt_InterruptibleFFI)
+
+    , (Opt_OverloadedRecordFields, turnOn, Opt_DisambiguateRecordFields)
   ]
 
 optLevelFlags :: [([Int], GeneralFlag)]
