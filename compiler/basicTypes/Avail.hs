@@ -138,9 +138,10 @@ gresFromAvail prov_fn prov_fld avail
            gre_prov = prov_fn n}
     | n <- availNames avail ]
   where
-    parent _ (Avail _)                   = NoParent
-    parent n (AvailTC m _ _) | n == m    = NoParent
-                             | otherwise = ParentIs m
+    parent _ (Avail _)                                  = NoParent
+    parent n (AvailTC m _ fs) | n == m                  = NoParent
+                              | nameOccName n `elem` fs = FldParent m (nameOccName n)
+                              | otherwise               = ParentIs m
 
     fldParent fld (AvailTC p _ _) = FldParent p fld
     fldParent _   _               = panic "gresFromAvail/fldParent"
