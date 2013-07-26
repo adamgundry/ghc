@@ -52,6 +52,7 @@ import Pair
 import CoreUnfold ( mkDFunUnfolding )
 import CoreSyn    ( Expr(Var, Type), CoreExpr, mkTyApps, mkVarApps )
 import PrelNames  ( tYPEABLE_INTERNAL, typeableClassName, oldTypeableClassNames, recordHasClassName, getFieldName )
+import RnEnv      ( addUsedRdrNames )
 
 import Bag
 import BasicTypes
@@ -1558,7 +1559,8 @@ makeOverloadedRecFldInstances gbl_env
 
     greToFldInst :: GlobalRdrElt -> TcM [InstInfo Name]
     greToFldInst (GRE {gre_name = sel_name, gre_par = FldParent p fld})
-      = do { hasClass <- tcLookupClass recordHasClassName
+      = do { addUsedRdrNames [mkRdrUnqual (nameOccName sel_name)]
+           ; hasClass <- tcLookupClass recordHasClassName
            ; dfun_name <- newDFunName hasClass [] noSrcSpan
            ; fld_tv_name <- newName (mkVarOccFS (fsLit "fld"))
            ; let fld_tv = mkTyVar fld_tv_name liftedTypeKind
