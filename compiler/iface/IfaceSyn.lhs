@@ -1111,7 +1111,7 @@ pprIfaceConDecl tc
          ppUnless (null strs) $
             nest 4 (ptext (sLit "Stricts:") <+> hsep (map ppr_bang strs)),
          ppUnless (null fields) $
-            nest 4 (ptext (sLit "Fields:") <+> hsep (map ppr fields))]
+            nest 4 (ptext (sLit "Fields:") <+> hsep (map (ppr . fst) fields))]
   where
     ppr_bang IfNoBang = char '_'        -- Want to see these
     ppr_bang IfStrict = char '!'
