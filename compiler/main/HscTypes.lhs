@@ -1496,8 +1496,8 @@ tyThingAvailInfo (ATyCon t)
                                  ++ map getName (classATs c))
                              []
              where n = getName c
-        Nothing -> AvailTC n (n : map getName dcs ++ concatMap (map snd . dataConFieldLabels) dcs)
-                             (concatMap (map fst . dataConFieldLabels) dcs)
+        Nothing -> AvailTC n (n : map getName dcs)
+                             (concatMap dataConFieldLabels dcs)
              where n = getName t
                    dcs = tyConDataCons t
 tyThingAvailInfo t

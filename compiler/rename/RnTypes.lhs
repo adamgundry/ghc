@@ -503,11 +503,13 @@ but it seems tiresome to do so.
 \begin{code}
 rnConDeclFields :: Name -> HsDocContext -> [ConDeclField RdrName]
                 -> RnM ([ConDeclField Name], FreeVars)
-rnConDeclFields tycon doc fields = mapFvRn (rnField tycon doc) fields
+rnConDeclFields con doc fields = mapFvRn (rnField con doc) fields
 
 rnField :: Name -> HsDocContext -> ConDeclField RdrName -> RnM (ConDeclField Name, FreeVars)
-rnField tycon doc (ConDeclField name _ ty haddock_doc)
-  = do { new_name <- lookupRecSelName (rdrNameOcc $ unLoc name) (nameOccName tycon)
+rnField con doc (ConDeclField name _ ty haddock_doc)
+  = do { flds <- lookupConstructorFields con
+       ; let lbl = rdrNameOcc $ unLoc name
+       ; let new_name = expectJust "rnField" $ lookup lbl flds
        ; (new_ty, fvs) <- rnLHsType doc ty
        ; new_haddock_doc <- rnMbLHsDoc haddock_doc
        ; return (ConDeclField name (Just new_name) new_ty new_haddock_doc, fvs) }

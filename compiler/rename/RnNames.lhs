@@ -474,7 +474,7 @@ used for source code.
 
 \begin{code}
 getLocalNonValBinders :: MiniFixityEnv -> HsGroup RdrName
-                      -> RnM ((TcGblEnv, TcLclEnv), NameSet)
+                      -> RnM ((TcGblEnv, TcLclEnv), NameSet, [(OccName, Name)])
 -- Get all the top-level binders bound the group *except*
 -- for value bindings, which are treated separately
 -- Specifically we return AvailInfo for
@@ -511,8 +511,9 @@ getLocalNonValBinders fixity_env
         ; let avails    = nti_avails ++ val_avails
               new_bndrs = availsToNameSet avails `unionNameSets`
                           availsToNameSet tc_avails
+              flds      = concatMap availFlds (nti_avails ++ tc_avails)
         ; envs <- extendGlobalRdrEnvRn avails fixity_env
-        ; return (envs, new_bndrs) } }
+        ; return (envs, new_bndrs, flds) } }
   where
     for_hs_bndrs :: [Located RdrName]
     for_hs_bndrs = [nm | L _ (ForeignImport nm _ _ _) <- foreign_decls]
@@ -529,9 +530,8 @@ getLocalNonValBinders fixity_env
     new_tc tc_decl              -- NOT for type/data instances
         = do { let (bndrs, flds) = hsTyClDeclBinders (unLoc tc_decl)
              ; names@(main_name : _) <- mapM newTopSrcBinder bndrs
-             ; flds' <- mapM (new_rec_sel (nameOccName main_name)) flds
-             ; let names' = names ++ map snd flds'
-             ; return (AvailTC main_name names' (map fst flds')) }
+             ; flds' <- mapM (new_rec_sel (nameOccName main_name) . fst) flds
+             ; return (AvailTC main_name names flds') }
 
     new_rec_sel tc (L loc fld) = 
       do { overloaded <- xoptM Opt_OverloadedRecordFields
@@ -562,9 +562,8 @@ getLocalNonValBinders fixity_env
         = do { main_name <- lookupFamInstName mb_cls (dfid_tycon ti_decl)
              ; let (bndrs, flds) = hsDataFamInstBinders ti_decl
              ; sub_names <- mapM newTopSrcBinder bndrs
-             ; flds' <- mapM (new_rec_sel (nameOccName $ unLoc main_name)) flds
-             ; let sub_names' = sub_names ++ map snd flds'
-             ; return (AvailTC (unLoc main_name) sub_names' (map fst flds')) }
+             ; flds' <- mapM (new_rec_sel (nameOccName $ unLoc main_name) . fst) flds
+             ; return (AvailTC (unLoc main_name) sub_names flds') }
                         -- main_name is not bound here!
 \end{code}
 
@@ -737,12 +736,10 @@ filterImports iface decl_spec (Just (want_hiding, import_items))
                   return ([mkIEThingAbs nameAvail], [])
 
         IEThingWith tc ns fs -> do
-           (name, avail@(AvailTC _ subnames subflds), mb_parent) <- lookup_name tc
+           (name, AvailTC _ subnames subflds, mb_parent) <- lookup_name tc
 
            -- Look up the children in the sub-names of the parent
-           let subs = map Left subnames ++ map (\ f -> Right (f, recSel f)) subflds
-               recSel f = expectJust "filterImports/availRecSel invariant violation"
-                              (availRecSel avail f)
+           let subs = map Left subnames ++ map Right subflds
                mb_children = lookupChildren subs (ns ++ map mkRdrUnqual fs)
 
            (childnames, childflds) <- if any isNothing mb_children
@@ -750,13 +747,13 @@ filterImports iface decl_spec (Just (want_hiding, import_items))
                                       else return (childrenNamesFlds (catMaybes mb_children))
            case mb_parent of
              -- non-associated ty/cls
-             Nothing     -> return ([(IEThingWith name childnames childflds,
+             Nothing     -> return ([(IEThingWith name childnames (map fst childflds),
                                       AvailTC name (name:childnames) childflds)],
                                     [])
              -- associated ty
-             Just parent -> return ([(IEThingWith name childnames childflds,
+             Just parent -> return ([(IEThingWith name childnames (map fst childflds),
                                       AvailTC name childnames childflds),
-                                     (IEThingWith name childnames childflds,
+                                     (IEThingWith name childnames (map fst childflds),
                                       AvailTC parent [name] [])],
                                     [])
 
@@ -808,7 +805,7 @@ greExportAvail :: GlobalRdrElt -> AvailInfo
 greExportAvail gre
   = case gre_par gre of
       ParentIs p                  -> AvailTC p [me] []
-      FldParent p f               -> AvailTC p [me] [f]
+      FldParent p f               -> AvailTC p [] [(f, me)]
       NoParent   | isTyConName me -> AvailTC me [me] []
                  | otherwise      -> Avail   me
   where
@@ -827,19 +824,16 @@ plusAvail (AvailTC n1 (s1:ss1) fs1) (AvailTC n2 (s2:ss2) fs2)
        (True,False)  -> AvailTC n1 (s1 : (ss1 `unionLists` (s2:ss2))) (fs1 `unionLists` fs2)
        (False,True)  -> AvailTC n1 (s2 : ((s1:ss1) `unionLists` ss2)) (fs1 `unionLists` fs2)
        (False,False) -> AvailTC n1 ((s1:ss1) `unionLists` (s2:ss2)) (fs1 `unionLists` fs2)
--- plusAvail (AvailTC n1 ss1 fs1)   (AvailTC _ [] fs2)  = AvailTC n1 ss1 (fs1 `unionLists` fs2)
--- plusAvail (AvailTC n1 [] fs1)    (AvailTC _ ss2 fs2) = AvailTC n1 ss2 (fs1 `unionLists` fs2)
+plusAvail (AvailTC n1 ss1 fs1)   (AvailTC _ [] fs2)  = AvailTC n1 ss1 (fs1 `unionLists` fs2)
+plusAvail (AvailTC n1 [] fs1)    (AvailTC _ ss2 fs2) = AvailTC n1 ss2 (fs1 `unionLists` fs2)
 plusAvail a1 a2 = pprPanic "RnEnv.plusAvail" (hsep [ppr a1,ppr a2])
-
--- | smart constructor for |AvailTC| that maintains the record field invariant
-mkAvailTC :: Name -> [Name] -> [OccName] -> AvailInfo
-mkAvailTC n ns fs = AvailTC n ns (filter hasRecSel fs)
-  where hasRecSel = isJust . availRecSel (AvailTC n ns [])
 
 -- | trims an 'AvailInfo' to keep only a single name
 trimAvail :: AvailInfo -> Name -> AvailInfo
 trimAvail (Avail n)         _ = Avail n
-trimAvail (AvailTC n ns fs) m = ASSERT( m `elem` ns) mkAvailTC n [m] fs
+trimAvail (AvailTC n ns fs) m = case find ((== m) . snd) fs of
+                                  Just x  -> AvailTC n [] [x]
+                                  Nothing -> ASSERT (n `elem` ns) AvailTC n [m] []
 
 -- | filters 'AvailInfo's by the given predicate
 filterAvails  :: (Name -> Bool) -> [AvailInfo] -> [AvailInfo]
@@ -852,8 +846,9 @@ filterAvail keep ie rest =
     Avail n | keep n    -> ie : rest
             | otherwise -> rest
     AvailTC tc ns fs ->
-        let left = filter keep ns in
-        if null left then rest else mkAvailTC tc left fs : rest
+        let ns' = filter keep ns
+            fs' = filter (keep . snd) fs in
+        if null ns' && null fs' then rest else AvailTC tc ns' fs' : rest
 
 -- | Given an import\/export spec, construct the appropriate 'GlobalRdrElt's.
 gresFromIE :: ImpDeclSpec -> (LIE Name, AvailInfo) -> [GlobalRdrElt]
@@ -906,11 +901,8 @@ lookupChildren all_kids rdr_items
   where
     kid_env = mkFsEnv [(occNameFS (childOccName n), n) | n <- all_kids]
 
-childrenNamesFlds :: [ChildName] -> ([Name], [OccName])
-childrenNamesFlds xs = (sel_names ++ names, lbls)
-  where
-    (names, flds) = partitionWith id xs
-    (lbls, sel_names) = unzip flds
+childrenNamesFlds :: [ChildName] -> ([Name], [(OccName, Name)])
+childrenNamesFlds xs = partitionWith id xs
 
 -- | Combines 'AvailInfo's from the same family
 -- 'avails' may have several items with the same availName
@@ -1157,7 +1149,7 @@ exports_from_avail (Just rdr_items) rdr_env imports this_mod
                 else do let kids          = catMaybes mb_names
                             (names, flds) = childrenNamesFlds kids
                         addUsedKids rdr kids
-                        return ( IEThingWith name names flds
+                        return ( IEThingWith name names (map fst flds)
                                , AvailTC name (name:names) flds)
 
     lookup_ie _ = panic "lookup_ie"    -- Other cases covered earlier
@@ -1554,7 +1546,7 @@ printMinimalImports imports_w_usage
                  , x `elem` xs    -- Note [Partial export]
                  ] of
            [xs] | all_used xs -> [IEThingAll n]
-                | otherwise   -> [IEThingWith n (filter (/= n) ns) fs]
+                | otherwise   -> [IEThingWith n (filter (/= n) ns) (map fst fs)]
            _other             -> map IEVar ns
         where
           all_used avail_occs = all (`elem` ns) avail_occs

@@ -50,7 +50,7 @@ module Util (
 
         -- * Comparisons
         isEqual, eqListBy, eqMaybeBy,
-        thenCmp, cmpList,
+        thenCmp, cmpList, cmpPair,
         removeSpaces,
 
         -- * Edit distance
@@ -638,6 +638,9 @@ cmpList _   []     _  = LT
 cmpList _   _      [] = GT
 cmpList cmp (a:as) (b:bs)
   = case cmp a b of { EQ -> cmpList cmp as bs; xxx -> xxx }
+
+cmpPair :: (a -> a -> Ordering) -> (b -> b -> Ordering) -> (a, b) -> (a, b) -> Ordering
+cmpPair cmpa cmpb (a1, b1) (a2, b2) = cmpa a1 a2 `thenCmp` cmpb b1 b2
 \end{code}
 
 \begin{code}

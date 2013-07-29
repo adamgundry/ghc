@@ -19,7 +19,7 @@ module RnEnv (
         lookupFixityRn, lookupTyFixityRn,
         lookupInstDeclBndr, lookupSubBndrOcc, lookupFamInstName,
         greRdrName,
-        lookupSubBndrGREs, lookupConstructorFields, lookupRecSelName,
+        lookupSubBndrGREs, lookupConstructorFields,
         lookupSyntaxName, lookupSyntaxNames, lookupIfThenElse,
         lookupGreRn, lookupGreRn_maybe,
         lookupGlobalOccInThisModule, lookupGreLocalRn_maybe, 
@@ -327,16 +327,6 @@ lookupConstructorFields con_name
           else
           do { con <- tcLookupDataCon con_name
              ; return (dataConFieldLabels con) } }
-
-
--- Lookup a record selector name *in this module*, given the OccNames
--- of the field and the type constructor.
-lookupRecSelName :: OccName -> OccName -> RnM Name
-lookupRecSelName lbl tc
-  = do { mn <- lookupTopBndrRn_maybe $ mkRdrUnqual $ mkRecSelOcc lbl tc
-       ; case mn of
-           Just n  -> return n
-           Nothing -> lookupTopBndrRn $ mkRdrUnqual lbl }
 
 
 -----------------------------------------------

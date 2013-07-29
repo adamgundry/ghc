@@ -616,7 +616,7 @@ variables bound by the lazy pattern are n,m, *not* the dictionary d.
 So in mkSelectorBinds in DsUtils, we want just m,n as the variables bound.
 
 \begin{code}
-hsGroupBinders :: HsGroup Name -> ([Name], [RdrName])
+hsGroupBinders :: HsGroup Name -> ([Name], [(RdrName, Name)])
 hsGroupBinders (HsGroup { hs_valds = val_decls, hs_tyclds = tycl_decls,
                           hs_instds = inst_decls, hs_fords = foreign_decls })
 -- Collect the binders of a Group
@@ -628,16 +628,16 @@ hsForeignDeclsBinders :: [LForeignDecl Name] -> [Name]
 hsForeignDeclsBinders foreign_decls
   = [n | L _ (ForeignImport (L _ n) _ _ _) <- foreign_decls]
 
-hsTyClDeclsBinders :: [TyClGroup Name] -> [Located (InstDecl Name)] -> ([Name], [RdrName])
+hsTyClDeclsBinders :: [TyClGroup Name] -> [Located (InstDecl Name)] -> ([Name], [(RdrName, Name)])
 -- We need to look at instance declarations too, 
 -- because their associated types may bind data constructors
 hsTyClDeclsBinders tycl_decls inst_decls
   = unLocs (foldMap (foldMap hsLTyClDeclBinders . group_tyclds) tycl_decls `mappend`
                           foldMap (hsInstDeclBinders . unLoc) inst_decls)
-  where unLocs (xs, ys) = (map unLoc xs, map unLoc ys)
+  where unLocs (xs, ys) = (map unLoc xs, map (\ (x, y) -> (unLoc x, y)) ys)
 
 -------------------
-hsLTyClDeclBinders :: Eq name => Located (TyClDecl name) -> ([Located name], [Located RdrName])
+hsLTyClDeclBinders :: Eq name => Located (TyClDecl name) -> ([Located name], [(Located RdrName, name)])
 -- ^ Returns all the /binding/ names of the decl, along with their SrcLocs.
 -- The first one is guaranteed to be the name of the decl. For record fields
 -- mentioned in multiple constructors, the SrcLoc will be from the first
@@ -645,7 +645,7 @@ hsLTyClDeclBinders :: Eq name => Located (TyClDecl name) -> ([Located name], [Lo
 hsLTyClDeclBinders (L _ d) = hsTyClDeclBinders d
 
 -------------------
-hsTyClDeclBinders :: Eq name => TyClDecl name -> ([Located name], [Located RdrName])
+hsTyClDeclBinders :: Eq name => TyClDecl name -> ([Located name], [(Located RdrName, name)])
 hsTyClDeclBinders (FamDecl { tcdFam = FamilyDecl { fdLName = name} }) = ([name], [])
 hsTyClDeclBinders (ForeignType {tcdLName = name}) = ([name], [])
 hsTyClDeclBinders (SynDecl     {tcdLName = name}) = ([name], [])
@@ -661,25 +661,25 @@ hsTyClDeclBinders (DataDecl { tcdLName = name, tcdDataDefn = defn })
   = (\ (xs, ys) -> (name : xs, ys)) $ hsDataDefnBinders defn
 
 -------------------
-hsInstDeclBinders :: Eq name => InstDecl name -> ([Located name], [Located RdrName])
+hsInstDeclBinders :: Eq name => InstDecl name -> ([Located name], [(Located RdrName, name)])
 hsInstDeclBinders (ClsInstD { cid_inst = ClsInstDecl { cid_datafam_insts = dfis } })
   = foldMap (hsDataFamInstBinders . unLoc) dfis
 hsInstDeclBinders (DataFamInstD { dfid_inst = fi }) = hsDataFamInstBinders fi
 hsInstDeclBinders (TyFamInstD {}) = mempty
 
 -------------------
-hsDataFamInstBinders :: Eq name => DataFamInstDecl name -> ([Located name], [Located RdrName])
+hsDataFamInstBinders :: Eq name => DataFamInstDecl name -> ([Located name], [(Located RdrName, name)])
 hsDataFamInstBinders (DataFamInstDecl { dfid_defn = defn })
   = hsDataDefnBinders defn
   -- There can't be repeated symbols because only data instances have binders
 
 -------------------
-hsDataDefnBinders :: Eq name => HsDataDefn name -> ([Located name], [Located RdrName])
+hsDataDefnBinders :: Eq name => HsDataDefn name -> ([Located name], [(Located RdrName, name)])
 hsDataDefnBinders (HsDataDefn { dd_cons = cons }) = hsConDeclsBinders cons
   -- See Note [Binders in family instances]
 
 -------------------
-hsConDeclsBinders :: (Eq name) => [LConDecl name] -> ([Located name], [Located RdrName])
+hsConDeclsBinders :: (Eq name) => [LConDecl name] -> ([Located name], [(Located RdrName, name)])
   -- See hsTyClDeclBinders for what this does
   -- The function is boringly complicated because of the records
   -- And since we only have equality, we have to be a little careful
@@ -687,9 +687,10 @@ hsConDeclsBinders cons
   = foldl do_one ([], []) cons
   where
     do_one (acc, flds_seen) (L _ (ConDecl { con_name = lname, con_details = RecCon flds }))
-	= (lname : mapCatMaybes cd_fld_name new_flds ++ acc, map cd_fld_lbl new_flds ++ flds_seen)
+	= (lname : acc, map cd_fld_lfld new_flds ++ flds_seen)
 	where
-	  new_flds = filterOut (\f -> unLoc (cd_fld_lbl f) `elem` map unLoc flds_seen) flds
+	  new_flds = filterOut (\ x -> unLoc (cd_fld_lbl x) `elem` map (unLoc . fst) flds_seen) flds
+          cd_fld_lfld x = (cd_fld_lbl x, expectJust "hsConDeclsBinders/cd_fld_lfld" (cd_fld_sel x))
 
     do_one (acc, flds_seen) (L _ (ConDecl { con_name = lname }))
 	= (lname:acc, flds_seen)

@@ -7,7 +7,7 @@ module Avail (
     AvailInfo(..),
     availsToNameSet,
     availsToNameEnv,
-    availName, availNames, availFlds, availRecSel, availOverloadedRecSel,
+    availName, availNames, availNonFldNames, availFlds,
     stableAvailCmp,
     gresFromAvails,
     gresFromAvail
@@ -34,20 +34,18 @@ import Data.Maybe
 data AvailInfo = Avail Name      -- ^ An ordinary identifier in scope
                | AvailTC Name
                          [Name]
-                         [OccName]
+                         [(OccName, Name)]
                                  -- ^ A type or class in scope. Parameters:
                                  --
                                  --  1) The name of the type or class
                                  --  2) The available pieces of type or class.
-                                 --  3) The record fields of the type.
+                                 --  3) The record fields of the type, with their selectors.
                                  --
                                  -- The AvailTC Invariant:
                                  --   * If the type or class is itself
                                  --     to be in scope, it must be
                                  --     *first* in this list.  Thus,
                                  --     typically: @AvailTC Eq [Eq, ==, \/=]@
-                                 --   * For every field, the corresponding
-                                 --     selector must also be available.
                 deriving( Eq )
                         -- Equality used when deciding if the
                         -- interface has changed
@@ -62,7 +60,7 @@ stableAvailCmp (Avail {})         (AvailTC {})   = LT
 stableAvailCmp (AvailTC n ns nfs) (AvailTC m ms mfs) =
     (n `stableNameCmp` m) `thenCmp`
     (cmpList stableNameCmp ns ms) `thenCmp`
-    (cmpList compare nfs mfs)
+    (cmpList (cmpPair compare stableNameCmp) nfs mfs)
 stableAvailCmp (AvailTC {})       (Avail {})     = GT
 
 
@@ -86,37 +84,18 @@ availName (AvailTC n _ _) = n
 
 -- | All names made available by the availability information
 availNames :: AvailInfo -> [Name]
-availNames (Avail n)        = [n]
-availNames (AvailTC _ ns _) = ns
+availNames (Avail n)         = [n]
+availNames (AvailTC _ ns fs) = ns ++ map snd fs
+
+-- | Names for non-fields made available by the availability information
+availNonFldNames :: AvailInfo -> [Name]
+availNonFldNames (Avail n)        = [n]
+availNonFldNames (AvailTC _ ns _) = ns
 
 -- | Fields made available by the availability information
-availFlds :: AvailInfo -> [OccName]
+availFlds :: AvailInfo -> [(OccName, Name)]
 availFlds (AvailTC _ _ fs) = fs
 availFlds _                = []
-
--- | Find the name of the record selector for a field label
-availRecSel :: AvailInfo -> OccName -> Maybe Name
-availRecSel (AvailTC p ns _) lbl = find it ns
-  where
-    it n    = (nameOccName n == sel_occ) || (nameOccName n == lbl)
-    sel_occ = mkRecSelOcc lbl (nameOccName p) 
-availRecSel _ _ = Nothing
-
--- | Find the name of the overloaded record selector for a field label
-availOverloadedRecSel :: AvailInfo -> OccName -> Maybe Name
-availOverloadedRecSel (AvailTC p ns _) lbl = find it ns
-  where
-    it n    = nameOccName n == sel_occ
-    sel_occ = mkRecSelOcc lbl (nameOccName p) 
-availOverloadedRecSel _ _ = Nothing
-
--- | List the (field label, selector) pairs for any overloaded fields
-availOverloadedFlds :: AvailInfo -> [(OccName, Name)]
-availOverloadedFlds a = foldMap overloaded (availFlds a)
-  where
-    overloaded fld = case availOverloadedRecSel a fld of
-        Just name -> [(fld, name)]
-        _         -> []
 
 -- | make a 'GlobalRdrEnv' where all the elements point to the same
 -- Provenance (useful for "hiding" imports, or imports with
@@ -131,17 +110,16 @@ gresFromAvail prov_fn prov_fld avail
   = [ GRE {gre_name = sel_name,
            gre_par = fldParent fld avail,
            gre_prov = prov_fld (fld, sel_name)}
-    | (fld, sel_name) <- availOverloadedFlds avail ]
+    | (fld, sel_name) <- availFlds avail ]
     ++
     [ GRE {gre_name = n,
            gre_par = parent n avail,
            gre_prov = prov_fn n}
-    | n <- availNames avail ]
+    | n <- availNonFldNames avail ]
   where
-    parent _ (Avail _)                                  = NoParent
-    parent n (AvailTC m _ fs) | n == m                  = NoParent
-                              | nameOccName n `elem` fs = FldParent m (nameOccName n)
-                              | otherwise               = ParentIs m
+    parent _ (Avail _)                                 = NoParent
+    parent n (AvailTC m _ _) | n == m                  = NoParent
+                             | otherwise               = ParentIs m
 
     fldParent fld (AvailTC p _ _) = FldParent p fld
     fldParent _   _               = panic "gresFromAvail/fldParent"
