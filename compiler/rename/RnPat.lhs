@@ -565,8 +565,9 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
                    = rdr `elemLocalRdrEnv` lcl_env
                    || notNull [ gre | gre <- lookupGRE_RdrName rdr rdr_env
                                     , case gre_par gre of
-                                        ParentIs p -> p /= parent_tc
-                                        _          -> True ]
+                                        ParentIs p    -> p /= parent_tc
+                                        FldParent p _ -> p /= parent_tc
+                                        NoParent      -> True ]
                    where
                      rdr = mkRdrUnqual lbl
 
