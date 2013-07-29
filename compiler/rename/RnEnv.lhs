@@ -987,7 +987,7 @@ lookupBindGroupOcc ctxt what rdr_name
                [] | null all_gres -> bale_out_with empty
                   | otherwise -> bale_out_with local_msg
                (gre:_)
-                  | ParentIs {} <- gre_par gre
+                  | gre_par gre /= NoParent
                   , not meth_ok
                   -> bale_out_with sub_msg
                   | otherwise
