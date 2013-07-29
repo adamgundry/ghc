@@ -183,7 +183,8 @@ rnHsTyKi isType doc (HsBangTy b ty)
 rnHsTyKi _ doc ty@(HsRecTy flds)
   = do { addErr (hang (ptext (sLit "Record syntax is illegal here:"))
                     2 (ppr ty))
-       ; (flds', fvs) <- rnConDeclFields (error "rnHsTyKi/rnConDeclFields") doc flds
+       ; let bogus_con = mkUnboundName (mkRdrUnqual (mkTcOcc "bogus_con"))
+       ; (flds', fvs) <- rnConDeclFields bogus_con doc flds
        ; return (HsRecTy flds', fvs) }
 
 rnHsTyKi isType doc (HsFunTy ty1 ty2)
