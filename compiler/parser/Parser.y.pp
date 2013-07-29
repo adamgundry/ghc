@@ -1313,7 +1313,7 @@ fielddecls1 :: { [ConDeclField RdrName] }
         | fielddecl   { $1 }
 
 fielddecl :: { [ConDeclField RdrName] }    -- A list because of   f,g :: Int
-        : maybe_docnext sig_vars '::' ctype maybe_docprev      { [ ConDeclField fld Nothing $4 ($1 `mplus` $5)
+        : maybe_docnext sig_vars '::' ctype maybe_docprev      { [ ConDeclField fld (error "cd_fld_sel not set") $4 ($1 `mplus` $5)
                                                                  | fld <- reverse (unLoc $2) ] }
 
 -- We allow the odd-looking 'inst_type' in a deriving clause, so that

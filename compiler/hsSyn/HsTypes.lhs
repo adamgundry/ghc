@@ -54,7 +54,6 @@ import SrcLoc
 import StaticFlags
 import Outputable
 import FastString
-import Maybes
 
 import Data.Data
 \end{code}
@@ -372,18 +371,16 @@ data HsExplicitFlag = Explicit | Implicit deriving (Data, Typeable)
 
 data ConDeclField name  -- Record fields have Haddoc docs on them
   = ConDeclField { cd_fld_lbl  :: Located RdrName,
-                   cd_fld_sel  :: Maybe name,
+                   cd_fld_sel  :: name,  -- error thunk until after renaming
                    cd_fld_type :: LBangType name, 
                    cd_fld_doc  :: Maybe LHsDocString }
   deriving (Data, Typeable)
 
-cd_fld_name :: ConDeclField name -> Maybe (Located name)
-cd_fld_name x = fmap (\ sel_name -> L (getLoc (cd_fld_lbl x)) sel_name) $ cd_fld_sel x
+cd_fld_name :: ConDeclField name -> Located name
+cd_fld_name x = L (getLoc (cd_fld_lbl x)) $ cd_fld_sel x
 
 cd_fld_fld :: ConDeclField name -> (OccName, name)
-cd_fld_fld x = (lbl, sel_name)
-  where lbl      = rdrNameOcc . unLoc . cd_fld_lbl $ x
-        sel_name = expectJust "cd_fld_fld" $ cd_fld_sel x
+cd_fld_fld x = (rdrNameOcc . unLoc . cd_fld_lbl $ x, cd_fld_sel x)
 
 -----------------------
 -- Combine adjacent for-alls. 

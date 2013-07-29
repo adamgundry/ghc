@@ -93,7 +93,6 @@ import FastString
 import Util
 import Bag
 import Outputable
-import Maybes
 import Data.Either
 import Data.Foldable (foldMap)
 import Data.Monoid
@@ -690,7 +689,7 @@ hsConDeclsBinders cons
 	= (lname : acc, map cd_fld_lfld new_flds ++ flds_seen)
 	where
 	  new_flds = filterOut (\ x -> unLoc (cd_fld_lbl x) `elem` map (unLoc . fst) flds_seen) flds
-          cd_fld_lfld x = (cd_fld_lbl x, expectJust "hsConDeclsBinders/cd_fld_lfld" (cd_fld_sel x))
+          cd_fld_lfld x = (cd_fld_lbl x, cd_fld_sel x)
 
     do_one (acc, flds_seen) (L _ (ConDecl { con_name = lname }))
 	= (lname:acc, flds_seen)

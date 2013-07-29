@@ -393,7 +393,7 @@ cvt_id_arg :: (TH.Name, TH.Strict, TH.Type) -> CvtM (ConDeclField RdrName)
 cvt_id_arg (i, str, ty)
   = do  { i' <- vNameL i
         ; ty' <- cvt_arg (str,ty)
-        ; return (ConDeclField { cd_fld_lbl = i', cd_fld_sel = Nothing
+        ; return (ConDeclField { cd_fld_lbl = i', cd_fld_sel = error "cvt_id_arg"
                                , cd_fld_type =  ty', cd_fld_doc = Nothing}) }
 
 cvtDerivs :: [TH.Name] -> CvtM (Maybe [LHsType RdrName])

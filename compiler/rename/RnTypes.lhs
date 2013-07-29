@@ -512,7 +512,7 @@ rnField con doc (ConDeclField name _ ty haddock_doc)
        ; let new_name = expectJust "rnField" $ lookup lbl flds
        ; (new_ty, fvs) <- rnLHsType doc ty
        ; new_haddock_doc <- rnMbLHsDoc haddock_doc
-       ; return (ConDeclField name (Just new_name) new_ty new_haddock_doc, fvs) }
+       ; return (ConDeclField name new_name new_ty new_haddock_doc, fvs) }
 
 rnContext :: HsDocContext -> LHsContext RdrName -> RnM (LHsContext Name, FreeVars)
 rnContext doc (L loc cxt)
