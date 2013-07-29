@@ -1485,8 +1485,8 @@ checkValidTyCon tc role_annots
         fty1 = dataConFieldType con1 label
 
         checkOne (_, con2)    -- Do it bothways to ensure they are structurally identical
-            = do { checkFieldCompat label con1 con2 ts1 res1 res2 fty1 fty2
-                 ; checkFieldCompat label con2 con1 ts2 res2 res1 fty2 fty1 }
+            = do { checkFieldCompat (fst label) con1 con2 ts1 res1 res2 fty1 fty2
+                 ; checkFieldCompat (fst label) con2 con1 ts2 res2 res1 fty2 fty1 }
             where
                 (tvs2, _, _, res2) = dataConSig con2
                 ts2 = mkVarSet tvs2
@@ -1583,7 +1583,7 @@ checkValidClosedCoAxiom (CoAxiom { co_ax_branches = branches, co_ax_tc = tc })
               addErrTc $ inaccessibleCoAxBranch tc cur_branch
             ; return (cur_branch : prev_branches) }
 
-checkFieldCompat :: FieldLabel -> DataCon -> DataCon -> TyVarSet
+checkFieldCompat :: OccName -> DataCon -> DataCon -> TyVarSet
                  -> Type -> Type -> Type -> Type -> TcM ()
 checkFieldCompat fld con1 con2 tvs1 res1 res2 fty1 fty2
   = do  { checkTc (isJust mb_subst1) (resultTypeMisMatch fld con1 con2)
@@ -1996,13 +1996,13 @@ tcAddClosedTypeFamilyDeclCtxt tc
     ctxt = ptext (sLit "In the equations for closed type family") <+>
            quotes (ppr tc)
 
-resultTypeMisMatch :: FieldLabel -> DataCon -> DataCon -> SDoc
+resultTypeMisMatch :: OccName -> DataCon -> DataCon -> SDoc
 resultTypeMisMatch field_name con1 con2
   = vcat [sep [ptext (sLit "Constructors") <+> ppr con1 <+> ptext (sLit "and") <+> ppr con2,
                 ptext (sLit "have a common field") <+> quotes (ppr field_name) <> comma],
           nest 2 $ ptext (sLit "but have different result types")]
 
-fieldTypeMisMatch :: FieldLabel -> DataCon -> DataCon -> SDoc
+fieldTypeMisMatch :: OccName -> DataCon -> DataCon -> SDoc
 fieldTypeMisMatch field_name con1 con2
   = sep [ptext (sLit "Constructors") <+> ppr con1 <+> ptext (sLit "and") <+> ppr con2,
          ptext (sLit "give different types for field"), quotes (ppr field_name)]
