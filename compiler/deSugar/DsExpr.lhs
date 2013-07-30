@@ -20,6 +20,7 @@ import DsArrows
 import DsMonad
 import Name
 import NameEnv
+import RdrName
 
 #ifdef GHCI
         -- Template Haskell stuff iff bootstrapped
@@ -417,7 +418,7 @@ dsExpr (RecordCon (L _ data_con_id) con_expr rbinds) = do
         -- hence TcType.tcSplitFunTys
 
         mk_arg (arg_ty, (lbl, sel_name))
-          = case findField (rec_flds rbinds) sel_name of
+          = case findField (rec_flds rbinds) lbl of
               (rhs:rhss) -> ASSERT( null rhss )
                             dsLExpr rhs
               []         -> mkErrorAppDs rEC_CON_ERROR_ID arg_ty (ppr lbl)
@@ -605,9 +606,9 @@ dsExpr (HsType        {})  = panic "dsExpr:HsType"
 dsExpr (HsDo          {})  = panic "dsExpr:HsDo"
 
 
-findField :: [HsRecField Id arg] -> Name -> [arg]
-findField rbinds sel_name 
-  = [hsRecFieldArg x | x <- rbinds, fmap idName (hsRecFieldSel x) == Just sel_name]
+findField :: [HsRecField Id arg] -> OccName -> [arg]
+findField rbinds lbl
+  = [hsRecFieldArg x | x <- rbinds, rdrNameOcc (unLoc (hsRecFieldLbl x)) == lbl]
 \end{code}
 
 %--------------------------------------------------------------------

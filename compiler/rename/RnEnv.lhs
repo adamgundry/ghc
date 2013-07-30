@@ -37,7 +37,7 @@ module RnEnv (
         addFvRn, mapFvRn, mapMaybeFvRn, mapFvRnCPS,
         warnUnusedMatches,
         warnUnusedTopBinds, warnUnusedLocalBinds,
-        dataTcOccs, unknownNameErr, kindSigErr, perhapsForallMsg,
+        dataTcOccs, unknownNameErr, kindSigErr, perhapsForallMsg, unknownSubordinateErr,
         HsDocContext(..), docOfHsDocContext, 
 
         -- FsEnv
@@ -665,14 +665,20 @@ lookupGlobalOccRn_maybe rdr_name
                 Just gre -> return (Just (gre_name gre)) }
 
 
-lookupOccRn_overloaded  :: RdrName -> RnM (Maybe (Either Name (OccName, Maybe Name)))
+-- The following are possible results of lookupOccRn_overloaded:
+--   Nothing              -> name not in scope (no error reported)
+--   Just (Left x)        -> name uniquely refers to x, or there is a name clash (reported)
+--   Just (Right (l, xs)) -> ambiguous between the fields xs with OccName l;
+--                           fields are represented as (parent, selector) pairs
+
+lookupOccRn_overloaded  :: RdrName -> RnM (Maybe (Either Name (OccName, [(Name, Name)])))
 lookupOccRn_overloaded rdr_name
   = do { local_env <- getLocalRdrEnv
        ; case lookupLocalRdrEnv local_env rdr_name of {
           Just name -> return (Just (Left name)) ;
           Nothing   -> lookupGlobalOccRn_overloaded rdr_name } }
 
-lookupGlobalOccRn_overloaded :: RdrName -> RnM (Maybe (Either Name (OccName, Maybe Name)))
+lookupGlobalOccRn_overloaded :: RdrName -> RnM (Maybe (Either Name (OccName, [(Name, Name)])))
 lookupGlobalOccRn_overloaded rdr_name
   | Just n <- isExact_maybe rdr_name   -- This happens in derived code
   = do { n' <- lookupExactOcc n; return (Just (Left n')) }
@@ -687,14 +693,17 @@ lookupGlobalOccRn_overloaded rdr_name
         ; case lookupGRE_RdrName rdr_name env of
                 []    -> return Nothing
                 [gre] | isRecFldGRE gre -> do { addUsedRdrName True gre rdr_name
-                                              ; return (Just (Right (greOccName gre, Just (gre_name gre)))) }
+                                              ; return (Just (Right (greOccName gre, [greBits gre]))) }
                 [gre]                   -> do { addUsedRdrName True gre rdr_name
                                               ; return (Just (Left (gre_name gre))) }
                 gres  | all isRecFldGRE gres
                         && overload_ok  -> do { addUsedRdrName True (head gres) rdr_name
-                                              ; return (Just (Right (greOccName (head gres), Nothing))) }
+                                              ; return (Just (Right (greOccName (head gres), map greBits gres))) }
                 gres                    -> do { addNameClashErrRn rdr_name gres
                                               ; return (Just (Left (gre_name (head gres)))) } }
+  where
+    greBits (GRE{ gre_name = n, gre_par = FldParent p _}) = (p, n)
+    greBits gre = pprPanic "lookupGlobalOccRn_overloaded/greBits" (ppr gre)
 
 
 --------------------------------------------------

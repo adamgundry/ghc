@@ -114,13 +114,13 @@ rnExpr (HsVar v)
               -> rnExpr (ExplicitList placeHolderType Nothing [])
               | otherwise
               -> finishHsVar name ;
-           Just (Right (fld, solo)) ->
+           Just (Right (fld, xs)) ->
                do { overloaded <- xoptM Opt_OverloadedRecordFields
                   ; if overloaded
                     then return (HsOverloadedRecFld fld, emptyFVs)
-                    else case solo of
-                         Just sel_name -> return (HsSingleRecFld fld sel_name, unitFV sel_name)
-                         Nothing -> error "rnExpr/HsVar" } } }
+                    else case xs of
+                         [(_, name)] -> return (HsSingleRecFld fld name, unitFV name)
+                         _           -> error "rnExpr/HsVar" } } }
 
 rnExpr (HsIPVar v)
   = return (HsIPVar v, emptyFVs)

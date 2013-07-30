@@ -1832,7 +1832,7 @@ mkRecSelBind (tycon, fld@(lbl, sel_name))
     mk_sel_pat con = ConPatIn (L loc (getName con)) (RecCon rec_fields)
     rec_fields = HsRecFields { rec_flds = [rec_field], rec_dotdot = Nothing }
     rec_field  = HsRecField { hsRecFieldLbl = L loc (mkRdrUnqual lbl)
-                            , hsRecFieldSel = Just sel_name
+                            , hsRecFieldSel = Left sel_name
                             , hsRecFieldArg = L loc (VarPat field_var)
                             , hsRecPun = False }
     sel_lname = L loc sel_name

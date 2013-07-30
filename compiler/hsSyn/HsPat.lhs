@@ -12,7 +12,10 @@ module HsPat (
 
         HsConDetails(..),
         HsConPatDetails, hsConPatArgs,
-        HsRecFields(..), HsRecField(..), hsRecFieldId, hsRecFields,
+        HsRecFields(..), HsRecField(..),
+        hsRecFieldSelMissing,
+        hsRecFieldId, hsRecFieldId_maybe,
+        hsRecFields, hsRecFieldsUnambiguous,
 
         mkPrefixConPat, mkCharLitPat, mkNilPat,
 
@@ -198,7 +201,7 @@ data HsRecFields id arg         -- A bunch of record fields
 
 data HsRecField id arg = HsRecField {
         hsRecFieldLbl :: Located RdrName,
-        hsRecFieldSel :: Maybe id,
+        hsRecFieldSel :: Either id [(id, id)],
         hsRecFieldArg :: arg,           -- Filled in by renamer
         hsRecPun      :: Bool           -- Note [Punning]
   } deriving (Data, Typeable)
@@ -215,15 +218,25 @@ data HsRecField id arg = HsRecField {
 -- If the original field was qualified, we un-qualify it, thus
 --    T { A.x } means T { A.x = x }
 
-hsRecFields :: HsRecFields id arg -> [(OccName, id)]
+hsRecFieldSelMissing :: Either id [(id, id)]
+hsRecFieldSelMissing = error "hsRecFieldSelMissing"
+
+hsRecFields :: HsRecFields id arg -> [(OccName, Either id [(id, id)])]
 hsRecFields rbinds = map toFld (rec_flds rbinds)
   where
     toFld x = ( rdrNameOcc . unLoc . hsRecFieldLbl $ x
-              , expectJust "hsRecFields" $ hsRecFieldSel x)
+              , hsRecFieldSel x)
+
+hsRecFieldsUnambiguous :: HsRecFields id arg -> [(OccName, id)]
+hsRecFieldsUnambiguous = map outOfLeftField . hsRecFields
+  where outOfLeftField (l, Left x)  = (l, x)
+        outOfLeftField (_, Right _) = error "hsRecFieldsUnambigous"
+
+hsRecFieldId_maybe :: HsRecField id arg -> Maybe (Located id)
+hsRecFieldId_maybe x = either (Just . L (getLoc (hsRecFieldLbl x))) (const Nothing) (hsRecFieldSel x)
 
 hsRecFieldId :: HsRecField id arg -> Located id
-hsRecFieldId x = L (getLoc (hsRecFieldLbl x))
-                   (expectJust "hsRecFieldId" $ hsRecFieldSel x)
+hsRecFieldId = expectJust "hsRecFieldId" . hsRecFieldId_maybe
 \end{code}
 
 %************************************************************************

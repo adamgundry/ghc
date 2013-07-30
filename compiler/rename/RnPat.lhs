@@ -54,6 +54,7 @@ import NameSet
 import RdrName
 import BasicTypes
 import Util
+import Maybes
 import ListSetOps          ( removeDups )
 import Outputable
 import SrcLoc
@@ -503,8 +504,9 @@ rnHsRecFields1
 rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot })
   = do { pun_ok      <- xoptM Opt_RecordPuns
        ; disambig_ok <- xoptM Opt_DisambiguateRecordFields
+       ; overload_ok <- xoptM Opt_OverloadedRecordFields
        ; parent <- check_disambiguation disambig_ok mb_con
-       ; flds1 <- mapM (rn_fld pun_ok parent) flds
+       ; flds1 <- mapM (rn_fld pun_ok overload_ok parent) flds
        ; mapM_ (addErr . dupFieldErr ctxt) dup_flds
        ; dotdot_flds <- rn_dotdot dotdot mb_con flds1
        ; let all_flds | null dotdot_flds = flds1
@@ -524,16 +526,26 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
             Nothing  -> ptext (sLit "constructor field name")
             Just con -> ptext (sLit "field of constructor") <+> quotes (ppr con)
 
-    rn_fld pun_ok parent (HsRecField { hsRecFieldLbl = L loc lbl
-                                     , hsRecFieldArg = arg
-                                     , hsRecPun = pun })
-      = do { sel <- lookupSubBndrOcc True parent doc lbl
+    rn_fld pun_ok overload_ok parent (HsRecField { hsRecFieldLbl = L loc lbl
+                                                 , hsRecFieldArg = arg
+                                                 , hsRecPun = pun })
+      = do { sel <- case parent of
+                      -- Defer renaming of overloaded fields to the typechecker
+                      -- See Note [Disambiguating record updates] in TcExpr
+                      NoParent | overload_ok ->
+                          do { mb <- lookupOccRn_overloaded lbl
+                             ; case mb of
+                                 Nothing -> do { addErr (unknownSubordinateErr doc lbl)
+                                               ; return (Right []) }
+                                 Just (Left sel) -> return (Left sel)
+                                 Just (Right (_, xs)) -> return (Right xs) }
+                      _ -> fmap Left $ lookupSubBndrOcc True parent doc lbl
            ; arg' <- if pun 
                      then do { checkErr pun_ok (badPun (L loc lbl))
                              ; return (L loc (mk_arg lbl)) }
                      else return arg
            ; return (HsRecField { hsRecFieldLbl = L loc lbl
-                                , hsRecFieldSel = Just sel
+                                , hsRecFieldSel = sel
                                 , hsRecFieldArg = arg'
                                 , hsRecPun = pun }) }
 
@@ -583,7 +595,7 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
            ; addUsedRdrNames (map (greRdrName . snd) dot_dot_gres)
            ; return [ HsRecField
                         { hsRecFieldLbl = L loc arg_rdr
-                        , hsRecFieldSel = Just fld
+                        , hsRecFieldSel = Left fld
                         , hsRecFieldArg = L loc (mk_arg arg_rdr)
                         , hsRecPun      = False }
                     | (lbl, gre) <- dot_dot_gres
@@ -613,7 +625,7 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
     (_, dup_flds) = removeDups compare (getFieldLbls flds)
 
 getFieldIds :: [HsRecField id arg] -> [id]
-getFieldIds flds = map (unLoc . hsRecFieldId) flds
+getFieldIds flds = mapCatMaybes (fmap unLoc . hsRecFieldId_maybe) flds
 
 getFieldLbls :: [HsRecField id arg] -> [RdrName]
 getFieldLbls flds = map (unLoc . hsRecFieldLbl) flds

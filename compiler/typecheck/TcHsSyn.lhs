@@ -924,7 +924,7 @@ zonkRecFields env (HsRecFields flds dd)
     zonk_rbind fld
       = do { new_id   <- zonkIdBndr env (unLoc (hsRecFieldId fld))
            ; new_expr <- zonkLExpr env (hsRecFieldArg fld)
-           ; return (fld { hsRecFieldSel = Just new_id, hsRecFieldArg = new_expr }) }
+           ; return (fld { hsRecFieldSel = Left new_id, hsRecFieldArg = new_expr }) }
 
 -------------------------------------------------------------------------
 mapIPNameTc :: (a -> TcM b) -> Either HsIPName a -> TcM (Either HsIPName b)

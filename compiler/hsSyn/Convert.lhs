@@ -627,7 +627,7 @@ which we don't want.
 cvtFld :: (TH.Name, TH.Exp) -> CvtM (HsRecField RdrName (LHsExpr RdrName))
 cvtFld (v,e)
   = do  { v' <- vNameL v; e' <- cvtl e
-        ; return (HsRecField { hsRecFieldLbl = v', hsRecFieldSel = Nothing
+        ; return (HsRecField { hsRecFieldLbl = v', hsRecFieldSel = hsRecFieldSelMissing
                              , hsRecFieldArg = e', hsRecPun = False}) }
 
 cvtDD :: Range -> CvtM (ArithSeqInfo RdrName)
@@ -838,7 +838,7 @@ cvtp (ViewP e p)       = do { e' <- cvtl e; p' <- cvtPat p; return $ ViewPat e' 
 cvtPatFld :: (TH.Name, TH.Pat) -> CvtM (HsRecField RdrName (LPat RdrName))
 cvtPatFld (s,p)
   = do  { s' <- vNameL s; p' <- cvtPat p
-        ; return (HsRecField { hsRecFieldLbl = s', hsRecFieldSel = Nothing
+        ; return (HsRecField { hsRecFieldLbl = s', hsRecFieldSel = hsRecFieldSelMissing
                              , hsRecFieldArg = p', hsRecPun = False}) }
 
 {- | @cvtOpAppP x op y@ converts @op@ and @y@ and produces the operator application @x `op` y@.

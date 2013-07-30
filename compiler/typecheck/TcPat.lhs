@@ -841,11 +841,11 @@ tcConArgs data_con arg_tys (RecCon (HsRecFields rpats dd)) penv thing_inside
 	; return (RecCon (HsRecFields rpats' dd), res) }
   where
     tc_field :: Checker (HsRecField Name (LPat Name)) (HsRecField TcId (LPat TcId))
-    tc_field (HsRecField (L loc lbl) (Just sel_name) pat pun) penv thing_inside
+    tc_field (HsRecField (L loc lbl) (Left sel_name) pat pun) penv thing_inside
       = do { sel_id <- tcLookupId sel_name
            ; pat_ty <- find_field_ty (rdrNameOcc lbl)
 	   ; (pat', res) <- tcConArg (pat, pat_ty) penv thing_inside
-	   ; return (HsRecField (L loc lbl) (Just sel_id) pat' pun, res) }
+	   ; return (HsRecField (L loc lbl) (Left sel_id) pat' pun, res) }
     tc_field _ _ _ = panic "tcConArgs/tc_field missing field selector name"
 
     find_field_ty :: OccName -> TcM TcType

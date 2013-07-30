@@ -525,6 +525,41 @@ tcExpr (RecordCon (L loc con_name) _ rbinds) res_ty
           RecordCon (L loc con_id) con_expr rbinds' }
 \end{code}
 
+Note [Disambiguating record updates]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+If the -XOverloadedRecordFields extension is used, the renamer may not
+be able to determine exactly which fields are being updated. Consider:
+
+        data S = MkS { foo :: Int }
+        data T = MkT { foo :: Int, bar :: Int }
+        data U = MkU { bar :: Int }
+
+        f x = x { foo = 3, bar = 2 }
+
+        g :: T -> T
+        g x = x { foo = 3 }
+
+        h x = (x :: T) { foo = 3 }
+
+In this situation, the renamer sees an update of `foo` but doesn't
+know which parent datatype is in use. In this case, the
+`hsRecFieldSel` field of the `HsRecField` stores a list of candidates
+as (parent, selector name) pairs. In the typechecker, we try to
+determine the parent in three ways:
+
+1. Check for types that have all the fields being updated. In the
+   example, `f` must be updating `T` because neither `S` nor `U` have
+   both fields. This may also discover that no suitable type exists.
+
+2. Use the type being pushed in, if it is already a TyConApp. Thus `g`
+   is obviously an update to `T`.
+
+3. Use the type signature of the record expression, if it exists and
+   is a TyConApp. Thus `h` is an update to `T`. We could extend this to a
+   more liberal criterion (for example, permitting unannotated
+   variables).
+
+
 Note [Type of a record update]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 The main complication with RecordUpd is that we need to explicitly
@@ -627,9 +662,28 @@ In the outgoing (HsRecordUpd scrut binds cons in_inst_tys out_inst_tys):
         family example], in_inst_tys = [t1,t2], out_inst_tys = [t3,t2]
 
 \begin{code}
-tcExpr (RecordUpd record_expr rbinds _ _ _) res_ty
-  = ASSERT( notNull upd_flds )
-    do  {
+tcExpr (RecordUpd record_expr rbnds _ _ _) res_ty
+  = ASSERT( notNull orig_upd_flds ) do  {
+        -- STEP -1  Note [Disambiguating record updates]
+        ; rbinds <- case allLeftFlds orig_upd_flds of
+            Just _ -> return rbnds
+            Nothing -> do { ps <- possibleParents orig_upd_flds
+                          ; case ps of
+                              []  -> failWithTc (noPossibleParents rbnds)
+                              [p] -> chooseParent p rbnds
+                              ps  -> case tyConAppTyCon_maybe res_ty of
+                                       Just tc -> chooseParent (tyConName tc) rbnds
+                                       Nothing -> case obviousSig (unLoc record_expr) of
+                                           Just sig_ty ->
+                                               do { sig_tc_ty <- tcHsSigType ExprSigCtxt sig_ty
+                                                  ; case tyConAppTyCon_maybe sig_tc_ty of
+                                                      Just tc -> chooseParent (tyConName tc) rbnds
+                                                      Nothing -> failWithTc badOverloadedUpdate }
+                                           _ -> failWithTc badOverloadedUpdate }
+        ; let upd_flds      = hsRecFieldsUnambiguous rbinds
+              upd_fld_occs  = map fst upd_flds
+              upd_fld_names = map snd upd_flds
+
         -- STEP 0
         -- Check that the field names are really field names
         ; sel_ids <- mapM tcLookupId upd_fld_names
@@ -729,9 +783,39 @@ tcExpr (RecordUpd record_expr rbinds _ _ _) res_ty
           RecordUpd (mkLHsWrap scrut_co record_expr') rbinds'
                                    relevant_cons scrut_inst_tys result_inst_tys  }
   where
-    upd_flds      = hsRecFields rbinds
-    upd_fld_occs  = map fst upd_flds
-    upd_fld_names = map snd upd_flds
+    orig_upd_flds = hsRecFields rbnds
+
+    allLeftFlds :: [(a, Either b c)] -> Maybe [(a, b)]
+    allLeftFlds []                    = Just []
+    allLeftFlds ((lbl, Left name):xs) = fmap ((lbl, name) :) (allLeftFlds xs)
+    allLeftFlds _                     = Nothing
+
+    possibleParents :: [(OccName, Either Name [(Name, Name)])] -> RnM [Name]
+    possibleParents xs = fmap (foldr1 intersect) (mapM (parentsFor . snd) xs)
+
+    parentsFor :: Either Name [(Name, Name)] -> RnM [Name]
+    parentsFor (Left name) = do { id <- tcLookupId name
+                                ; return [tyConName (recordSelectorTyCon id)] }
+    parentsFor (Right xs)  = return (map fst xs)
+
+    chooseParent :: Name -> HsRecFields Name arg -> RnM (HsRecFields Name arg)
+    chooseParent p rbnds = do { rec_flds' <- mapM pickParent (rec_flds rbnds)
+                              ; failIfErrsM
+                              ; return (rbnds { rec_flds = rec_flds' }) }
+      where
+        pickParent :: HsRecField Name arg -> RnM (HsRecField Name arg)
+        pickParent fld@(HsRecField{ hsRecFieldSel = Left _ }) = return fld
+        pickParent fld@(HsRecField{ hsRecFieldSel = Right xs })
+            = case lookup p xs of
+                  Just name -> return (fld{ hsRecFieldSel = Left name })
+                  Nothing   -> do { addErrTc (orphanField p fld)
+                                  ; let name = mkUnboundName (unLoc (hsRecFieldLbl fld))
+                                  ; return (fld{ hsRecFieldSel = Left name }) }
+
+    obviousSig :: HsExpr Name -> Maybe (LHsType Name)
+    obviousSig (ExprWithTySig _ ty) = Just ty
+    obviousSig (HsPar p)            = obviousSig (unLoc p)
+    obviousSig _                    = Nothing
 
     getFixedTyVars :: [OccName] -> [TyVar] -> [DataCon] -> TyVarSet
     -- These tyvars must not change across the updates
@@ -1417,7 +1501,7 @@ tcRecordBinds data_con arg_tys (HsRecFields rbinds dd)
         ; return (HsRecFields (catMaybes mb_binds) dd) }
   where
     flds_w_tys = zipEqual "tcRecordBinds" (map fst $ dataConFieldLabels data_con) arg_tys
-    do_bind fld@(HsRecField { hsRecFieldLbl = L loc lbl, hsRecFieldSel = Just sel_name, hsRecFieldArg = rhs })
+    do_bind fld@(HsRecField { hsRecFieldLbl = L loc lbl, hsRecFieldSel = Left sel_name, hsRecFieldArg = rhs })
       | Just field_ty <- assocMaybe flds_w_tys field_lbl
       = addErrCtxt (fieldCtxt field_lbl)        $
         do { rhs' <- tcPolyExprNC rhs field_ty
@@ -1428,7 +1512,7 @@ tcRecordBinds data_con arg_tys (HsRecFields rbinds dd)
                 --          (so we can find it easily)
                 --      but is a LocalId with the appropriate type of the RHS
                 --          (so the desugarer knows the type of local binder to make)
-           ; return (Just (fld { hsRecFieldSel = Just field_id, hsRecFieldArg = rhs' })) }
+           ; return (Just (fld { hsRecFieldSel = Left field_id, hsRecFieldArg = rhs' })) }
       | otherwise
       = do { addErrTc (badFieldCon data_con field_lbl)
            ; return Nothing }
@@ -1466,7 +1550,7 @@ checkMissingFields data_con rbinds
                  not (fl `elem` field_names_used)
           ]
 
-    field_names_used = map (getOccName . snd) $ hsRecFields rbinds
+    field_names_used = map (getOccName . snd) $ hsRecFieldsUnambiguous rbinds
     field_labels     = map (getOccName . snd) $ dataConFieldLabels data_con
 
     field_info = zipEqual "missingFields"
@@ -1574,7 +1658,7 @@ badFieldsUpd rbinds data_cons
     membership :: [(OccName, [Bool])]
     membership = sortMembership $
         map (\fld -> (fld, map (Set.member fld) fieldLabelSets)) $
-          map (getOccName . snd) $ hsRecFields rbinds
+          map (getOccName . snd) $ hsRecFieldsUnambiguous rbinds
 
     fieldLabelSets :: [Set.Set OccName]
     fieldLabelSets = map (Set.fromList . map fst . dataConFieldLabels) data_cons
@@ -1646,4 +1730,19 @@ polySpliceErr :: Id -> SDoc
 polySpliceErr id
   = ptext (sLit "Can't splice the polymorphic local variable") <+> quotes (ppr id)
 #endif
+
+
+noPossibleParents :: HsRecFields Name a -> SDoc
+noPossibleParents rbinds
+  = hang (ptext (sLit "No type has all these fields:"))
+       2 (pprQuotedList fields)
+  where
+    fields = map fst (hsRecFields rbinds)
+
+badOverloadedUpdate :: SDoc
+badOverloadedUpdate = ptext (sLit "Record field update is ambiguous, and requires a type signature")
+
+orphanField :: Name -> HsRecField Name a -> SDoc
+orphanField p fld = ptext (sLit "Type") <+> ppr p <+>
+                    ptext (sLit "does not have field") <+> quotes (ppr (hsRecFieldLbl fld))
 \end{code}
