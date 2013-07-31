@@ -644,7 +644,7 @@ mkBindsMetaD fix_env tycon = (dtBinds, allConBinds, allSelBinds)
         loc           = srcLocSpan (getSrcLoc tycon)
         mkStringLHS s = [mkSimpleHsAlt nlWildPat (nlHsLit (mkHsString s))]
         datacons      = tyConDataCons tycon
-        datasels      = map (map fst . dataConFieldLabels) datacons
+        datasels      = map (map flOccName . dataConFieldLabels) datacons
 
         tyConName_user = case tyConFamInst_maybe tycon of
                            Just (ptycon, _) -> tyConName ptycon

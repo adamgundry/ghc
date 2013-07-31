@@ -9,7 +9,7 @@ The @TyCon@ datatype
 
 module TyCon(
         -- * Main TyCon data types
-        TyCon, FieldLabel,
+        TyCon, FieldLbl(..), FieldLabel,
 
         AlgTyConRhs(..), visibleDataCons,
         TyConParent(..), isNoParent,
@@ -457,8 +457,21 @@ data TyCon
 
   deriving Typeable
 
--- | Names of the fields in an algebraic record type
-type FieldLabel = (OccName, Name)
+-- | Fields in an algebraic record type
+data FieldLbl a = FieldLabel {
+                      flOccName  :: OccName, -- ^ Label of the field
+                      flSelector :: a        -- ^ Record selector function
+                  }
+  deriving (Eq, Ord)
+type FieldLabel = FieldLbl Name
+
+instance Functor FieldLbl where
+    fmap f (FieldLabel occ sel) = FieldLabel occ (f sel)
+
+instance Outputable a => Outputable (FieldLbl a) where
+  ppr (FieldLabel occ sel) = ppr occ <> braces (ppr sel)
+
+
 
 -- | Represents right-hand-sides of 'TyCon's for algebraic types
 data AlgTyConRhs

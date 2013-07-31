@@ -704,7 +704,7 @@ tcExpr (RecordUpd record_expr rbnds _ _ _) res_ty
                 -- NB: for a data type family, the tycon is the instance tycon
 
               relevant_cons   = filter is_relevant data_cons
-              is_relevant con = all (`elem` map fst (dataConFieldLabels con)) upd_fld_occs
+              is_relevant con = all (`elem` map flOccName (dataConFieldLabels con)) upd_fld_occs
                 -- A constructor is only relevant to this process if
                 -- it contains *all* the fields that are being updated
                 -- Other ones will cause a runtime error if they occur
@@ -712,7 +712,7 @@ tcExpr (RecordUpd record_expr rbnds _ _ _) res_ty
                 -- Take apart a representative constructor
               con1 = ASSERT( not (null relevant_cons) ) head relevant_cons
               (con1_tvs, _, _, _, con1_arg_tys, _) = dataConFullSig con1
-              con1_flds = map fst $ dataConFieldLabels con1
+              con1_flds = map flOccName $ dataConFieldLabels con1
               con1_res_ty = mkFamilyTyConApp tycon (mkTyVarTys con1_tvs)
 
         -- Step 2
@@ -831,8 +831,8 @@ tcExpr (RecordUpd record_expr rbnds _ _ _) res_ty
                                     -- arguments to the constructor are fixed
                                     -- See Note [Implict type sharing]
 
-                            fixed_tys = [ty | ((fld, _),ty) <- zip flds arg_tys
-                                            , not (fld `elem` upd_fld_occs)]
+                            fixed_tys = [ty | (fl, ty) <- zip flds arg_tys
+                                            , not (flOccName fl `elem` upd_fld_occs)]
                       , (tv1,tv) <- tvs1 `zip` tvs      -- Discards existentials in tvs
                       , tv `elemVarSet` fixed_tvs ]
 \end{code}
@@ -1500,7 +1500,7 @@ tcRecordBinds data_con arg_tys (HsRecFields rbinds dd)
   = do  { mb_binds <- mapM do_bind rbinds
         ; return (HsRecFields (catMaybes mb_binds) dd) }
   where
-    flds_w_tys = zipEqual "tcRecordBinds" (map fst $ dataConFieldLabels data_con) arg_tys
+    flds_w_tys = zipEqual "tcRecordBinds" (map flOccName $ dataConFieldLabels data_con) arg_tys
     do_bind fld@(HsRecField { hsRecFieldLbl = L loc lbl, hsRecFieldSel = Left sel_name, hsRecFieldArg = rhs })
       | Just field_ty <- assocMaybe flds_w_tys field_lbl
       = addErrCtxt (fieldCtxt field_lbl)        $
@@ -1551,7 +1551,7 @@ checkMissingFields data_con rbinds
           ]
 
     field_names_used = map (getOccName . snd) $ hsRecFieldsUnambiguous rbinds
-    field_labels     = map (getOccName . snd) $ dataConFieldLabels data_con
+    field_labels     = map (getOccName . flSelector) $ dataConFieldLabels data_con
 
     field_info = zipEqual "missingFields"
                           field_labels
@@ -1661,7 +1661,7 @@ badFieldsUpd rbinds data_cons
           map (getOccName . snd) $ hsRecFieldsUnambiguous rbinds
 
     fieldLabelSets :: [Set.Set OccName]
-    fieldLabelSets = map (Set.fromList . map fst . dataConFieldLabels) data_cons
+    fieldLabelSets = map (Set.fromList . map flOccName . dataConFieldLabels) data_cons
 
     -- Sort in order of increasing number of True, so that a smaller
     -- conflicting set can be found.

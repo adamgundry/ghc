@@ -736,7 +736,7 @@ tidy_con con (RecCon (HsRecFields fs _))
   | otherwise = PrefixCon (map (tidy_lpat.snd) all_pats)
   where
      -- pad out all the missing fields with WildPats.
-    field_pats = map (\ f -> (snd f, nlWildPat)) (dataConFieldLabels con)
+    field_pats = map (\ f -> (flSelector f, nlWildPat)) (dataConFieldLabels con)
     all_pats = foldr (\ x acc -> insertNm (getName (unLoc (hsRecFieldId x))) (hsRecFieldArg x) acc)
                      field_pats fs
 

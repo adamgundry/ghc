@@ -1036,14 +1036,11 @@ mkIfaceExports exports
   where
     sort_subs :: AvailInfo -> AvailInfo
     sort_subs (Avail n) = Avail n
-    sort_subs (AvailTC n [] fs) = AvailTC n [] (sort_flds fs)
+    sort_subs (AvailTC n [] fs) = AvailTC n [] (sortBy stableFieldLabelCmp fs)
     sort_subs (AvailTC n (m:ms) fs)
-       | n==m      = AvailTC n (m:sortBy stableNameCmp ms) (sort_flds fs)
-       | otherwise = AvailTC n (sortBy stableNameCmp (m:ms)) (sort_flds fs)
+       | n==m      = AvailTC n (m:sortBy stableNameCmp ms) (sortBy stableFieldLabelCmp fs)
+       | otherwise = AvailTC n (sortBy stableNameCmp (m:ms)) (sortBy stableFieldLabelCmp fs)
        -- Maintain the AvailTC Invariant
-
-    sort_flds :: [(OccName, Name)] -> [(OccName, Name)]
-    sort_flds = sortBy (cmpPair compare stableNameCmp)
 \end{code}
 
 Note [Orignal module]

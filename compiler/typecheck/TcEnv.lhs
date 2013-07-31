@@ -49,7 +49,8 @@ module TcEnv(
         topIdLvl, thTopLevelId, thRnBrack, isBrackStage,
 
         -- New Ids
-        newLocalName, newDFunName, newFamInstTyConName, newFamInstAxiomName,
+        newLocalName, newDFunName, newDFunName',
+        newFamInstTyConName, newFamInstAxiomName,
         mkStableIdFromString, mkStableIdFromName,
         mkWrapperName
   ) where
@@ -714,11 +715,14 @@ name, like otber top-level names, and hence must be made with newGlobalBinder.
 
 \begin{code}
 newDFunName :: Class -> [Type] -> SrcSpan -> TcM Name
-newDFunName clas tys loc
+newDFunName clas tys = newDFunName' info_string
+  where info_string = occNameString (getOccName clas) ++
+                            concatMap (occNameString.getDFunTyKey) tys
+
+newDFunName' :: String -> SrcSpan -> TcM Name
+newDFunName' info_string loc
   = do  { is_boot <- tcIsHsBoot
         ; mod     <- getModule
-        ; let info_string = occNameString (getOccName clas) ++ 
-                            concatMap (occNameString.getDFunTyKey) tys
         ; dfun_occ <- chooseUniqueOccTc (mkDFunOcc info_string is_boot)
         ; newGlobalBinder mod dfun_occ loc }
 \end{code}

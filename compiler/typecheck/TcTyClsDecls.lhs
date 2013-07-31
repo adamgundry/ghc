@@ -1485,8 +1485,8 @@ checkValidTyCon tc role_annots
         fty1 = dataConFieldType con1 label
 
         checkOne (_, con2)    -- Do it bothways to ensure they are structurally identical
-            = do { checkFieldCompat (fst label) con1 con2 ts1 res1 res2 fty1 fty2
-                 ; checkFieldCompat (fst label) con2 con1 ts2 res2 res1 fty2 fty1 }
+            = do { checkFieldCompat (flOccName label) con1 con2 ts1 res1 res2 fty1 fty2
+                 ; checkFieldCompat (flOccName label) con2 con1 ts2 res2 res1 fty2 fty1 }
             where
                 (tvs2, _, _, res2) = dataConSig con2
                 ts2 = mkVarSet tvs2
@@ -1795,18 +1795,19 @@ mkRecSelBinds tycons
        ; return $ ValBindsOut [(NonRecursive, b) | b <- binds] sigs }
 
 mkRecSelBind :: (TyCon, FieldLabel) -> (LSig Name, LHsBinds Name)
-mkRecSelBind (tycon, fld@(lbl, sel_name))
-  = (L loc (IdSig sel_id), unitBag (L loc sel_bind))
+mkRecSelBind (tycon, fld) = (L loc (IdSig sel_id), unitBag (L loc sel_bind))
   where
-    loc    = getSrcSpan sel_name
-    sel_id = Var.mkExportedLocalVar rec_details sel_name
+    lbl      = flOccName fld
+    sel_name = flSelector fld
+    loc      = getSrcSpan sel_name
+    sel_id   = Var.mkExportedLocalVar rec_details sel_name
                                     sel_ty vanillaIdInfo
     rec_details = RecSelId { sel_tycon = tycon, sel_naughty = is_naughty }
 
     -- Find a representative constructor, con1
     all_cons     = tyConDataCons tycon
     cons_w_field = [ con | con <- all_cons
-                   , lbl `elem` map fst (dataConFieldLabels con) ]
+                   , lbl `elem` map flOccName (dataConFieldLabels con) ]
     con1 = ASSERT( not (null cons_w_field) ) head cons_w_field
 
     -- Selector type; Note [Polymorphic selectors]

@@ -982,7 +982,7 @@ gen_Read_binds get_fixity loc tycon
         field_stmts  = zipWithEqual "lbl_stmts" read_field labels as_needed
 
         con_arity    = dataConSourceArity data_con
-        labels       = map fst $ dataConFieldLabels data_con
+        labels       = map flOccName $ dataConFieldLabels data_con
         dc_nm        = getName data_con
         is_infix     = dataConIsInfix data_con
         is_record    = length labels > 0
@@ -1096,7 +1096,7 @@ gen_Show_binds get_fixity loc tycon
              arg_tys       = dataConOrigArgTys data_con         -- Correspond 1-1 with bs_needed
              con_pat       = nlConVarPat data_con_RDR bs_needed
              nullary_con   = con_arity == 0
-             labels        = map fst $ dataConFieldLabels data_con
+             labels        = map flOccName $ dataConFieldLabels data_con
              lab_fields    = length labels
              record_syntax = lab_fields > 0
 
@@ -1371,7 +1371,7 @@ gen_Data_binds dflags loc tycon
                nlList  labels,                            -- Field labels
            nlHsVar fixity]                                -- Fixity
 
-        labels   = map (nlHsLit . mkHsString . occNameString . fst)
+        labels   = map (nlHsLit . mkHsString . occNameString . flOccName)
                        (dataConFieldLabels dc)
         dc_occ   = getOccName dc
         is_infix = isDataSymOcc dc_occ

@@ -41,6 +41,7 @@ import PprCore()            -- Printing DFunArgs
 import Demand
 import Annotations
 import Class
+import TyCon
 import NameSet
 import CoAxiom ( BranchIndex, Role )
 import Name
@@ -356,7 +357,7 @@ data IfaceConDecl
         ifConEqSpec  :: [(OccName,IfaceType)],  -- Equality constraints
         ifConCtxt    :: IfaceContext,           -- Non-stupid context
         ifConArgTys  :: [IfaceType],            -- Arg types
-        ifConFields  :: [(OccName, OccName)],   -- Field labels and selectors
+        ifConFields  :: [FieldLbl OccName],     -- Field labels
         ifConStricts :: [IfaceBang]}            -- Empty (meaning all lazy),
                                                 -- or 1-1 corresp with arg tys
 
@@ -1111,7 +1112,7 @@ pprIfaceConDecl tc
          ppUnless (null strs) $
             nest 4 (ptext (sLit "Stricts:") <+> hsep (map ppr_bang strs)),
          ppUnless (null fields) $
-            nest 4 (ptext (sLit "Fields:") <+> hsep (map (ppr . fst) fields))]
+            nest 4 (ptext (sLit "Fields:") <+> hsep (map (ppr . flOccName) fields))]
   where
     ppr_bang IfNoBang = char '_'        -- Want to see these
     ppr_bang IfStrict = char '!'

@@ -76,6 +76,7 @@ import NameEnv
 
 import qualified Data.Data as Data
 import qualified Data.Typeable
+import Data.List
 import Data.Maybe
 import Data.Char
 import Data.Word
@@ -767,9 +768,10 @@ dataConFieldLabels = dcFields
 -- | Extract the type for any given labelled field of the 'DataCon'
 dataConFieldType :: DataCon -> FieldLabel -> Type
 dataConFieldType con label
-  = case lookup label (dcFields con `zip` dcOrigArgTys con) of
-      Just ty -> ty
-      Nothing -> pprPanic "dataConFieldType" (ppr con <+> ppr label)
+  = case find ((== occ) . flOccName . fst) (dcFields con `zip` dcOrigArgTys con) of
+      Just (_, ty) -> ty
+      Nothing      -> pprPanic "dataConFieldType" (ppr con <+> ppr occ)
+  where occ = flOccName label
 
 -- | The strictness markings decided on by the compiler.  Does not include those for
 -- existential dictionaries.  The list is in one-to-one correspondence with the arity of the 'DataCon'

@@ -8,7 +8,7 @@ module Avail (
     availsToNameSet,
     availsToNameEnv,
     availName, availNames, availNonFldNames, availFlds,
-    stableAvailCmp,
+    stableAvailCmp, stableFieldLabelCmp,
     gresFromAvails,
     gresFromAvail
   ) where
@@ -18,6 +18,7 @@ import NameEnv
 import NameSet
 import RdrName
 import OccName
+import TyCon
 
 import Binary
 import Outputable
@@ -34,12 +35,12 @@ import Data.Maybe
 data AvailInfo = Avail Name      -- ^ An ordinary identifier in scope
                | AvailTC Name
                          [Name]
-                         [(OccName, Name)]
+                         [FieldLabel]
                                  -- ^ A type or class in scope. Parameters:
                                  --
                                  --  1) The name of the type or class
                                  --  2) The available pieces of type or class.
-                                 --  3) The record fields of the type, with their selectors.
+                                 --  3) The record fields of the type.
                                  --
                                  -- The AvailTC Invariant:
                                  --   * If the type or class is itself
@@ -60,8 +61,12 @@ stableAvailCmp (Avail {})         (AvailTC {})   = LT
 stableAvailCmp (AvailTC n ns nfs) (AvailTC m ms mfs) =
     (n `stableNameCmp` m) `thenCmp`
     (cmpList stableNameCmp ns ms) `thenCmp`
-    (cmpList (cmpPair compare stableNameCmp) nfs mfs)
+    (cmpList stableFieldLabelCmp nfs mfs)
 stableAvailCmp (AvailTC {})       (Avail {})     = GT
+
+stableFieldLabelCmp :: FieldLabel -> FieldLabel -> Ordering
+stableFieldLabelCmp (FieldLabel occ sel) (FieldLabel occ' sel')
+    = compare occ occ' `thenCmp` stableNameCmp sel sel'
 
 
 -- -----------------------------------------------------------------------------
@@ -85,7 +90,7 @@ availName (AvailTC n _ _) = n
 -- | All names made available by the availability information
 availNames :: AvailInfo -> [Name]
 availNames (Avail n)         = [n]
-availNames (AvailTC _ ns fs) = ns ++ map snd fs
+availNames (AvailTC _ ns fs) = ns ++ map flSelector fs
 
 -- | Names for non-fields made available by the availability information
 availNonFldNames :: AvailInfo -> [Name]
@@ -93,7 +98,7 @@ availNonFldNames (Avail n)        = [n]
 availNonFldNames (AvailTC _ ns _) = ns
 
 -- | Fields made available by the availability information
-availFlds :: AvailInfo -> [(OccName, Name)]
+availFlds :: AvailInfo -> [FieldLabel]
 availFlds (AvailTC _ _ fs) = fs
 availFlds _                = []
 
@@ -104,13 +109,13 @@ gresFromAvails :: Provenance -> [AvailInfo] -> [GlobalRdrElt]
 gresFromAvails prov avails
   = concatMap (gresFromAvail (const prov) (const prov)) avails
 
-gresFromAvail :: (Name -> Provenance) -> ((OccName, Name) -> Provenance) ->
+gresFromAvail :: (Name -> Provenance) -> (FieldLabel -> Provenance) ->
                      AvailInfo -> [GlobalRdrElt]
 gresFromAvail prov_fn prov_fld avail
-  = [ GRE {gre_name = sel_name,
-           gre_par = fldParent fld avail,
-           gre_prov = prov_fld (fld, sel_name)}
-    | (fld, sel_name) <- availFlds avail ]
+  = [ GRE {gre_name = flSelector fl,
+           gre_par = fldParent fl avail,
+           gre_prov = prov_fld fl}
+    | fl <- availFlds avail ]
     ++
     [ GRE {gre_name = n,
            gre_par = parent n avail,
@@ -121,7 +126,7 @@ gresFromAvail prov_fn prov_fld avail
     parent n (AvailTC m _ _) | n == m                  = NoParent
                              | otherwise               = ParentIs m
 
-    fldParent fld (AvailTC p _ _) = FldParent p fld
+    fldParent fl (AvailTC p _ _)  = FldParent p (flOccName fl)
     fldParent _   _               = panic "gresFromAvail/fldParent"
 
 -- -----------------------------------------------------------------------------

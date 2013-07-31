@@ -40,6 +40,7 @@ import TysPrim          ( funTyConName )
 import Name
 import SrcLoc
 import NameSet
+import TyCon
 
 import Util
 import BasicTypes       ( compareFixity, funTyFixity, negateFixity,
@@ -47,7 +48,7 @@ import BasicTypes       ( compareFixity, funTyFixity, negateFixity,
 import Outputable
 import FastString
 import Maybes
-import Data.List        ( nub )
+import Data.List        ( nub, find )
 import Control.Monad    ( unless, when )
 
 #include "HsVersions.h"
@@ -510,10 +511,10 @@ rnField :: Name -> HsDocContext -> ConDeclField RdrName -> RnM (ConDeclField Nam
 rnField con doc (ConDeclField name _ ty haddock_doc)
   = do { flds <- lookupConstructorFields con
        ; let lbl = rdrNameOcc $ unLoc name
-       ; let new_name = expectJust "rnField" $ lookup lbl flds
+       ; let fl = expectJust "rnField" $ find ((== lbl) . flOccName) flds
        ; (new_ty, fvs) <- rnLHsType doc ty
        ; new_haddock_doc <- rnMbLHsDoc haddock_doc
-       ; return (ConDeclField name new_name new_ty new_haddock_doc, fvs) }
+       ; return (ConDeclField name (flSelector fl) new_ty new_haddock_doc, fvs) }
 
 rnContext :: HsDocContext -> LHsContext RdrName -> RnM (LHsContext Name, FreeVars)
 rnContext doc (L loc cxt)

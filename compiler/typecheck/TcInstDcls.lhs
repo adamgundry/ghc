@@ -1558,14 +1558,17 @@ makeOverloadedRecFldInstances gbl_env
     fld_gres = filter isRecFldGRE . concat . occEnvElts $ tcg_rdr_env gbl_env
 
     greToFldInst :: GlobalRdrElt -> TcM [InstInfo Name]
-    greToFldInst (GRE {gre_name = sel_name, gre_par = FldParent p fld})
+    greToFldInst (GRE {gre_name = sel_name, gre_par = FldParent tycon_name fld})
       = do { addUsedRdrNames [mkRdrUnqual (nameOccName sel_name)]
            ; hasClass <- tcLookupClass recordHasClassName
-           ; let loc = mkGeneralSrcSpan (fsLit "<overloaded record field instance>")
-           ; dfun_name <- newDFunName hasClass [] loc
+           ; let loc = mkGeneralSrcSpan (fsLit "<Has record field instance>")
+                 info = concatMap occNameString
+                          [nameOccName recordHasClassName,
+                              nameOccName tycon_name, fld]
+           ; dfun_name <- newDFunName' info loc
            ; fld_tv_name <- newName (mkVarOccFS (fsLit "fld"))
            ; let fld_tv = mkTyVar fld_tv_name liftedTypeKind
-           ; tycon <- tcLookupTyCon p
+           ; tycon <- tcLookupTyCon tycon_name
            ; sel_id <- tcLookupId sel_name
            ; if not (isNaughtyRecordSelector sel_id)
              then

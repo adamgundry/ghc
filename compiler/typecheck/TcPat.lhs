@@ -850,7 +850,7 @@ tcConArgs data_con arg_tys (RecCon (HsRecFields rpats dd)) penv thing_inside
 
     find_field_ty :: OccName -> TcM TcType
     find_field_ty lbl
-	= case [ty | ((f,_),ty) <- field_tys, f == lbl] of
+	= case [ty | (fl, ty) <- field_tys, flOccName fl == lbl] of
 
 		-- No matching field; chances are this field label comes from some
 		-- other record type (or maybe none).  As well as reporting an

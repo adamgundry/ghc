@@ -33,6 +33,7 @@ import Name
 import NameSet
 import NameEnv
 import Avail
+import TyCon
 import Outputable
 import Bag
 import BasicTypes       ( RuleName )
@@ -1349,7 +1350,7 @@ Get the mapping from constructors to fields for this module.
 It's convenient to do this after the data type decls have been renamed
 \begin{code}
 extendRecordFieldEnv :: [TyClGroup RdrName] -> [LInstDecl RdrName] ->
-                        [(OccName, Name)] -> TcM TcGblEnv
+                        [FieldLabel] -> TcM TcGblEnv
 extendRecordFieldEnv tycl_decls inst_decls flds
   = do  { tcg_env <- getGblEnv
         ; overload_ok <- xoptM Opt_OverloadedRecordFields
@@ -1379,10 +1380,10 @@ extendRecordFieldEnv tycl_decls inst_decls flds
 
     lookFld overload_ok tc x = expectJust "extendRecordFieldEnv/lookFld" (find is_sel flds)
       where
-        lbl = fst $ cd_fld_fld x
+        lbl = flOccName $ cd_fld_fld x
         sel_occ = mkRecSelOcc lbl tc
-        is_sel (lbl', sel_name) | overload_ok = nameOccName sel_name == sel_occ
-                                | otherwise   = lbl' == lbl
+        is_sel fl | overload_ok = nameOccName (flSelector fl) == sel_occ
+                  | otherwise   = flOccName fl == lbl
 \end{code}
 
 %*********************************************************

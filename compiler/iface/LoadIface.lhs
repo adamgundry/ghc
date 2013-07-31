@@ -47,6 +47,7 @@ import FamInstEnv
 import Name
 import NameEnv
 import Avail
+import TyCon
 import Module
 import Maybes
 import ErrUtils
@@ -745,7 +746,7 @@ pprExport (AvailTC n (n':ns) fs)
   | otherwise = ppr n <> char '|' <> pp_export (n':ns) fs
 pprExport (AvailTC n [] fs) = ppr n <> char '|' <> pp_export [] fs
 
-pp_export :: [Name] -> [(OccName, Name)] -> SDoc
+pp_export :: [Name] -> [FieldLabel] -> SDoc
 pp_export []    [] = empty
 pp_export names fs = braces (hsep (map ppr names ++ map ppr fs))
 

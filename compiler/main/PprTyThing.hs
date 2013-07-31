@@ -208,7 +208,7 @@ pprAlgTyCon pefas ss tyCon
     datacons = GHC.tyConDataCons tyCon
     gadt = any (not . GHC.isVanillaDataCon) datacons
 
-    ok_con dc = showSub ss dc || any (showSub ss . snd) (dataConFieldLabels dc)
+    ok_con dc = showSub ss dc || any (showSub ss . flSelector) (dataConFieldLabels dc)
     show_con dc
       | ok_con dc = Just (pprDataConDecl pefas ss gadt dc)
       | otherwise = Nothing
@@ -241,9 +241,10 @@ pprDataConDecl pefas ss gadt_style dataCon
     user_ify (HsUnpack {})             = HsUserBang (Just True) True
     user_ify bang                      = bang
 
-    maybe_show_label ((lbl, sel_name),bty)
-	| showSub ss sel_name = Just (ppr_bndr_occ lbl <+> dcolon <+> pprBangTy bty)
-	| otherwise           = Nothing
+    maybe_show_label (fl, bty)
+	| showSub ss (flSelector fl)
+                    = Just (ppr_bndr_occ (flOccName fl) <+> dcolon <+> pprBangTy bty)
+	| otherwise = Nothing
 
     ppr_fields [ty1, ty2]
 	| GHC.dataConIsInfix dataCon && null labels

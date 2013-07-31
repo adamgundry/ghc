@@ -647,9 +647,9 @@ tcIfaceDataCons tycon_name tycon _ if_cons
         ; return con } 
     mk_doc con_name = ptext (sLit "Constructor") <+> ppr con_name
 
-    tc_fld_lbl (lbl, sel_occ)
-      = do { sel <- lookupIfaceTop sel_occ
-           ; return (lbl, sel) }
+    tc_fld_lbl fl
+      = do { sel <- lookupIfaceTop (flSelector fl)
+           ; return (fl{ flSelector = sel }) }
 
     tc_strict IfNoBang = return HsNoBang
     tc_strict IfStrict = return HsStrict

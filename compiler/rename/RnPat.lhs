@@ -64,6 +64,7 @@ import TysWiredIn          ( nilDataCon )
 import DataCon             ( dataConName )
 import Control.Monad       ( when, liftM, ap )
 import Data.Ratio
+import TyCon
 \end{code}
 
 
@@ -577,16 +578,18 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
                    = rdr `elemLocalRdrEnv` lcl_env
                    || notNull [ gre | gre <- lookupGRE_RdrName rdr rdr_env
                                     , case gre_par gre of
-                                        ParentIs p    -> p /= parent_tc
-                                        FldParent p _ -> p /= parent_tc
-                                        NoParent      -> True ]
+                                        ParentIs p               -> p /= parent_tc
+                                        FldParent { par_is = p } -> p /= parent_tc
+                                        NoParent                 -> True ]
                    where
                      rdr = mkRdrUnqual lbl
 
                  dot_dot_gres = [ (lbl, head gres)
-                                | (lbl, fld) <- con_fields
+                                | fl <- con_fields
+                                , let lbl = flOccName fl
+                                , let sel = flSelector fl
                                 , not (lbl `elem` present_flds)
-                                , let gres = lookupGRE_Name rdr_env fld
+                                , let gres = lookupGRE_Name rdr_env sel
                                 , not (null gres)  -- Check selector is in scope
                                 , case ctxt of
                                     HsRecFieldCon {} -> arg_in_scope lbl

@@ -22,6 +22,7 @@ import {-# SOURCE #-} Match	( match )
 import HsSyn
 import DsBinds
 import DataCon
+import TyCon
 import TcType
 import DsMonad
 import DsUtils
@@ -122,7 +123,7 @@ matchOneCon vars ty (eqn1 : eqns)	-- All eqns for a single constructor
     ConPatOut { pat_con = L _ con1, pat_ty = pat_ty1,
 	        pat_tvs = tvs1, pat_dicts = dicts1, pat_args = args1 }
 	      = firstPat eqn1
-    fields1 = map snd $ dataConFieldLabels con1
+    fields1 = map flSelector $ dataConFieldLabels con1
 	
     arg_tys  = dataConInstOrigArgTys con1 inst_tys
     inst_tys = tcTyConAppArgs pat_ty1 ++ 

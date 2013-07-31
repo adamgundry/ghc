@@ -405,16 +405,16 @@ lookupSubBndrGREs env parent rdr_name
       ParentIs p
         | isUnqual rdr_name -> filter (parent_is p) gres
         | otherwise         -> filter (parent_is p) (pickGREs rdr_name gres)
-      FldParent p _
+      FldParent { par_is = p }
         | isUnqual rdr_name -> filter (parent_is p) gres
         | otherwise         -> filter (parent_is p) (pickGREs rdr_name gres)
 
   where
     gres = lookupGlobalRdrEnv env (rdrNameOcc rdr_name)
 
-    parent_is p (GRE { gre_par = ParentIs p' })   = p == p'
-    parent_is p (GRE { gre_par = FldParent p' _}) = p == p'
-    parent_is _ _                                 = False
+    parent_is p (GRE { gre_par = ParentIs p' })             = p == p'
+    parent_is p (GRE { gre_par = FldParent { par_is = p'}}) = p == p'
+    parent_is _ _                                           = False
 \end{code}
 
 Note [Family instance binders]
@@ -702,7 +702,7 @@ lookupGlobalOccRn_overloaded rdr_name
                 gres                    -> do { addNameClashErrRn rdr_name gres
                                               ; return (Just (Left (gre_name (head gres)))) } }
   where
-    greBits (GRE{ gre_name = n, gre_par = FldParent p _}) = (p, n)
+    greBits (GRE{ gre_name = n, gre_par = FldParent { par_is = p }}) = (p, n)
     greBits gre = pprPanic "lookupGlobalOccRn_overloaded/greBits" (ppr gre)
 
 
@@ -834,9 +834,9 @@ lookupImpDeprec :: ModIface -> GlobalRdrElt -> Maybe WarningTxt
 lookupImpDeprec iface gre
   = mi_warn_fn iface (gre_name gre) `mplus`  -- Bleat if the thing,
     case gre_par gre of                      -- or its parent, is warn'd
-       ParentIs  p   -> mi_warn_fn iface p
-       FldParent p _ -> mi_warn_fn iface p
-       NoParent      -> Nothing
+       ParentIs  p              -> mi_warn_fn iface p
+       FldParent { par_is = p } -> mi_warn_fn iface p
+       NoParent                 -> Nothing
 \end{code}
 
 Note [Used names with interface not loaded]
@@ -1684,8 +1684,8 @@ addNameClashErrRn rdr_name gres
     msgs = [ptext (sLit "    or") <+> mk_ref np | np <- nps]
     mk_ref gre = sep [nom <> comma, pprNameProvenance gre]
       where nom = case gre_par gre of
-                    FldParent _ fld  -> text "the field" <+> quotes (ppr fld)
-                    _                -> quotes (ppr (gre_name gre))
+                    FldParent { par_lbl = lbl } -> text "the field" <+> quotes (ppr lbl)
+                    _                           -> quotes (ppr (gre_name gre))
 
 shadowedNameWarn :: OccName -> [SDoc] -> SDoc
 shadowedNameWarn occ shadowed_locs

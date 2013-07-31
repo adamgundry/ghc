@@ -35,6 +35,7 @@ import TcType
 import TcEvidence
 import TcRnMonad
 import Type
+import TyCon
 import CoreSyn
 import CoreUtils
 import CoreFVs
@@ -417,11 +418,11 @@ dsExpr (RecordCon (L _ data_con_id) con_expr rbinds) = do
         -- A newtype in the corner should be opaque; 
         -- hence TcType.tcSplitFunTys
 
-        mk_arg (arg_ty, (lbl, sel_name))
-          = case findField (rec_flds rbinds) lbl of
+        mk_arg (arg_ty, fl)
+          = case findField (rec_flds rbinds) (flOccName fl) of
               (rhs:rhss) -> ASSERT( null rhss )
                             dsLExpr rhs
-              []         -> mkErrorAppDs rEC_CON_ERROR_ID arg_ty (ppr lbl)
+              []         -> mkErrorAppDs rEC_CON_ERROR_ID arg_ty (ppr (flOccName fl))
         unlabelled_bottom arg_ty = mkErrorAppDs rEC_CON_ERROR_ID arg_ty empty
 
         labels = dataConFieldLabels (idDataCon data_con_id)
@@ -521,8 +522,8 @@ dsExpr expr@(RecordUpd record_expr (HsRecFields { rec_flds = fields })
            ; arg_ids    <- newSysLocalsDs (substTys subst arg_tys)
            ; let val_args = zipWithEqual "dsExpr:RecordUpd" mk_val_arg
                                          (dataConFieldLabels con) arg_ids
-                 mk_val_arg (_, sel_name) pat_arg_id
-                     = nlHsVar (lookupNameEnv upd_fld_env sel_name `orElse` pat_arg_id)
+                 mk_val_arg fl pat_arg_id
+                     = nlHsVar (lookupNameEnv upd_fld_env (flSelector fl) `orElse` pat_arg_id)
                  inst_con = noLoc $ HsWrap wrap (HsVar (dataConWrapId con))
                         -- Reconstruct with the WrapId so that unpacking happens
                  wrap = mkWpEvVarApps theta_vars          <.>

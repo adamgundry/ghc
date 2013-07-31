@@ -48,6 +48,7 @@ import OccName
 import RdrName( RdrName, rdrNameOcc )
 import DataCon( HsBang(..) )
 import Type
+import TyCon
 import HsDoc
 import BasicTypes
 import SrcLoc
@@ -379,8 +380,9 @@ data ConDeclField name  -- Record fields have Haddoc docs on them
 cd_fld_name :: ConDeclField name -> Located name
 cd_fld_name x = L (getLoc (cd_fld_lbl x)) $ cd_fld_sel x
 
-cd_fld_fld :: ConDeclField name -> (OccName, name)
-cd_fld_fld x = (rdrNameOcc . unLoc . cd_fld_lbl $ x, cd_fld_sel x)
+cd_fld_fld :: ConDeclField name -> FieldLbl name
+cd_fld_fld x = FieldLabel { flOccName = rdrNameOcc . unLoc . cd_fld_lbl $ x
+                          , flSelector = cd_fld_sel x }
 
 -----------------------
 -- Combine adjacent for-alls. 

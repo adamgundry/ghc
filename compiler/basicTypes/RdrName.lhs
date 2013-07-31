@@ -399,8 +399,10 @@ data GlobalRdrElt
 
 -- | The children of a Name are the things that are abbreviated by the ".."
 --   notation in export lists.  See Note [Parents]
-data Parent = NoParent | ParentIs Name | FldParent Name OccName
-              deriving (Eq)
+data Parent = NoParent
+            | ParentIs { par_is :: Name }
+            | FldParent { par_is :: Name, par_lbl :: OccName }
+            deriving (Eq)
 
 {- Note [Parents]
 ~~~~~~~~~~~~~~~~~
@@ -498,8 +500,8 @@ extendGlobalRdrEnv :: GlobalRdrEnv -> GlobalRdrElt -> GlobalRdrEnv
 extendGlobalRdrEnv env gre = extendOccEnv_Acc (:) singleton env (greOccName gre) gre
 
 greOccName :: GlobalRdrElt -> OccName
-greOccName (GRE{gre_par = FldParent _ f}) = f
-greOccName gre                            = nameOccName (gre_name gre)
+greOccName (GRE{gre_par = FldParent{par_lbl = lbl}}) = lbl
+greOccName gre                                       = nameOccName (gre_name gre)
 
 lookupGRE_RdrName :: RdrName -> GlobalRdrEnv -> [GlobalRdrElt]
 lookupGRE_RdrName rdr_name env
@@ -578,8 +580,8 @@ isLocalGRE (GRE {gre_prov = LocalDef}) = True
 isLocalGRE _                           = False
 
 isRecFldGRE :: GlobalRdrElt -> Bool
-isRecFldGRE (GRE {gre_par = FldParent _ _}) = True
-isRecFldGRE _                               = False
+isRecFldGRE (GRE {gre_par = FldParent{}}) = True
+isRecFldGRE _                             = False
 
 unQualOK :: GlobalRdrElt -> Bool
 -- ^ Test if an unqualifed version of this thing would be in scope
