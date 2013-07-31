@@ -1561,7 +1561,8 @@ makeOverloadedRecFldInstances gbl_env
     greToFldInst (GRE {gre_name = sel_name, gre_par = FldParent p fld})
       = do { addUsedRdrNames [mkRdrUnqual (nameOccName sel_name)]
            ; hasClass <- tcLookupClass recordHasClassName
-           ; dfun_name <- newDFunName hasClass [] noSrcSpan
+           ; let loc = mkGeneralSrcSpan (fsLit "<overloaded record field instance>")
+           ; dfun_name <- newDFunName hasClass [] loc
            ; fld_tv_name <- newName (mkVarOccFS (fsLit "fld"))
            ; let fld_tv = mkTyVar fld_tv_name liftedTypeKind
            ; tycon <- tcLookupTyCon p
@@ -1575,9 +1576,9 @@ makeOverloadedRecFldInstances gbl_env
                  theta    = [mkEqPred (mkTyVarTy fld_tv) fld_ty]
                  dfun     = mkDictFunId dfun_name (fld_tv:tyvars) theta hasClass args
                  cls_inst = mkLocalInstance dfun (NoOverlap False) (fld_tv:tyvars) hasClass args
-                 binds    = unitBag $ noLoc $ FunBind (noLoc getFieldName) False
-                             (MG [noLoc (Match [] Nothing (GRHSs
-                                     [noLoc (GRHS [] (noLoc (HsVar sel_name)))]
+                 binds    = unitBag $ L loc $ FunBind (L loc getFieldName) False
+                             (MG [L loc (Match [] Nothing (GRHSs
+                                     [L loc (GRHS [] (L loc (HsVar sel_name)))]
                                      EmptyLocalBinds))] []
                                  (error "greToFldInst PostTyType"))
                              (error "greToFldInst HsWrapper") (error "greToFldInst NameSet") Nothing
