@@ -329,8 +329,11 @@ basicKnownKeyNames
 
         -- Overloaded record fields
         , recordHasClassName
+        , accessorClassName
         , getResultFamName
         , getFieldName
+        , setFieldName
+        , fieldName
     ]
 
 genericTyConNames :: [Name]
@@ -1151,15 +1154,14 @@ ipClassName :: Name
 ipClassName         = clsQual gHC_IP (fsLit "IP")      ipClassNameKey
 
 -- Overloaded record fields
-recordHasClassName :: Name
-recordHasClassName = clsQual gHC_RECORDS (fsLit "Has") recordHasClassNameKey
-
-getResultFamName :: Name
-getResultFamName = tcQual gHC_RECORDS (fsLit "GetResult") getResultFamNameKey 
-
-getFieldName :: Name
-getFieldName = varQual gHC_RECORDS (fsLit "getField") getFieldKey
-
+recordHasClassName, accessorClassName, getResultFamName,
+  getFieldName, setFieldName, fieldName :: Name
+recordHasClassName = clsQual gHC_RECORDS (fsLit "Has")       recordHasClassNameKey
+accessorClassName  = clsQual gHC_RECORDS (fsLit "Accessor")  accessorClassNameKey
+getResultFamName   = tcQual  gHC_RECORDS (fsLit "GetResult") getResultFamNameKey
+getFieldName       = varQual gHC_RECORDS (fsLit "getField")  getFieldNameKey
+setFieldName       = varQual gHC_RECORDS (fsLit "setField")  setFieldNameKey
+fieldName          = varQual gHC_RECORDS (fsLit "field")     fieldNameKey
 
 -- dotnet interop
 objectTyConName :: Name
@@ -1297,8 +1299,10 @@ oldTypeable5ClassKey       = mkPreludeClassUnique 51
 oldTypeable6ClassKey       = mkPreludeClassUnique 52
 oldTypeable7ClassKey       = mkPreludeClassUnique 53
 
-recordHasClassNameKey :: Unique
+-- Overloaded record fields
+recordHasClassNameKey, accessorClassNameKey :: Unique
 recordHasClassNameKey = mkPreludeClassUnique 54
+accessorClassNameKey  = mkPreludeClassUnique 55
 \end{code}
 
 %************************************************************************
@@ -1822,8 +1826,10 @@ proxyHashKey :: Unique
 proxyHashKey = mkPreludeMiscIdUnique 502
 
 -- Overloaded record fields
-getFieldKey :: Unique
-getFieldKey = mkPreludeMiscIdUnique 503
+getFieldNameKey, setFieldNameKey, fieldNameKey :: Unique
+getFieldNameKey = mkPreludeMiscIdUnique 503
+setFieldNameKey = mkPreludeMiscIdUnique 504
+fieldNameKey    = mkPreludeMiscIdUnique 505
 
 ---------------- Template Haskell -------------------
 --      USES IdUniques 200-499

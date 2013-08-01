@@ -842,33 +842,37 @@ tcExpr (RecordUpd record_expr rbnds _ _ _) res_ty
 When typechecking a use of an overloaded record field, we need to
 construct an appropriate instantiation of
 
-    getField :: forall r f t . Has r f t => forall proxy . proxy f -> r -> t
+    field :: forall proxy f r t p . (Has r f t, Accessor p) => proxy f -> p r t
 
 so we supply
 
-    r, t      = metavariables
-    f         = field label
-    Has r f t = wanted
-    proxy     = Any
-    proxy f   = undefined
+    proxy         = Any
+    f             = field label
+    r, t, p       = metavariables
+    Has, Accessor = wanted constraints
+    proxy f       = undefined
 
-and end up with something of type r -> t.
+and end up with something of type p r t.
 
 \begin{code}
 tcExpr (HsOverloadedRecFld fld) res_ty
-  = do { hasClass <- tcLookupClass recordHasClassName
+  = do { hasClass      <- tcLookupClass recordHasClassName
+       ; accessorClass <- tcLookupClass accessorClassName
        ; r        <- newFlexiTyVarTy openTypeKind
        ; t        <- newFlexiTyVarTy openTypeKind
+       ; p        <- newFlexiTyVarTy (mkArrowKind liftedTypeKind
+                                         (mkArrowKind liftedTypeKind liftedTypeKind))
        ; let f = mkStrLitTy $ occNameFS fld
        ; has_var  <- emitWanted RecordProjOrigin (mkClassPred hasClass [r, f, t])
-       ; getField <- tcLookupId getFieldName
+       ; acs_var  <- emitWanted RecordProjOrigin (mkClassPred accessorClass [p])
+       ; field <- tcLookupId fieldName
        ; loc      <- getSrcSpanM
        ; let proxy     = anyTypeOfKind (mkArrowKind typeSymbolKind liftedTypeKind)
-             wrap      = mkWpTyApps [proxy] <.> mkWpEvVarApps [has_var] <.> mkWpTyApps [r, f, t]
+             wrap      = mkWpEvVarApps [has_var, acs_var] <.> mkWpTyApps [proxy, f, r, t, p]
              proxy_arg = noLoc (mkHsWrap (mkWpTyApps [mkAppTy proxy f])
                                          (HsVar uNDEFINED_ID))
-             tm        = L loc (mkHsWrap wrap (HsVar getField)) `HsApp` proxy_arg
-       ; tcWrapResult tm (mkFunTy r t) res_ty }
+             tm        = L loc (mkHsWrap wrap (HsVar field)) `HsApp` proxy_arg
+       ; tcWrapResult tm (mkAppTys p [r, t]) res_ty }
 
 tcExpr (HsSingleRecFld f sel_name) res_ty = tcCheckId sel_name res_ty
 \end{code}

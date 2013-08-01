@@ -51,7 +51,7 @@ import VarSet
 import Pair
 import CoreUnfold ( mkDFunUnfolding )
 import CoreSyn    ( Expr(Var, Type), CoreExpr, mkTyApps, mkVarApps )
-import PrelNames  ( tYPEABLE_INTERNAL, typeableClassName, oldTypeableClassNames, recordHasClassName, getFieldName, getResultFamName )
+import PrelNames
 import RnEnv      ( addUsedRdrNames )
 
 import Bag
@@ -1601,6 +1601,8 @@ makeOverloadedRecFldInstances gbl_env
              then do {
              let (tyvars, sel_ty) = splitForAllTys (idType sel_id)
            ; (subst, tyvars') <- tcInstSkolTyVars (fld_tv:tyvars)
+           ; upd_rec <- newSysName (mkVarOcc "upd_rec")
+           ; upd_val <- newSysName (mkVarOcc "upd_val")
            ; let fld_ty   = snd (splitFunTy sel_ty)
                  t_ty     = mkTyConApp tycon (map mkTyVarTy tyvars)
                  args     = [t_ty, mkStrLitTy (occNameFS fld), mkTyVarTy fld_tv]
@@ -1608,11 +1610,12 @@ makeOverloadedRecFldInstances gbl_env
                  dfun     = mkDictFunId dfun_name (fld_tv:tyvars) theta hasClass args
                  cls_inst = mkLocalInstance dfun (NoOverlap False) tyvars' hasClass (substTys subst args)
                  missing  = error "greToFldInst: missing"
-                 binds    = unitBag $ L loc $ FunBind (L loc getFieldName) False
-                             (MG [L loc (Match [L loc (WildPat missing)] Nothing (GRHSs
-                                     [L loc (GRHS [] (L loc (HsVar sel_name)))]
-                                     EmptyLocalBinds))] [] missing)
-                             missing missing Nothing
+                 getFieldMatch = mkMatch [L loc (WildPat missing)]
+                                         (L loc (HsVar sel_name)) EmptyLocalBinds
+                 setFieldMatch = mkMatch [L loc (WildPat missing), L loc (VarPat upd_rec), L loc (VarPat upd_val)]
+                                         (L loc (RecordUpd (L loc (HsVar upd_rec)) (HsRecFields [HsRecField (L loc (mkRdrUnqual fld)) (Left sel_name) (L loc (HsVar upd_val)) False] Nothing) missing missing missing)) EmptyLocalBinds
+                 binds    = listToBag [ L loc (mkTopFunBind (L loc getFieldName) [getFieldMatch])
+                                      , L loc (mkTopFunBind (L loc setFieldName) [setFieldMatch]) ]
                  inst_info = InstInfo cls_inst (VanillaInst binds [] False)
            ; fam_tc <- tcLookupTyCon getResultFamName
            ; rep_tc_name <- newFamInstAxiomName loc
