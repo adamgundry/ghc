@@ -40,7 +40,7 @@ import RdrName
 import Name
 import TyCon
 import Type
-import Class
+import TysPrim ( anyTypeOfKind )
 import TcEvidence
 import Var
 import VarSet
@@ -49,6 +49,7 @@ import TysWiredIn
 import TysPrim( intPrimTy )
 import PrimOp( tagToEnumKey )
 import PrelNames
+import MkCore ( uNDEFINED_ID )
 import DynFlags
 import SrcLoc
 import Util
@@ -838,21 +839,36 @@ tcExpr (RecordUpd record_expr rbnds _ _ _) res_ty
 \end{code}
 
 
+When typechecking a use of an overloaded record field, we need to
+construct an appropriate instantiation of
+
+    getField :: forall r f t . Has r f t => forall proxy . proxy f -> r -> t
+
+so we supply
+
+    r, t      = metavariables
+    f         = field label
+    Has r f t = wanted
+    proxy     = Any
+    proxy f   = undefined
+
+and end up with something of type r -> t.
+
 \begin{code}
 tcExpr (HsOverloadedRecFld fld) res_ty
   = do { hasClass <- tcLookupClass recordHasClassName
-       ; rec_ty <- newFlexiTyVarTy openTypeKind
-       ; fld_ty <- newFlexiTyVarTy openTypeKind
-       ; let fld_name = mkStrLitTy $ occNameFS fld
-       ; has_var <- emitWanted RecordProjOrigin (mkClassPred hasClass [rec_ty, fld_name, fld_ty])
-       ; tcWrapResult (fromHasDict hasClass rec_ty fld_name fld_ty (HsVar has_var)) (mkFunTy rec_ty fld_ty) res_ty }
-  where
-    fromHasDict :: Class -> TcType -> TcType -> TcType -> HsExpr id -> HsExpr id
-    fromHasDict hasClass rec_ty fld_name fld_ty =
-        case unwrapNewTyCon_maybe (classTyCon hasClass) of
-          Just (_,_,ax) -> HsWrap $ WpCast $ mkTcUnbranchedAxInstCo ax [rec_ty, fld_name, fld_ty]
-          Nothing       -> panic "The dictionary for `Has` is not a newtype?"
-
+       ; r        <- newFlexiTyVarTy openTypeKind
+       ; t        <- newFlexiTyVarTy openTypeKind
+       ; let f = mkStrLitTy $ occNameFS fld
+       ; has_var  <- emitWanted RecordProjOrigin (mkClassPred hasClass [r, f, t])
+       ; getField <- tcLookupId getFieldName
+       ; loc      <- getSrcSpanM
+       ; let proxy     = anyTypeOfKind (mkArrowKind typeSymbolKind liftedTypeKind)
+             wrap      = mkWpTyApps [proxy] <.> mkWpEvVarApps [has_var] <.> mkWpTyApps [r, f, t]
+             proxy_arg = noLoc (mkHsWrap (mkWpTyApps [mkAppTy proxy f])
+                                         (HsVar uNDEFINED_ID))
+             tm        = L loc (mkHsWrap wrap (HsVar getField)) `HsApp` proxy_arg
+       ; tcWrapResult tm (mkFunTy r t) res_ty }
 
 tcExpr (HsSingleRecFld f sel_name) res_ty = tcCheckId sel_name res_ty
 \end{code}

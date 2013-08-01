@@ -10,7 +10,7 @@ The @FamInst@ type: family instance heads
 -- for details
 
 module FamInst ( 
-        checkFamInstConsistency, tcExtendLocalFamInstEnv,
+        checkFamInstConsistency, tcExtendLocalFamInstEnv, tcExtendPrivateFamInstEnv,
 	tcLookupFamInst, 
         tcGetFamInstEnvs,
         newFamInst,
@@ -248,6 +248,18 @@ tcExtendLocalFamInstEnv fam_insts thing_inside
       ; let env' = env { tcg_fam_insts    = fam_insts'
 		       , tcg_fam_inst_env = inst_env' }
       ; setGblEnv env' thing_inside 
+      }
+
+-- Add family instances that are private to this module
+-- See Note [Private instances] in TcInstDcls
+tcExtendPrivateFamInstEnv :: [FamInst] -> TcM a -> TcM a
+tcExtendPrivateFamInstEnv fam_insts thing_inside
+ = do { env <- getGblEnv
+      ; (inst_env', _) <- foldlM addLocalFamInst
+                                          (tcg_fam_inst_env env, tcg_fam_insts env)
+                                          fam_insts
+      ; let env' = env { tcg_fam_inst_env = inst_env' }
+      ; setGblEnv env' thing_inside
       }
 
 -- Check that the proposed new instance is OK, 

@@ -329,6 +329,7 @@ basicKnownKeyNames
 
         -- Overloaded record fields
         , recordHasClassName
+        , getResultFamName
         , getFieldName
     ]
 
@@ -1153,6 +1154,9 @@ ipClassName         = clsQual gHC_IP (fsLit "IP")      ipClassNameKey
 recordHasClassName :: Name
 recordHasClassName = clsQual gHC_RECORDS (fsLit "Has") recordHasClassNameKey
 
+getResultFamName :: Name
+getResultFamName = tcQual gHC_RECORDS (fsLit "GetResult") getResultFamNameKey 
+
 getFieldName :: Name
 getFieldName = varQual gHC_RECORDS (fsLit "getField") getFieldKey
 
@@ -1496,6 +1500,10 @@ coercibleTyConKey = mkPreludeTyConUnique 175
 
 proxyPrimTyConKey :: Unique
 proxyPrimTyConKey = mkPreludeTyConUnique 176
+
+-- Overloaded record fields
+getResultFamNameKey :: Unique
+getResultFamNameKey = mkPreludeTyConUnique 177
 
 ---------------- Template Haskell -------------------
 --      USES TyConUniques 200-299

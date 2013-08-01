@@ -21,7 +21,8 @@ module Inst (
        newOverloadedLit, mkOverLit, 
      
        tcGetInsts, tcGetInstEnvs, getOverlapFlag,
-       tcExtendLocalInstEnv, instCallConstraints, newMethodFromName,
+       tcExtendLocalInstEnv, tcExtendPrivateInstEnv,
+       instCallConstraints, newMethodFromName,
        tcSyntaxName,
 
        -- Simple functions over evidence variables
@@ -412,6 +413,17 @@ tcExtendLocalInstEnv dfuns thing_inside
       ; inst_env' <- foldlM addLocalInst (tcg_inst_env env) dfuns
       ; let env' = env { tcg_insts = dfuns ++ tcg_insts env,
 			 tcg_inst_env = inst_env' }
+      ; setGblEnv env' thing_inside }
+
+tcExtendPrivateInstEnv :: [ClsInst] -> TcM a -> TcM a
+  -- Add new locally-defined instances, private to this module
+  -- by extending tcg_inst_env but not tcg_insts
+  -- See Note [Private instances] in TcInstDcls
+tcExtendPrivateInstEnv dfuns thing_inside
+ = do { traceDFuns dfuns
+      ; env <- getGblEnv
+      ; inst_env' <- foldlM addLocalInst (tcg_inst_env env) dfuns
+      ; let env' = env { tcg_inst_env = inst_env' }
       ; setGblEnv env' thing_inside }
 
 addLocalInst :: InstEnv -> ClsInst -> TcM InstEnv

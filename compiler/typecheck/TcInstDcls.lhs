@@ -51,7 +51,7 @@ import VarSet
 import Pair
 import CoreUnfold ( mkDFunUnfolding )
 import CoreSyn    ( Expr(Var, Type), CoreExpr, mkTyApps, mkVarApps )
-import PrelNames  ( tYPEABLE_INTERNAL, typeableClassName, oldTypeableClassNames, recordHasClassName, getFieldName )
+import PrelNames  ( tYPEABLE_INTERNAL, typeableClassName, oldTypeableClassNames, recordHasClassName, getFieldName, getResultFamName )
 import RnEnv      ( addUsedRdrNames )
 
 import Bag
@@ -426,14 +426,17 @@ tcInstDecls1 tycl_decls inst_decls deriv_decls
              mapM_ (\x -> when (typInstCheck x) recordUnsafeInfer) local_infos
 
        -- Create overloaded record field instances
-       ; (gbl_env', fld_infos) <- if xopt Opt_OverloadedRecordFields dflags
-                                  then makeOverloadedRecFldInstances gbl_env
-                                  else return (gbl_env, [])
-
-       ; return ( gbl_env'
-                , fld_infos ++ bagToList deriv_inst_info ++ local_infos
-                , deriv_binds)
-    }}
+       ; (fld_infos, fld_fam_insts) <- if xopt Opt_OverloadedRecordFields dflags
+                                       then makeOverloadedRecFldInstances gbl_env
+                                       else return ([], [])
+       ; setGblEnv gbl_env $
+         addPrivateClsInsts fld_infos $
+         addPrivateTyFamInsts fld_fam_insts $
+           do { env <- getGblEnv
+              ; return ( env
+                       , fld_infos ++ bagToList deriv_inst_info ++ local_infos
+                       , deriv_binds)
+    }}}
   where
     -- Separate the Typeable instances from the rest
     splitTypeable _   []     = ([],[])
@@ -473,6 +476,15 @@ addFamInsts fam_insts thing_inside
     axioms = map (toBranchedAxiom . famInstAxiom) fam_insts
     tycons = famInstsRepTyCons fam_insts
     things = map ATyCon tycons ++ map ACoAxiom axioms 
+
+addPrivateClsInsts :: [InstInfo Name] -> TcM a -> TcM a
+-- See Note [Private instances]
+addPrivateClsInsts infos thing_inside
+ = tcExtendPrivateInstEnv (map iSpec infos) thing_inside
+
+addPrivateTyFamInsts :: [FamInst] -> TcM a -> TcM a
+-- See Note [Private instances]
+addPrivateTyFamInsts = tcExtendPrivateFamInstEnv
 \end{code}
 
 Note [Deriving inside TH brackets]
@@ -1547,17 +1559,32 @@ Note carefullly:
 %*                                                                      *
 %************************************************************************
 
+Note [Private instances]
+~~~~~~~~~~~~~~~~~~~~~~~~
+Overloaded record field instances are created for each module
+separately, based on the fields in scope, and are never exported. This
+ensures that the instances in scope for a given module correspond
+exactly to the fields in scope in that module.
+
+To achieve this, the results of makeOverloadedRecFldInstances should
+be added using addPrivateClsInsts and addPrivateTyFamInsts. These
+extend the tcg_inst_env field of the TcGblEnv, but not the tcg_insts
+field, so the instances are available locally but will not appear in
+the module's interface.
+
+AMG TODO: once GHCi works properly, perhaps we can refactor this so
+that makeOverloadedRecFldInstances always adds the instances
+privately; we might not need to separate creating from adding the
+instances.
+
 \begin{code}
-makeOverloadedRecFldInstances :: TcGblEnv -> TcM (TcGblEnv, [InstInfo Name])
+makeOverloadedRecFldInstances :: TcGblEnv -> TcM ([InstInfo Name], [FamInst])
 makeOverloadedRecFldInstances gbl_env
-  = do { fld_infos <- concatMapM greToFldInst fld_gres
-       ; let gbl_env' = gbl_env{ tcg_inst_env =
-                          extendInstEnvList (tcg_inst_env gbl_env) (map iSpec fld_infos) }
-       ; return (gbl_env', fld_infos) }
+  = fmap unzip $ concatMapM greToFldInst fld_gres
   where
     fld_gres = filter isRecFldGRE . concat . occEnvElts $ tcg_rdr_env gbl_env
 
-    greToFldInst :: GlobalRdrElt -> TcM [InstInfo Name]
+    greToFldInst :: GlobalRdrElt -> TcM [(InstInfo Name, FamInst)]
     greToFldInst (GRE {gre_name = sel_name, gre_par = FldParent tycon_name fld})
       = do { addUsedRdrNames [mkRdrUnqual (nameOccName sel_name)]
            ; hasClass <- tcLookupClass recordHasClassName
@@ -1571,22 +1598,30 @@ makeOverloadedRecFldInstances gbl_env
            ; tycon <- tcLookupTyCon tycon_name
            ; sel_id <- tcLookupId sel_name
            ; if not (isNaughtyRecordSelector sel_id)
-             then
+             then do {
              let (tyvars, sel_ty) = splitForAllTys (idType sel_id)
-                 fld_ty   = snd (splitFunTy sel_ty)
+           ; (subst, tyvars') <- tcInstSkolTyVars (fld_tv:tyvars)
+           ; let fld_ty   = snd (splitFunTy sel_ty)
                  t_ty     = mkTyConApp tycon (map mkTyVarTy tyvars)
                  args     = [t_ty, mkStrLitTy (occNameFS fld), mkTyVarTy fld_tv]
                  theta    = [mkEqPred (mkTyVarTy fld_tv) fld_ty]
                  dfun     = mkDictFunId dfun_name (fld_tv:tyvars) theta hasClass args
-                 cls_inst = mkLocalInstance dfun (NoOverlap False) (fld_tv:tyvars) hasClass args
+                 cls_inst = mkLocalInstance dfun (NoOverlap False) tyvars' hasClass (substTys subst args)
+                 missing  = error "greToFldInst: missing"
                  binds    = unitBag $ L loc $ FunBind (L loc getFieldName) False
-                             (MG [L loc (Match [] Nothing (GRHSs
+                             (MG [L loc (Match [L loc (WildPat missing)] Nothing (GRHSs
                                      [L loc (GRHS [] (L loc (HsVar sel_name)))]
-                                     EmptyLocalBinds))] []
-                                 (error "greToFldInst PostTyType"))
-                             (error "greToFldInst HsWrapper") (error "greToFldInst NameSet") Nothing
-             in   return [(InstInfo cls_inst (VanillaInst binds [] False))]
-             else return [] }
+                                     EmptyLocalBinds))] [] missing)
+                             missing missing Nothing
+                 inst_info = InstInfo cls_inst (VanillaInst binds [] False)
+           ; fam_tc <- tcLookupTyCon getResultFamName
+           ; rep_tc_name <- newFamInstAxiomName loc
+                                            getResultFamName
+                                            []
+           ; let axiom = mkSingleCoAxiom rep_tc_name tyvars fam_tc [t_ty, mkStrLitTy (occNameFS fld)] fld_ty
+           ; fam_inst <- newFamInst SynFamilyInst axiom
+           ; return [(inst_info, fam_inst)]
+           } else return [] }
 \end{code}
 
 
