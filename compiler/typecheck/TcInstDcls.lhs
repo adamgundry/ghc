@@ -71,6 +71,7 @@ import SrcLoc
 import Util
 import BooleanFormula ( isUnsatisfied, pprBooleanFormulaNice )
 
+import Control.Applicative ((<$>), (<*>))
 import Control.Monad
 import Maybes     ( orElse, isNothing, isJust, whenIsJust )
 \end{code}
@@ -1585,46 +1586,73 @@ makeOverloadedRecFldInstances gbl_env
     fld_gres = filter isRecFldGRE . concat . occEnvElts $ tcg_rdr_env gbl_env
 
     greToFldInst :: GlobalRdrElt -> TcM [(InstInfo Name, FamInst)]
-    greToFldInst (GRE {gre_name = sel_name, gre_par = FldParent tycon_name fld})
+    greToFldInst (GRE {gre_name = sel_name, gre_par = FldParent tycon_name lbl})
       = do { addUsedRdrNames [mkRdrUnqual (nameOccName sel_name)]
-           ; hasClass <- tcLookupClass recordHasClassName
-           ; let loc = mkGeneralSrcSpan (fsLit "<Has record field instance>")
-                 info = concatMap occNameString
-                          [nameOccName recordHasClassName,
-                              nameOccName tycon_name, fld]
-           ; dfun_name <- newDFunName' info loc
-           ; fld_tv_name <- newName (mkVarOccFS (fsLit "fld"))
-           ; let fld_tv = mkTyVar fld_tv_name liftedTypeKind
-           ; tycon <- tcLookupTyCon tycon_name
            ; sel_id <- tcLookupId sel_name
-           ; if not (isNaughtyRecordSelector sel_id)
-             then do {
-             let (tyvars, sel_ty) = splitForAllTys (idType sel_id)
-           ; (subst, tyvars') <- tcInstSkolTyVars (fld_tv:tyvars)
-           ; upd_rec <- newSysName (mkVarOcc "upd_rec")
-           ; upd_val <- newSysName (mkVarOcc "upd_val")
-           ; let fld_ty   = snd (splitFunTy sel_ty)
-                 t_ty     = mkTyConApp tycon (map mkTyVarTy tyvars)
-                 args     = [t_ty, mkStrLitTy (occNameFS fld), mkTyVarTy fld_tv]
-                 theta    = [mkEqPred (mkTyVarTy fld_tv) fld_ty]
-                 dfun     = mkDictFunId dfun_name (fld_tv:tyvars) theta hasClass args
-                 cls_inst = mkLocalInstance dfun (NoOverlap False) tyvars' hasClass (substTys subst args)
-                 missing  = error "greToFldInst: missing"
-                 getFieldMatch = mkMatch [L loc (WildPat missing)]
-                                         (L loc (HsVar sel_name)) EmptyLocalBinds
-                 setFieldMatch = mkMatch [L loc (WildPat missing), L loc (VarPat upd_rec), L loc (VarPat upd_val)]
-                                         (L loc (RecordUpd (L loc (HsVar upd_rec)) (HsRecFields [HsRecField (L loc (mkRdrUnqual fld)) (Left sel_name) (L loc (HsVar upd_val)) False] Nothing) missing missing missing)) EmptyLocalBinds
-                 binds    = listToBag [ L loc (mkTopFunBind (L loc getFieldName) [getFieldMatch])
-                                      , L loc (mkTopFunBind (L loc setFieldName) [setFieldMatch]) ]
-                 inst_info = InstInfo cls_inst (VanillaInst binds [] False)
-           ; fam_tc <- tcLookupTyCon getResultFamName
-           ; rep_tc_name <- newFamInstAxiomName loc
-                                            getResultFamName
-                                            []
-           ; let axiom = mkSingleCoAxiom rep_tc_name tyvars fam_tc [t_ty, mkStrLitTy (occNameFS fld)] fld_ty
-           ; fam_inst <- newFamInst SynFamilyInst axiom
-           ; return [(inst_info, fam_inst)]
-           } else return [] }
+             -- Naughty record selectors don't have Has instances
+           ; if isNaughtyRecordSelector sel_id
+             then return []
+             else do -- The selector has type  forall tyvars . t_ty -> fld_ty
+             { let (tyvars, sel_ty) = splitForAllTys (idType sel_id)
+                   (t_ty, fld_ty)   = splitFunTy sel_ty
+                   f                = mkStrLitTy (occNameFS lbl)
+             ; cls_inst <- mkClsInst tycon_name lbl f tyvars t_ty fld_ty
+             ; binds    <- mkInstBindings lbl sel_name
+             ; fam_inst <- mkFamInst f tyvars t_ty fld_ty
+             ; return [(InstInfo cls_inst binds, fam_inst)] } }
+
+    loc = mkGeneralSrcSpan (fsLit "<Has record field instance>")
+
+    -- Make ClsInst for Has thus:
+    --     forall b tyvars . b ~ fld_ty => Has t_ty f b
+    mkClsInst tycon_name lbl f tyvars t_ty fld_ty
+        = do { dfun_name        <- newDFunName' (infoFor tycon_name lbl) loc
+             ; b                <- mkTyVar <$> newSysName (mkVarOcc "b")
+                                           <*> pure liftedTypeKind
+             -- See Note [Template tyvars are fresh] in InstEnv
+             ; (subst, tyvars') <- tcInstSkolTyVars (b:tyvars)
+             ; hasClass         <- tcLookupClass recordHasClassName
+             ; return $ mkLocalInstance (dfun dfun_name b hasClass)
+                                        (NoOverlap False) tyvars' hasClass
+                                        (substTys subst (args b)) }
+      where
+        args b  = [t_ty, f, mkTyVarTy b]
+        theta b = [mkEqPred (mkTyVarTy b) fld_ty]
+        dfun dfun_name b hasClass = mkDictFunId dfun_name (b:tyvars)
+                                        (theta b) hasClass (args b)
+        infoFor tycon_name lbl = concatMap occNameString
+                                  [ nameOccName recordHasClassName
+                                  , nameOccName tycon_name, lbl ]
+
+    -- Make corresponding InstBindings:
+    --     getField _     = sel_name
+    --     setField _ s x = s { lbl = x }
+    mkInstBindings lbl sel_name
+        = do { s <- newSysName (mkVarOcc "s")
+             ; x <- newSysName (mkVarOcc "x")
+             ; return $ VanillaInst (binds s x) [] False }
+      where
+        missing = error "greToFldInst: missing"
+        getFieldMatch     = mkMatch [nlWildPat] (nlHsVar sel_name) EmptyLocalBinds
+        setFieldMatch s x = mkMatch [nlWildPat, nlVarPat s, nlVarPat x]
+                                    (noLoc (recUpd s x))
+                                    EmptyLocalBinds
+        recUpd s x = RecordUpd (nlHsVar s) (recFlds x) missing missing missing
+        recFlds x  = HsRecFields { rec_flds = [HsRecField { hsRecFieldLbl = noLoc (mkRdrUnqual lbl)
+                                                          , hsRecFieldSel = Left sel_name
+                                                          , hsRecFieldArg = nlHsVar x
+                                                          , hsRecPun      = False }]
+                                 , rec_dotdot = Nothing }
+        binds s x  = listToBag [ noLoc (mkTopFunBind (noLoc getFieldName) [getFieldMatch])
+                               , noLoc (mkTopFunBind (noLoc setFieldName) [setFieldMatch s x]) ]
+
+    -- Make FamInst for GetResult:
+    --    type instance GetResult t_ty f = fld_ty
+    mkFamInst f tyvars t_ty fld_ty
+      = do { rep_tc_name  <- newFamInstAxiomName loc getResultFamName []
+           ; getResultFam <- tcLookupTyCon getResultFamName
+           ; let axiom = mkSingleCoAxiom rep_tc_name tyvars getResultFam [t_ty, f] fld_ty
+           ; newFamInst SynFamilyInst axiom }
 \end{code}
 
 
