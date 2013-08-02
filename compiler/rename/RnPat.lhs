@@ -530,7 +530,7 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
     rn_fld pun_ok overload_ok parent (HsRecField { hsRecFieldLbl = L loc lbl
                                                  , hsRecFieldArg = arg
                                                  , hsRecPun = pun })
-      = do { sel <- case parent of
+      = do { sel <- setSrcSpan loc $ case parent of
                       -- Defer renaming of overloaded fields to the typechecker
                       -- See Note [Disambiguating record updates] in TcExpr
                       NoParent | overload_ok ->
