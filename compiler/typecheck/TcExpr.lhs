@@ -758,7 +758,7 @@ tcExpr (RecordUpd record_expr rbnds _ _ _) res_ty
 When typechecking a use of an overloaded record field, we need to
 construct an appropriate instantiation of
 
-    field :: forall proxy f r t p . (Has r f t, Accessor p) => proxy f -> p r t
+    field :: forall proxy f r t p . (Has r f t, Accessor p f) => proxy f -> p r t
 
 so we supply
 
@@ -780,7 +780,7 @@ tcExpr (HsOverloadedRecFld fld) res_ty
                                          (mkArrowKind liftedTypeKind liftedTypeKind))
        ; let f = mkStrLitTy $ occNameFS fld
        ; has_var  <- emitWanted RecordProjOrigin (mkClassPred hasClass [r, f, t])
-       ; acs_var  <- emitWanted RecordProjOrigin (mkClassPred accessorClass [p])
+       ; acs_var  <- emitWanted RecordProjOrigin (mkClassPred accessorClass [p, f])
        ; field <- tcLookupId fieldName
        ; loc      <- getSrcSpanM
        ; let proxy     = anyTypeOfKind (mkArrowKind typeSymbolKind liftedTypeKind)

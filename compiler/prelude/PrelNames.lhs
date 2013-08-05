@@ -329,8 +329,10 @@ basicKnownKeyNames
 
         -- Overloaded record fields
         , recordHasClassName
+        , recordUpdClassName
         , accessorClassName
         , getResultFamName
+        , setResultFamName
         , getFieldName
         , setFieldName
         , fieldName
@@ -1154,11 +1156,13 @@ ipClassName :: Name
 ipClassName         = clsQual gHC_IP (fsLit "IP")      ipClassNameKey
 
 -- Overloaded record fields
-recordHasClassName, accessorClassName, getResultFamName,
-  getFieldName, setFieldName, fieldName :: Name
+recordHasClassName, recordUpdClassName, accessorClassName, getResultFamName,
+  setResultFamName, getFieldName, setFieldName, fieldName :: Name
 recordHasClassName = clsQual gHC_RECORDS (fsLit "Has")       recordHasClassNameKey
+recordUpdClassName = clsQual gHC_RECORDS (fsLit "Upd")       recordUpdClassNameKey
 accessorClassName  = clsQual gHC_RECORDS (fsLit "Accessor")  accessorClassNameKey
 getResultFamName   = tcQual  gHC_RECORDS (fsLit "GetResult") getResultFamNameKey
+setResultFamName   = tcQual  gHC_RECORDS (fsLit "SetResult") setResultFamNameKey
 getFieldName       = varQual gHC_RECORDS (fsLit "getField")  getFieldNameKey
 setFieldName       = varQual gHC_RECORDS (fsLit "setField")  setFieldNameKey
 fieldName          = varQual gHC_RECORDS (fsLit "field")     fieldNameKey
@@ -1300,9 +1304,10 @@ oldTypeable6ClassKey       = mkPreludeClassUnique 52
 oldTypeable7ClassKey       = mkPreludeClassUnique 53
 
 -- Overloaded record fields
-recordHasClassNameKey, accessorClassNameKey :: Unique
+recordHasClassNameKey, recordUpdClassNameKey, accessorClassNameKey :: Unique
 recordHasClassNameKey = mkPreludeClassUnique 54
-accessorClassNameKey  = mkPreludeClassUnique 55
+recordUpdClassNameKey = mkPreludeClassUnique 55
+accessorClassNameKey  = mkPreludeClassUnique 56
 \end{code}
 
 %************************************************************************
@@ -1506,8 +1511,9 @@ proxyPrimTyConKey :: Unique
 proxyPrimTyConKey = mkPreludeTyConUnique 176
 
 -- Overloaded record fields
-getResultFamNameKey :: Unique
+getResultFamNameKey, setResultFamNameKey :: Unique
 getResultFamNameKey = mkPreludeTyConUnique 177
+setResultFamNameKey = mkPreludeTyConUnique 178
 
 ---------------- Template Haskell -------------------
 --      USES TyConUniques 200-299
