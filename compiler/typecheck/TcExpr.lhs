@@ -8,7 +8,8 @@
 module TcExpr ( tcPolyExpr, tcPolyExprNC, tcMonoExpr, tcMonoExprNC,
                 tcInferRho, tcInferRhoNC,
                 tcSyntaxOp, tcCheckId,
-                addExprErrCtxt) where
+                addExprErrCtxt,
+                getFixedTyVars ) where
 
 #include "HsVersions.h"
 
@@ -733,25 +734,6 @@ tcExpr (RecordUpd record_expr rbnds _ _ _) res_ty
         ; return $ mkHsWrapCo co_res $
           RecordUpd (mkLHsWrap scrut_co record_expr') rbinds'
                                    relevant_cons scrut_inst_tys result_inst_tys  }
-  where
-    getFixedTyVars :: [OccName] -> [TyVar] -> [DataCon] -> TyVarSet
-    -- These tyvars must not change across the updates
-    getFixedTyVars upd_fld_occs tvs1 cons
-      = mkVarSet [tv1 | con <- cons
-                      , let (tvs, theta, arg_tys, _) = dataConSig con
-                            flds = dataConFieldLabels con
-                            fixed_tvs = exactTyVarsOfTypes fixed_tys
-                                    -- fixed_tys: See Note [Type of a record update]
-                                        `unionVarSet` tyVarsOfTypes theta
-                                    -- Universally-quantified tyvars that
-                                    -- appear in any of the *implicit*
-                                    -- arguments to the constructor are fixed
-                                    -- See Note [Implict type sharing]
-
-                            fixed_tys = [ty | (fl, ty) <- zip flds arg_tys
-                                            , not (flOccName fl `elem` upd_fld_occs)]
-                      , (tv1,tv) <- tvs1 `zip` tvs      -- Discards existentials in tvs
-                      , tv `elemVarSet` fixed_tvs ]
 \end{code}
 
 
@@ -1407,6 +1389,28 @@ naughtiness in both branches.  c.f. TcTyClsBindings.mkAuxBinds.
 \subsection{Record bindings}
 %*                                                                      *
 %************************************************************************
+
+\begin{code}
+getFixedTyVars :: [OccName] -> [TyVar] -> [DataCon] -> TyVarSet
+-- These tyvars must not change across the updates
+getFixedTyVars upd_fld_occs tvs1 cons
+      = mkVarSet [tv1 | con <- cons
+                      , let (tvs, theta, arg_tys, _) = dataConSig con
+                            flds = dataConFieldLabels con
+                            fixed_tvs = exactTyVarsOfTypes fixed_tys
+                                    -- fixed_tys: See Note [Type of a record update]
+                                        `unionVarSet` tyVarsOfTypes theta
+                                    -- Universally-quantified tyvars that
+                                    -- appear in any of the *implicit*
+                                    -- arguments to the constructor are fixed
+                                    -- See Note [Implict type sharing]
+
+                            fixed_tys = [ty | (fl, ty) <- zip flds arg_tys
+                                            , not (flOccName fl `elem` upd_fld_occs)]
+                      , (tv1,tv) <- tvs1 `zip` tvs      -- Discards existentials in tvs
+                      , tv `elemVarSet` fixed_tvs ]
+\end{code}
+
 
 Note [Disambiguating record updates]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

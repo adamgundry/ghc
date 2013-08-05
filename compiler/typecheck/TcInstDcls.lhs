@@ -38,6 +38,7 @@ import TcEnv
 import TcHsType
 import TcUnify
 import TcTyDecls  ( emptyRoleAnnots )
+import TcExpr
 import MkCore     ( nO_METHOD_BINDING_ERROR_ID )
 import Type
 import TcEvidence
@@ -1653,25 +1654,16 @@ makeOverloadedRecFldInstances gbl_env
            ; let (subst', tyvarss) = mapAccumL fixate subst (zip tyvars tyvars')
            ; return (subst', concat tyvarss) }
       where
-        fixed_tvs       = tyConFixedTyVars lbl (recordSelectorTyCon sel_id)
+        fixed_tvs       = tyConFixedTyVars lbl (recordSelectorTyCon sel_id) tyvars
         changeable x    = x `elemVarSet` fld_tvs && not (x `elemVarSet` fixed_tvs)
         fixate s (a, b) | changeable a = (s, [a, b])
                         | otherwise    = (extendTvSubst s a (mkTyVarTy a), [a])
 
-    tyConFixedTyVars :: OccName -> TyCon -> TyVarSet
-    tyConFixedTyVars lbl tc = unionVarSets $ map (dataConFixedTyVars lbl) (tyConDataCons tc)
-
-    dataConFixedTyVars :: OccName -> DataCon -> TyVarSet
-    dataConFixedTyVars lbl dc | has_fld   = tyVarsOfTypes fixed_tys
-                              | otherwise = emptyVarSet
+    tyConFixedTyVars :: OccName -> TyCon -> [TyVar] -> TyVarSet
+    tyConFixedTyVars lbl tc tyvars = getFixedTyVars [lbl] tyvars relevant_cons
       where
-        has_fld       = any isMyLabel field_lbls
-        isMyLabel fl  = flOccName fl == lbl
-        other_fld_tys = [ty | (fl, ty) <- zip field_lbls arg_tys
-                                , not (isMyLabel fl) ]
-        fixed_tys     = other_fld_tys ++ map snd eq_spec ++ theta
-        field_lbls    = dataConFieldLabels dc
-        (_, _, eq_spec, theta, arg_tys, _) = dataConFullSig dc
+        relevant_cons      = filter is_relevant_con (tyConDataCons tc)
+        is_relevant_con dc = any (\ fl -> flOccName fl == lbl) (dataConFieldLabels dc)
 
     -- Make InstInfo for Has thus:
     --     instance forall b tyvars . b ~ fld_ty => Has t_ty f b where
