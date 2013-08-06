@@ -487,7 +487,7 @@ addPrivateClsInsts infos thing_inside
 
 addPrivateTyFamInsts :: [FamInst] -> TcM a -> TcM a
 -- See Note [Private instances]
-addPrivateTyFamInsts = tcExtendPrivateFamInstEnv
+addPrivateTyFamInsts = tcExtendLocalFamInstEnv
 \end{code}
 
 Note [Deriving inside TH brackets]
@@ -1564,16 +1564,26 @@ Note carefullly:
 
 Note [Private instances]
 ~~~~~~~~~~~~~~~~~~~~~~~~
-Overloaded record field instances are created for each module
+Overloaded record field class instances are created for each module
 separately, based on the fields in scope, and are never exported. This
 ensures that the instances in scope for a given module correspond
-exactly to the fields in scope in that module.
+exactly to the fields in scope in that module.  Note that while the
+instance declarations are not exported, the dfunids and axioms must
+be, because they may appear in unfoldings.
 
 To achieve this, the results of makeOverloadedRecFldInstances should
-be added using addPrivateClsInsts and addPrivateTyFamInsts. These
-extend the tcg_inst_env field of the TcGblEnv, but not the tcg_insts
+be added using addPrivateClsInsts and addPrivateFamInsts. The former
+extends the tcg_inst_env field of the TcGblEnv, but not the tcg_insts
 field, so the instances are available locally but will not appear in
 the module's interface.
+
+AMG TODO: This strategy doesn't work for addPrivateFamInsts, because
+for some reason the axiom doesn't get exported. This may have
+something to do with the comments on IfaceClsInst in IfaceSyn, which
+observe that there is a separate IfaceDecl for the DFun; is this true
+for FamInsts?
+
+I'm not very happy with all this anyway. A better strategy is needed.
 
 
 Note [Availability of type-changing update]
