@@ -65,6 +65,7 @@ import TysPrim ( liftedTypeKindTyConName, constraintKindTyConName )
 import Class
 import Name
 import NameEnv
+import RdrName
 import TysWiredIn
 import BasicTypes
 import SrcLoc
@@ -77,7 +78,7 @@ import FastString
 import Util
 
 import Control.Monad ( unless, when, zipWithM )
-import PrelNames( ipClassName, funTyConKey )
+import PrelNames( ipClassName, funTyConKey, recordHasClassName )
 \end{code}
 
 
@@ -375,6 +376,21 @@ tc_hs_type hs_ty@(HsOpTy ty1 (_, l_op@(L _ op)) ty2) exp_kind
        ; tys' <- tcCheckApps hs_ty l_op op_kind [ty1,ty2] exp_kind
        ; return (mkNakedAppTys op' tys') }
          -- mkNakedAppTys: see Note [Zonking inside the knot]
+
+tc_hs_type hs_ty@(HsAppTy ty1 (L loc (HsRecTy flds))) exp_kind
+  = do { (ty1', ty1_kind) <- tc_infer_lhs_type ty1
+       ; checkExpectedKind ty1 ty1_kind ekLifted
+       ; cs <- setSrcSpan loc $ mapM (checkRecordField ty1') flds
+       ; checkExpectedKind hs_ty constraintKind exp_kind
+       ; return (mkTupleTy ConstraintTuple cs) }
+  where
+    checkRecordField :: Type -> ConDeclField Name -> TcM Type
+    checkRecordField rty (ConDeclField lbl _ ty _)
+      = do { (ty', ty_kind) <- tc_infer_lhs_type ty
+           ; checkExpectedKind ty ty_kind ekLifted
+           ; hasClass <- tcLookupClass recordHasClassName
+           ; let f = mkStrLitTy (occNameFS (rdrNameOcc (unLoc lbl)))
+           ; return (mkClassPred hasClass [rty, f, ty']) }
 
 tc_hs_type hs_ty@(HsAppTy ty1 ty2) exp_kind
 --  | L _ (HsTyVar fun) <- fun_ty
