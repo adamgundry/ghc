@@ -61,7 +61,6 @@ import Outputable
 import FastString
 import Control.Monad
 import Class(classTyCon)
-import Data.Either
 import Data.Function
 import Data.List
 import qualified Data.Set as Set
@@ -1472,6 +1471,7 @@ disambiguateRecordBinds record_expr rbnds res_ty
     orig_upd_flds = hsRecFields rbnds
     unambiguous   = all (isLeft . snd) orig_upd_flds
     tyconOf       = fmap tyConName . tyConAppTyCon_maybe
+    isLeft        = either (const True) (const False)
 
     -- Calculate the list of possible parent tycons, by taking the
     -- intersection of the possibilities for each field.
