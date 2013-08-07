@@ -1640,9 +1640,11 @@ makeOverloadedRecFldInstances gbl_env
            ; if ASSERT (isRecordSelector sel_id) isNaughtyRecordSelector sel_id
              then return []
              else do -- The selector has type  forall tyvars . t_ty -> fld_ty
-                     -- where t_ty = T tyvars
-             { let (tyvars, sel_ty) = splitForAllTys (idType sel_id)
-                   (t_ty, fld_ty)   = splitFunTy sel_ty
+             { let (tyvars0, sel_ty) = splitForAllTys (idType sel_id)
+               -- We need to freshen the tyvars otherwise we get weird
+               -- name capture errors in Core Lint
+             ; (subst0, tyvars) <- tcInstSkolTyVars tyvars0
+             ; let (t_ty, fld_ty)   = splitFunTy (substTy subst0 sel_ty)
                    f                = mkStrLitTy (occNameFS lbl)
              ; b        <- mkTyVar <$> newSysName (mkVarOcc "b") <*> pure liftedTypeKind
              ; has_inst <- mkHasInstInfo sel_name tycon_name lbl f tyvars t_ty fld_ty b
@@ -1689,7 +1691,8 @@ makeOverloadedRecFldInstances gbl_env
 
         inst_bind = VanillaInst bind [] False
           where
-            bind  = unitBag $ noLoc (mkTopFunBind (noLoc getFieldName) [match])
+            bind  = unitBag $ noLoc ((mkTopFunBind (noLoc getFieldName) [match])
+                                     { bind_fvs = missing })
             match = mkMatch [nlWildPat] (noLoc (HsSingleRecFld lbl sel_name)) EmptyLocalBinds
 
     -- Make InstInfo for Upd thus:
@@ -1709,9 +1712,9 @@ makeOverloadedRecFldInstances gbl_env
 
         inst_bind s x = VanillaInst bind [] False
           where
-            bind    = unitBag $ noLoc (mkTopFunBind (noLoc setFieldName) [match])
+            bind    = unitBag $ noLoc ((mkTopFunBind (noLoc setFieldName) [match])
+                                       { bind_fvs = missing })
             match   = mkMatch [nlWildPat, nlVarPat s, nlVarPat x] (noLoc recUpd) EmptyLocalBinds
-            missing = error "greToFldInst: missing"
             recUpd  = RecordUpd (nlHsVar s) recFlds missing missing missing
             recFlds = HsRecFields { rec_flds = [recFld], rec_dotdot = Nothing }
             recFld  = HsRecField (noLoc (mkRdrUnqual lbl)) (Left sel_name) (nlHsVar x) False
@@ -1731,6 +1734,7 @@ makeOverloadedRecFldInstances gbl_env
            ; newFamInst SynFamilyInst axiom }
 
     loc = mkGeneralSrcSpan (fsLit "<Has record field instance>")
+    missing = error "greToFldInst: missing"
 
     infoFor clas tycon_name lbl = concatMap occNameString
                                      [ nameOccName (className clas), nameOccName tycon_name, lbl ]
