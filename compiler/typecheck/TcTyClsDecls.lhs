@@ -1791,7 +1791,7 @@ mkRecSelBinds :: [TyThing] -> TcM (HsValBinds Name)
 mkRecSelBinds tycons
   = do { let rec_sels = map mkRecSelBind [ (tc,fld)
                                          | ATyCon tc <- tycons
-                                         , fld <- tyConFields tc ]
+                                         , fld <- tyConFieldLabels tc ]
        ; let (sigs, binds) = unzip rec_sels
        ; return $ ValBindsOut [(NonRecursive, b) | b <- binds] sigs }
 
@@ -1863,12 +1863,6 @@ mkRecSelBind (tycon, fld) = (L loc (IdSig sel_id), unitBag (L loc sel_bind))
     unit_rhs = mkLHsTupleExpr []
     msg_lit = HsStringPrim $ unsafeMkByteString $
               occNameString (getOccName sel_name)
-
----------------
-tyConFields :: TyCon -> [FieldLabel]
-tyConFields tc
-  | isAlgTyCon tc = nub (concatMap dataConFieldLabels (tyConDataCons tc))
-  | otherwise     = []
 \end{code}
 
 Note [Polymorphic selectors]

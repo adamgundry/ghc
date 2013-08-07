@@ -31,6 +31,7 @@ module DataCon (
 	dataConInstArgTys, dataConOrigArgTys, dataConOrigResTy,
 	dataConInstOrigArgTys, dataConRepArgTys, 
 	dataConFieldLabels, dataConFieldType,
+	tyConFieldLabels,
 	dataConStrictMarks, 
 	dataConSourceArity, dataConRepArity, dataConRepRepArity,
 	dataConIsInfix,
@@ -771,6 +772,12 @@ dataConFieldType con occ
   = case find ((== occ) . flOccName . fst) (dcFields con `zip` dcOrigArgTys con) of
       Just (_, ty) -> ty
       Nothing      -> pprPanic "dataConFieldType" (ppr con <+> ppr occ)
+
+-- | The labels for the fields of this particular 'TyCon'
+tyConFieldLabels :: TyCon -> [FieldLabel]
+tyConFieldLabels tc
+  | isAlgTyCon tc = nub (concatMap dataConFieldLabels (tyConDataCons tc))
+  | otherwise     = []
 
 -- | The strictness markings decided on by the compiler.  Does not include those for
 -- existential dictionaries.  The list is in one-to-one correspondence with the arity of the 'DataCon'

@@ -45,7 +45,7 @@ import FastString
 import Outputable
 import SrcLoc
 import DynFlags
-import Data.List        ( partition, mapAccumL, zip4 )
+import Data.List        ( partition, mapAccumL, zip4, find )
 \end{code}
 
 %************************************************************************
@@ -936,10 +936,12 @@ mk_dict_err ctxt (ct, (matches, unifiers, safe_haskell))
   | null matches  -- No matches but perhaps several unifiers
   = do { let (is_ambig, ambig_msg) = mkAmbigMsg ct
        ; (ctxt, binds_msg) <- relevantBindings True ctxt ct
-       ; traceTc "mk_dict_err" (ppr ct $$ ppr is_ambig $$ ambig_msg)
+       ; overloaded <- xoptM Opt_OverloadedRecordFields
+       ; let records_msg = mkRecordsMsg overloaded
+       ; traceTc "mk_dict_err" (ppr ct $$ ppr is_ambig $$ ambig_msg $$ records_msg)
        ; safe_mod <- safeLanguageOn `fmap` getDynFlags
        ; rdr_env <- getGlobalRdrEnv
-       ; return (ctxt, cannot_resolve_msg safe_mod rdr_env is_ambig binds_msg ambig_msg) }
+       ; return (ctxt, cannot_resolve_msg safe_mod rdr_env is_ambig binds_msg ambig_msg records_msg) }
 
   | not safe_haskell   -- Some matches => overlap errors
   = return (ctxt, overlap_msg)
@@ -954,13 +956,14 @@ mk_dict_err ctxt (ct, (matches, unifiers, safe_haskell))
     givens      = getUserGivens ctxt
     all_tyvars  = all isTyVarTy tys
 
-    cannot_resolve_msg safe_mod rdr_env has_ambig_tvs binds_msg ambig_msg
+    cannot_resolve_msg safe_mod rdr_env has_ambig_tvs binds_msg ambig_msg records_msg
       = vcat [ addArising orig (no_inst_herald <+> pprParendType pred $$
                                 coercible_msg safe_mod rdr_env)
              , vcat (pp_givens givens)
              , ppWhen (has_ambig_tvs && not (null unifiers && null givens))
                (vcat [ ambig_msg, binds_msg, potential_msg ])
-             , show_fixes (add_to_ctxt_fixes has_ambig_tvs ++ drv_fixes) ]
+             , show_fixes (add_to_ctxt_fixes has_ambig_tvs ++ drv_fixes)
+             , records_msg ]
 
     potential_msg
       = ppWhen (not (null unifiers) && want_potential orig) $
@@ -1141,6 +1144,25 @@ mk_dict_err ctxt (ct, (matches, unifiers, safe_haskell))
             | dataConMissing rdr_env tc
             ]
         | otherwise = Nothing
+
+    mkRecordsMsg overloaded
+      | isRecordsClass clas, not overloaded = suggest_overloaded
+      | isRecordsClass clas, Just tc <- tyConAppTyCon_maybe r, LitTy (StrTyLit lbl) <- f
+          = case find ((== lbl) . occNameFS . flOccName) (tyConFieldLabels tc) of
+              Just _  -> unsuitable_field_type lbl tc
+              Nothing -> missing_field lbl tc
+      | otherwise = empty
+      where
+        [r, f, _] = tys
+        suggest_overloaded = ptext $ sLit "Perhaps you should enable -XOverloadedRecordFields?"
+        unsuitable_field_type lbl tc
+          = hang (ptext (sLit "The field") <+> quotes (ppr lbl)
+                     <+> ptext (sLit "of") <+> quotes (ppr (tyConName tc))
+                     <+> ptext (sLit "cannot be overloaded,"))
+               2 (ptext (sLit "as its type is universally or existentially quantified"))
+        missing_field lbl tc
+          = ptext (sLit "The type") <+> quotes (ppr (tyConName tc))
+            <+> ptext (sLit "does not have a field") <+> quotes (ppr lbl)
 
 show_fixes :: [SDoc] -> SDoc
 show_fixes []     = empty

@@ -52,6 +52,7 @@ module Type (
         mkClassPred,
         noParenPred, isClassPred, isEqPred,
         isIPPred, isIPPred_maybe, isIPTyCon, isIPClass,
+        isHasClass, isUpdClass, isRecordsClass,
 
         -- Deconstructing predicate types
         PredTree(..), classifyPredType,
@@ -161,8 +162,7 @@ import Class
 import TyCon
 import TysPrim
 import {-# SOURCE #-} TysWiredIn ( eqTyCon, typeNatKind, typeSymbolKind )
-import PrelNames ( eqTyConKey, ipClassNameKey, openTypeKindTyConKey,
-                   constraintKindTyConKey, liftedTypeKindTyConKey )
+import PrelNames
 import CoAxiom
 
 -- others
@@ -877,6 +877,12 @@ isIPPred_maybe ty =
      guard (isIPTyCon tc)
      x <- isStrLitTy t1
      return (x,t2)
+
+isHasClass, isUpdClass, isRecordsClass :: Class -> Bool
+isHasClass cls = cls `hasKey` recordHasClassNameKey
+isUpdClass cls = cls `hasKey` recordUpdClassNameKey
+isRecordsClass cls = isHasClass cls || isUpdClass cls
+
 \end{code}
 
 Make PredTypes
