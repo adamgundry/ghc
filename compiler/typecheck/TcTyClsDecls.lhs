@@ -1482,15 +1482,16 @@ checkValidTyCon tc role_annots
         where
         (tvs1, _, _, res1) = dataConSig con1
         ts1 = mkVarSet tvs1
-        fty1 = dataConFieldType con1 label
+        fty1 = dataConFieldType con1 lbl
+        lbl = flOccName label
 
         checkOne (_, con2)    -- Do it bothways to ensure they are structurally identical
-            = do { checkFieldCompat (flOccName label) con1 con2 ts1 res1 res2 fty1 fty2
-                 ; checkFieldCompat (flOccName label) con2 con1 ts2 res2 res1 fty2 fty1 }
+            = do { checkFieldCompat lbl con1 con2 ts1 res1 res2 fty1 fty2
+                 ; checkFieldCompat lbl con2 con1 ts2 res2 res1 fty2 fty1 }
             where
                 (tvs2, _, _, res2) = dataConSig con2
                 ts2 = mkVarSet tvs2
-                fty2 = dataConFieldType con2 label
+                fty2 = dataConFieldType con2 lbl
     check_fields [] = panic "checkValidTyCon/check_fields []"
 
 checkRoleAnnot :: TyVar -> Located (Maybe Role) -> Role -> TcM ()
@@ -1811,7 +1812,7 @@ mkRecSelBind (tycon, fld) = (L loc (IdSig sel_id), unitBag (L loc sel_bind))
     con1 = ASSERT( not (null cons_w_field) ) head cons_w_field
 
     -- Selector type; Note [Polymorphic selectors]
-    field_ty   = dataConFieldType con1 fld
+    field_ty   = dataConFieldType con1 lbl
     data_ty    = dataConOrigResTy con1
     data_tvs   = tyVarsOfType data_ty
     is_naughty = not (tyVarsOfType field_ty `subVarSet` data_tvs)

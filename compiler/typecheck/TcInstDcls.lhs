@@ -1635,59 +1635,61 @@ makeOverloadedRecFldInstances gbl_env
     greToFldInst :: GlobalRdrElt -> TcM [(InstInfo Name, FamInst)]
     greToFldInst (GRE {gre_name = sel_name, gre_par = FldParent tycon_name lbl})
       = do { addUsedRdrNames [mkRdrUnqual (nameOccName sel_name)]
-           ; sel_id <- tcLookupId sel_name
-             -- Naughty record selectors don't have Has instances
-           ; if ASSERT (isRecordSelector sel_id) isNaughtyRecordSelector sel_id
-             then return []
-             else do -- The selector has type  forall tyvars . t_ty -> fld_ty
-             { let (tyvars0, sel_ty) = splitForAllTys (idType sel_id)
-               -- We need to freshen the tyvars otherwise we get weird
-               -- name capture errors in Core Lint
-             ; (subst0, tyvars) <- tcInstSkolTyVars tyvars0
-             ; let (t_ty, fld_ty)   = splitFunTy (substTy subst0 sel_ty)
-                   f                = mkStrLitTy (occNameFS lbl)
-             ; b        <- mkTyVar <$> newSysName (mkVarOcc "b") <*> pure liftedTypeKind
-             ; has_inst <- mkHasInstInfo sel_name tycon_name lbl f tyvars t_ty fld_ty b
-             ; get_fam  <- mkFamInst getResultFamName tyvars [t_ty, f] fld_ty
+           ; tc <- tcLookupTyCon tycon_name
+           ; let relevant_cons = filter (is_relevant_con lbl) (tyConDataCons tc)
+                 dc            = ASSERT (notNull relevant_cons) head relevant_cons
+                 fld_ty0       = dataConFieldType dc lbl
+                 f             = mkStrLitTy (occNameFS lbl)
+                 (univ_tvs, ex_tvs, eq_spec0, _, _, data_ty0) = dataConFullSig dc
+           ; (subst0, tyvars) <- tcInstSkolTyVars (univ_tvs ++ ex_tvs)
+           ; let t_ty    = substTy subst0 (mkTyConApp tc (mkTyVarTys univ_tvs))
+                 data_ty = substTy subst0 data_ty0
+                 fld_ty  = substTy subst0 fld_ty0
+                 eq_spec = substTys subst0 (eqSpecPreds eq_spec0)
+           ; (_, mb) <- tryTc (checkValidMonoType fld_ty) -- TODO: make this pure?
+           -- univ_tvs could be replaced by tyVarsOfType data_ty0 were it not for Trac #2595
+           ; if isNothing mb || not (tyVarsOfType fld_ty0 `subVarSet` mkVarSet univ_tvs)
+             then return [] -- Universally or existentially quantified, so give up
+             else do
+             { b        <- mkTyVar <$> newSysName (mkVarOcc "b") <*> pure liftedTypeKind
+             ; has_inst <- mkHasInstInfo sel_name tycon_name lbl f tyvars eq_spec t_ty fld_ty b
+             ; get_fam  <- mkFamInst getResultFamName [t_ty, f] fld_ty
 
-             ; (subst, tyvars') <- updatingSubst sel_id lbl tyvars (tyVarsOfType fld_ty)
-             ; let fld_ty' = substTy subst fld_ty
-                   t_ty'   = substTy subst t_ty
-             ; upd_inst <- mkUpdInstInfo sel_name tycon_name lbl f t_ty b tyvars' fld_ty'
-             ; set_fam  <- mkFamInst setResultFamName tyvars' [t_ty, f, fld_ty'] t_ty'
+             ; (subst, tyvars') <- updatingSubst lbl relevant_cons tyvars (tyVarsOfType fld_ty)
+             ; let fld_ty'  = substTy subst fld_ty
+                   data_ty' = substTy subst data_ty
+             ; upd_inst <- mkUpdInstInfo sel_name tycon_name lbl f eq_spec t_ty b tyvars' fld_ty'
+             ; set_fam  <- mkFamInst setResultFamName [data_ty, f, fld_ty'] data_ty'
              ; return [(has_inst, get_fam), (upd_inst, set_fam)] } }
+
+    is_relevant_con lbl dc = any (\ fl -> flOccName fl == lbl) (dataConFieldLabels dc)
 
     -- Compute a substitution that replaces each tyvar with a fresh
     -- variable, if it can be updated, and itself if not
     -- See Note [Availability of type-changing update]
-    updatingSubst :: Id -> OccName -> [TyVar] -> TyVarSet -> TcM (TvSubst, [TyVar])
-    updatingSubst sel_id lbl tyvars fld_tvs
+    updatingSubst :: OccName -> [DataCon] -> [TyVar] -> TyVarSet -> TcM (TvSubst, [TyVar])
+    updatingSubst lbl relevant_cons tyvars fld_tvs
       = do { (subst, tyvars') <- tcInstSkolTyVars tyvars
            ; let (subst', tyvarss) = mapAccumL fixate subst (zip tyvars tyvars')
            ; return (subst', concat tyvarss) }
       where
-        fixed_tvs       = tyConFixedTyVars lbl (recordSelectorTyCon sel_id) tyvars
+        fixed_tvs       = getFixedTyVars [lbl] tyvars relevant_cons
         changeable x    = x `elemVarSet` fld_tvs && not (x `elemVarSet` fixed_tvs)
         fixate s (a, b) | changeable a = (s, [a, b])
                         | otherwise    = (extendTvSubst s a (mkTyVarTy a), [a])
-
-    tyConFixedTyVars :: OccName -> TyCon -> [TyVar] -> TyVarSet
-    tyConFixedTyVars lbl tc tyvars = getFixedTyVars [lbl] tyvars relevant_cons
       where
-        relevant_cons      = filter is_relevant_con (tyConDataCons tc)
-        is_relevant_con dc = any (\ fl -> flOccName fl == lbl) (dataConFieldLabels dc)
 
     -- Make InstInfo for Has thus:
     --     instance forall b tyvars . b ~ fld_ty => Has t_ty f b where
     --         getField _ = sel_name
-    mkHasInstInfo sel_name tycon_name lbl f tyvars t_ty fld_ty b
+    mkHasInstInfo sel_name tycon_name lbl f tyvars eq_spec t_ty fld_ty b
         = do { hasClass  <- tcLookupClass recordHasClassName
              ; dfun_name <- newDFunName' (infoFor hasClass tycon_name lbl) loc
              ; cls_inst  <- mkFreshenedClsInst dfun_name (b:tyvars) theta hasClass args
              ; return (InstInfo cls_inst inst_bind) }
       where
         args      = [t_ty, f, mkTyVarTy b]
-        theta     = [mkEqPred (mkTyVarTy b) fld_ty]
+        theta     = mkEqPred (mkTyVarTy b) fld_ty : eq_spec
 
         inst_bind = VanillaInst bind [] False
           where
@@ -1699,7 +1701,7 @@ makeOverloadedRecFldInstances gbl_env
     --     instance forall b tyvars . b ~ fld_ty' => Upd t_ty f b where
     --         setField _ s x = s { lbl = x }
     --  fld_ty' is fld_ty with fresh tyvars (if type-changing update is possible)
-    mkUpdInstInfo sel_name tycon_name lbl f t_ty b tyvars'' fld_ty''
+    mkUpdInstInfo sel_name tycon_name lbl f eq_spec t_ty b tyvars'' fld_ty''
         = do { updClass  <- tcLookupClass recordUpdClassName
              ; dfun_name <- newDFunName' (infoFor updClass tycon_name lbl) loc
              ; cls_inst <- mkFreshenedClsInst dfun_name (b:tyvars'') theta updClass args
@@ -1708,7 +1710,7 @@ makeOverloadedRecFldInstances gbl_env
              ; return (InstInfo cls_inst (inst_bind s x)) }
       where
         args  = [t_ty, f, mkTyVarTy b]
-        theta = [mkEqPred (mkTyVarTy b) fld_ty'']
+        theta = mkEqPred (mkTyVarTy b) fld_ty'' : eq_spec
 
         inst_bind s x = VanillaInst bind [] False
           where
@@ -1727,10 +1729,11 @@ makeOverloadedRecFldInstances gbl_env
 
     -- Make a type family instance
     --    type instance fam_name args = result
-    mkFamInst fam_name tyvars args result
+    mkFamInst fam_name args result
       = do { rep_tc_name <- newFamInstAxiomName loc fam_name []
            ; fam <- tcLookupTyCon fam_name
-           ; let axiom = mkSingleCoAxiom rep_tc_name tyvars fam args result
+           ; let tyvars = varSetElems (tyVarsOfTypes (result:args))
+                 axiom  = mkSingleCoAxiom rep_tc_name tyvars fam args result
            ; newFamInst SynFamilyInst axiom }
 
     loc = mkGeneralSrcSpan (fsLit "<Has record field instance>")

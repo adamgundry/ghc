@@ -766,12 +766,11 @@ dataConFieldLabels :: DataCon -> [FieldLabel]
 dataConFieldLabels = dcFields
 
 -- | Extract the type for any given labelled field of the 'DataCon'
-dataConFieldType :: DataCon -> FieldLabel -> Type
-dataConFieldType con label
+dataConFieldType :: DataCon -> OccName -> Type
+dataConFieldType con occ
   = case find ((== occ) . flOccName . fst) (dcFields con `zip` dcOrigArgTys con) of
       Just (_, ty) -> ty
       Nothing      -> pprPanic "dataConFieldType" (ppr con <+> ppr occ)
-  where occ = flOccName label
 
 -- | The strictness markings decided on by the compiler.  Does not include those for
 -- existential dictionaries.  The list is in one-to-one correspondence with the arity of the 'DataCon'
