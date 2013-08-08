@@ -1587,24 +1587,22 @@ checkMissingFields data_con rbinds
 
   where
     missing_s_fields
-        = [ fl | (fl, str) <- field_info,
+        = [ flOccName fl | (fl, str) <- field_info,
                  isBanged str,
-                 not (fl `elem` field_names_used)
+                 not (fl `elemField` field_names_used)
           ]
     missing_ns_fields
-        = [ fl | (fl, str) <- field_info,
+        = [ flOccName fl | (fl, str) <- field_info,
                  not (isBanged str),
-                 not (fl `elem` field_names_used)
+                 not (fl `elemField` field_names_used)
           ]
 
-    field_names_used = map (getOccName . snd) $ hsRecFieldsUnambiguous rbinds
-    field_labels     = map (getOccName . flSelector) $ dataConFieldLabels data_con
+    field_names_used = hsRecFieldsUnambiguous rbinds
+    field_labels     = dataConFieldLabels data_con
+    field_info       = zipEqual "missingFields" field_labels field_strs
+    field_strs       = dataConStrictMarks data_con
 
-    field_info = zipEqual "missingFields"
-                          field_labels
-                          field_strs
-
-    field_strs = dataConStrictMarks data_con
+    fl `elemField` flds = any (\ fl' -> flSelector fl == snd fl') flds
 \end{code}
 
 %************************************************************************
