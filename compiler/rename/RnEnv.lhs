@@ -1630,43 +1630,40 @@ check_unused flag bound_names used_names
 -------------------------
 --      Helpers
 warnUnusedGREs :: [GlobalRdrElt] -> RnM ()
-warnUnusedGREs gres
- = warnUnusedBinds [(n,p) | GRE {gre_name = n, gre_prov = p} <- gres]
-
-warnUnusedLocals :: [Name] -> RnM ()
-warnUnusedLocals names
- = warnUnusedBinds [(n,LocalDef) | n<-names]
-
-warnUnusedBinds :: [(Name,Provenance)] -> RnM ()
-warnUnusedBinds names  = mapM_ warnUnusedName (filter reportable names)
- where reportable (name,_)
+warnUnusedGREs gres = mapM_ warnUnusedGRE (filter reportable gres)
+ where reportable gre@(GRE { gre_name = name })
         | isWiredInName name = False    -- Don't report unused wired-in names
                                         -- Otherwise we get a zillion warnings
                                         -- from Data.Tuple
-        | otherwise = not (startsWithUnderscore (nameOccName name))
+        | otherwise = not (startsWithUnderscore (greOccName gre))
+
+warnUnusedLocals :: [Name] -> RnM ()
+warnUnusedLocals names
+ = warnUnusedGREs [GRE {gre_name = n, gre_par = NoParent, gre_prov = LocalDef} | n<-names]
 
 -------------------------
 
-warnUnusedName :: (Name, Provenance) -> RnM ()
-warnUnusedName (name, LocalDef)
-  = addUnusedWarning name (nameSrcSpan name)
+warnUnusedGRE :: GlobalRdrElt -> RnM ()
+warnUnusedGRE gre = case gre_prov gre of
+  LocalDef -> addUnusedWarning gre (nameSrcSpan (gre_name gre))
                      (ptext (sLit "Defined but not used"))
-
-warnUnusedName (name, Imported is)
-  = mapM_ warn is
-  where
-    warn spec = addUnusedWarning name span msg
+  Imported is -> mapM_ warn is
+   where
+    warn spec = addUnusedWarning gre span msg
         where
            span = importSpecLoc spec
            pp_mod = quotes (ppr (importSpecModule spec))
            msg = ptext (sLit "Imported from") <+> pp_mod <+> ptext (sLit "but not used")
 
-addUnusedWarning :: Name -> SrcSpan -> SDoc -> RnM ()
-addUnusedWarning name span msg
+addUnusedWarning :: GlobalRdrElt -> SrcSpan -> SDoc -> RnM ()
+addUnusedWarning gre span msg
   = addWarnAt span $
     sep [msg <> colon,
-         nest 2 $ pprNonVarNameSpace (occNameSpace (nameOccName name))
-                        <+> quotes (ppr name)]
+         nest 2 $ pprNonVarNameSpace (occNameSpace (greOccName gre))
+                        <+> quotes pp_name]
+  where
+    pp_name | isOverloadedRecFldGRE gre = ppr (greOccName gre)
+            | otherwise                 = ppr (gre_name gre)
 \end{code}
 
 \begin{code}
