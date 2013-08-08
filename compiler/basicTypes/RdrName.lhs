@@ -50,7 +50,8 @@ module RdrName (
         transformGREs, findLocalDupsRdrEnv, pickGREs,
 
         -- ** Global 'RdrName' mapping elements: 'GlobalRdrElt', 'Provenance', 'ImportSpec'
-        GlobalRdrElt(..), isLocalGRE, isRecFldGRE, unQualOK, qualSpecOK, unQualSpecOK,
+        GlobalRdrElt(..), isLocalGRE, isRecFldGRE, isOverloadedRecFldGRE,
+        unQualOK, qualSpecOK, unQualSpecOK,
         Provenance(..), pprNameProvenance,
         Parent(..),
         ImportSpec(..), ImpDeclSpec(..), ImpItemSpec(..),
@@ -582,6 +583,11 @@ isLocalGRE _                           = False
 isRecFldGRE :: GlobalRdrElt -> Bool
 isRecFldGRE (GRE {gre_par = FldParent{}}) = True
 isRecFldGRE _                             = False
+
+isOverloadedRecFldGRE :: GlobalRdrElt -> Bool
+isOverloadedRecFldGRE (GRE {gre_name = n, gre_par = FldParent{par_lbl = f}})
+                        = nameOccName n /= f
+isOverloadedRecFldGRE _ = False
 
 unQualOK :: GlobalRdrElt -> Bool
 -- ^ Test if an unqualifed version of this thing would be in scope

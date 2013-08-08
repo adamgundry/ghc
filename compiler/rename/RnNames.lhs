@@ -1346,10 +1346,16 @@ warnUnusedImportDecls gbl_env
        ; let usage :: [ImportDeclUsage]
              usage = findImportUsage imports rdr_env (Set.elems uses)
 
+             fld_env = mkNameEnv [ (gre_name gre, (lbl, p))
+                                     | gres <- occEnvElts rdr_env
+                                     , gre <- gres
+                                     , isRecFldGRE gre
+                                     , let FldParent p lbl = gre_par gre ]
+
        ; traceRn (vcat [ ptext (sLit "Uses:") <+> ppr (Set.elems uses)
                        , ptext (sLit "Import usage") <+> ppr usage])
        ; whenWOptM Opt_WarnUnusedImports $
-         mapM_ warnUnusedImport usage
+         mapM_ (warnUnusedImport fld_env) usage
 
        ; whenGOptM Opt_D_dump_minimal_imports $
          printMinimalImports usage }
@@ -1411,7 +1417,7 @@ findImportUsage imports rdr_env rdrs
         add_unused (IEVar n)             acc = add_unused_name n acc
         add_unused (IEThingAbs n)        acc = add_unused_name n acc
         add_unused (IEThingAll n)        acc = add_unused_all  n acc
-        add_unused (IEThingWith p ns fs) acc = add_unused_with p ns acc
+        add_unused (IEThingWith p ns fs) acc = add_unused_with p (ns ++ map (look_fld p) fs) acc
         add_unused _                     acc = acc
 
         add_unused_name n acc
@@ -1430,6 +1436,10 @@ findImportUsage imports rdr_env rdrs
        -- imported Num(signum).  We don't want to complain that
        -- Num is not itself mentioned.  Hence the two cases in add_unused_with.
 
+        look_fld p occ = gre_name sel_gre
+          where
+            sel_gres = lookupSubBndrGREs rdr_env (FldParent p occ) (mkRdrUnqual occ)
+            sel_gre = ASSERT ( notNull sel_gres ) head sel_gres
 
 extendImportMap :: GlobalRdrEnv -> RdrName -> ImportMap -> ImportMap
 -- For a used RdrName, find all the import decls that brought
@@ -1468,8 +1478,8 @@ extendImportMap rdr_env rdr imp_map
 \end{code}
 
 \begin{code}
-warnUnusedImport :: ImportDeclUsage -> RnM ()
-warnUnusedImport (L loc decl, used, unused)
+warnUnusedImport :: NameEnv (OccName, Name) -> ImportDeclUsage -> RnM ()
+warnUnusedImport fld_env (L loc decl, used, unused)
   | Just (False,[]) <- ideclHiding decl
                 = return ()            -- Do not warn for 'import M()'
   | null used   = addWarnAt loc msg1   -- Nothing used; drop entire decl
@@ -1481,7 +1491,7 @@ warnUnusedImport (L loc decl, used, unused)
                                    <+> quotes pp_mod),
                  ptext (sLit "To import instances alone, use:")
                                    <+> ptext (sLit "import") <+> pp_mod <> parens empty ]
-    msg2 = sep [pp_herald <+> quotes (pprWithCommas ppr unused),
+    msg2 = sep [pp_herald <+> quotes (pprWithCommas ppr_possible_field unused),
                     text "from module" <+> quotes pp_mod <+> pp_not_used]
     pp_herald  = text "The" <+> pp_qual <+> text "import of"
     pp_qual
@@ -1489,6 +1499,10 @@ warnUnusedImport (L loc decl, used, unused)
       | otherwise           = empty
     pp_mod      = ppr (unLoc (ideclName decl))
     pp_not_used = text "is redundant"
+
+    ppr_possible_field n = case lookupNameEnv fld_env n of
+                               Just (fld, p) -> ppr p <> parens (ppr fld)
+                               Nothing  -> ppr n
 \end{code}
 
 To print the minimal imports we walk over the user-supplied import
