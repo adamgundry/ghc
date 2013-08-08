@@ -1636,13 +1636,18 @@ makeOverloadedRecFldInstances gbl_env
     greToFldInst (GRE {gre_name = sel_name, gre_par = FldParent tycon_name lbl})
       = do { addUsedRdrNames [mkRdrUnqual (nameOccName sel_name)]
            ; tc <- tcLookupTyCon tycon_name
-           ; let relevant_cons = filter (is_relevant_con lbl) (tyConDataCons tc)
+           ; rep_tc <- if isDataFamilyTyCon tc
+                       then do { sel_id <- tcLookupId sel_name
+                               ; ASSERT (isRecordSelector sel_id)
+                                     return (recordSelectorTyCon sel_id) }
+                       else return tc
+           ; let relevant_cons = filter (is_relevant_con lbl) (tyConDataCons rep_tc)
                  dc            = ASSERT (notNull relevant_cons) head relevant_cons
                  fld_ty0       = dataConFieldType dc lbl
                  f             = mkStrLitTy (occNameFS lbl)
                  (univ_tvs, ex_tvs, eq_spec0, _, _, data_ty0) = dataConFullSig dc
            ; (subst0, tyvars) <- tcInstSkolTyVars (univ_tvs ++ ex_tvs)
-           ; let t_ty    = substTy subst0 (mkTyConApp tc (mkTyVarTys univ_tvs))
+           ; let t_ty    = substTy subst0 (mkFamilyTyConApp rep_tc (mkTyVarTys univ_tvs))
                  data_ty = substTy subst0 data_ty0
                  fld_ty  = substTy subst0 fld_ty0
                  eq_spec = substTys subst0 (eqSpecPreds eq_spec0)
