@@ -39,7 +39,7 @@ import TcHsType
 import TcUnify
 import TcTyDecls  ( emptyRoleAnnots )
 import TcExpr
-import MkCore     ( nO_METHOD_BINDING_ERROR_ID )
+import MkCore     ( nO_METHOD_BINDING_ERROR_ID, pAT_ERROR_ID )
 import Type
 import TcEvidence
 import TyCon
@@ -75,6 +75,7 @@ import BooleanFormula ( isUnsatisfied, pprBooleanFormulaNice )
 import Control.Applicative ((<$>), (<*>))
 import Control.Monad
 import Maybes     ( orElse, isNothing, isJust, whenIsJust )
+import qualified Data.ByteString as BS
 import Data.List
 \end{code}
 
@@ -1651,19 +1652,19 @@ makeOverloadedRecFldInstances gbl_env
                  data_ty = substTy subst0 data_ty0
                  fld_ty  = substTy subst0 fld_ty0
                  eq_spec = substTys subst0 (eqSpecPreds eq_spec0)
+                 inst_tys = substTyVars (mkTopTvSubst eq_spec0) univ_tvs -- for dataConCannotMatch
            ; (_, mb) <- tryTc (checkValidMonoType fld_ty) -- TODO: make this pure?
-           -- univ_tvs could be replaced by tyVarsOfType data_ty0 were it not for Trac #2595
-           ; if isNothing mb || not (tyVarsOfType fld_ty0 `subVarSet` mkVarSet univ_tvs)
+           ; if isNothing mb || not (tyVarsOfType fld_ty0 `subVarSet` tyVarsOfType data_ty0)
              then return [] -- Universally or existentially quantified, so give up
              else do
              { b        <- mkTyVar <$> newSysName (mkVarOcc "b") <*> pure liftedTypeKind
              ; has_inst <- mkHasInstInfo sel_name tycon_name lbl f tyvars eq_spec t_ty fld_ty b
-             ; get_fam  <- mkFamInst getResultFamName [t_ty, f] fld_ty
+             ; get_fam  <- mkFamInst getResultFamName [data_ty, f] fld_ty
 
              ; (subst, tyvars') <- updatingSubst lbl relevant_cons tyvars (tyVarsOfType fld_ty)
              ; let fld_ty'  = substTy subst fld_ty
                    data_ty' = substTy subst data_ty
-             ; upd_inst <- mkUpdInstInfo sel_name tycon_name lbl f eq_spec t_ty b tyvars' fld_ty'
+             ; upd_inst <- mkUpdInstInfo lbl f eq_spec t_ty b tyvars' fld_ty' relevant_cons inst_tys rep_tc
              ; set_fam  <- mkFamInst setResultFamName [data_ty, f, fld_ty'] data_ty'
              ; return [(has_inst, get_fam), (upd_inst, set_fam)] } }
 
@@ -1704,27 +1705,44 @@ makeOverloadedRecFldInstances gbl_env
 
     -- Make InstInfo for Upd thus:
     --     instance forall b tyvars . b ~ fld_ty' => Upd t_ty f b where
-    --         setField _ s x = s { lbl = x }
+    --         setField _ (MkT fld1 ... fldn) x = MkT fld1 ... x ... fldn
     --  fld_ty' is fld_ty with fresh tyvars (if type-changing update is possible)
-    mkUpdInstInfo sel_name tycon_name lbl f eq_spec t_ty b tyvars'' fld_ty''
+    --  It would be nicer to use record-update syntax, but that isn't
+    --  possible because of Trac #2595.
+    mkUpdInstInfo lbl f eq_spec t_ty b tyvars'' fld_ty'' relevant_cons inst_tys rep_tc
         = do { updClass  <- tcLookupClass recordUpdClassName
              ; dfun_name <- newDFunName' (infoFor updClass tycon_name lbl) loc
-             ; cls_inst <- mkFreshenedClsInst dfun_name (b:tyvars'') theta updClass args
-             ; s <- newSysName (mkVarOcc "s")
-             ; x <- newSysName (mkVarOcc "x")
-             ; return (InstInfo cls_inst (inst_bind s x)) }
+             ; cls_inst  <- mkFreshenedClsInst dfun_name (b:tyvars'') theta updClass args
+             ; matches   <- mapM matchCon relevant_cons
+             ; return (InstInfo cls_inst (inst_bind matches)) }
       where
         args  = [t_ty, f, mkTyVarTy b]
         theta = mkEqPred (mkTyVarTy b) fld_ty'' : eq_spec
+        tycon_name = tyConName rep_tc
 
-        inst_bind s x = VanillaInst bind [] False
+        matchCon con
+          = do { x <- newSysName (mkVarOcc "x")
+               ; vars <- mapM (newSysName . flOccName) (dataConFieldLabels con)
+               ; let con_name = dataConName con
+                     vars'    = map (\ v -> if nameOccName v == lbl then x else v) vars
+               ; return $ mkSimpleMatch [nlWildPat, nlConVarPat con_name vars, nlVarPat x]
+                                        (nlHsVarApps con_name vars') }
+
+        inst_bind matches = VanillaInst bind [] False
           where
-            bind    = unitBag $ noLoc ((mkTopFunBind (noLoc setFieldName) [match])
+            bind = unitBag $ noLoc ((mkTopFunBind (noLoc setFieldName) all_matches)
                                        { bind_fvs = missing })
-            match   = mkMatch [nlWildPat, nlVarPat s, nlVarPat x] (noLoc recUpd) EmptyLocalBinds
-            recUpd  = RecordUpd (nlHsVar s) recFlds missing missing missing
-            recFlds = HsRecFields { rec_flds = [recFld], rec_dotdot = Nothing }
-            recFld  = HsRecField (noLoc (mkRdrUnqual lbl)) (Left sel_name) (nlHsVar x) False
+            all_matches | all dealt_with cons = matches
+                        | otherwise           = matches ++ [default_match]
+            default_match = mkSimpleMatch [nlWildPat, nlWildPat, nlWildPat] $
+                                nlHsApp (nlHsVar (getName pAT_ERROR_ID))
+                                        (nlHsLit (HsStringPrim msg))
+            msg = unsafeMkByteString "setField|overloaded record update: "
+                      `BS.append` fastStringToByteString (occNameFS lbl)
+            cons = tyConDataCons rep_tc
+            dealt_with con = con `elem` relevant_cons
+                                 || dataConCannotMatch inst_tys con
+
 
     -- See Note [Template tyvars are fresh] in InstEnv
     mkFreshenedClsInst dfun_name tyvars theta clas tys
