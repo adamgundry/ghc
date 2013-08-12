@@ -1861,8 +1861,7 @@ mkRecSelBind (tycon, fld) = (L loc (IdSig sel_id), unitBag (L loc sel_bind))
     inst_tys = substTyVars (mkTopTvSubst (dataConEqSpec con1)) (dataConUnivTyVars con1)
 
     unit_rhs = mkLHsTupleExpr []
-    msg_lit = HsStringPrim $ unsafeMkByteString $
-              occNameString (getOccName sel_name)
+    msg_lit = HsStringPrim $ unsafeMkByteString $ occNameString lbl
 \end{code}
 
 Note [Polymorphic selectors]
