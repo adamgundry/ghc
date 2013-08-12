@@ -117,7 +117,9 @@ rnExpr (HsVar v)
            Just (Right (fld, xs)) ->
                do { overloaded <- xoptM Opt_OverloadedRecordFields
                   ; if overloaded
-                    then return (HsOverloadedRecFld fld, emptyFVs)
+                    then do { whenWOptM Opt_WarnQualifiedOverloadedRecordFields $
+                                  warnTc (isQual v) (qualifiedOverloadedRecordField v)
+                            ; return (HsOverloadedRecFld fld, emptyFVs) }
                     else case xs of
                          [(_, name)] -> return (HsSingleRecFld fld name, unitFV name)
                          _           -> error "rnExpr/HsVar" } } }
@@ -1435,4 +1437,9 @@ badIpBinds :: Outputable a => SDoc -> a -> SDoc
 badIpBinds what binds
   = hang (ptext (sLit "Implicit-parameter bindings illegal in") <+> what)
          2 (ppr binds)
+
+qualifiedOverloadedRecordField :: RdrName -> SDoc
+qualifiedOverloadedRecordField v
+  = hang (ptext (sLit "Overloaded record field should not be qualified:"))
+       2 (quotes (ppr v))
 \end{code}
