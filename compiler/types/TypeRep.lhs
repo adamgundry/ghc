@@ -554,7 +554,7 @@ pprParenTheta sepf theta = parens (sepf (punctuate comma preds))
     pprTriples []               = empty
 
 pprHasPred :: Type -> [(FastString, Type)] -> SDoc
-pprHasPred r fs = pprType r <+> braces (sep (punctuate comma (map pprField fs')))
+pprHasPred r fs = pprParendType r <+> braces (sep (punctuate comma (map pprField fs')))
   where
     fs' = sortBy (compare `on` fst) fs
     pprField (f, t) = (ftext f <+> ptext (sLit "::") <+> pprType t)
