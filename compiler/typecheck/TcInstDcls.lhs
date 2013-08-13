@@ -1683,7 +1683,6 @@ makeOverloadedRecFldInstances gbl_env
         changeable x    = x `elemVarSet` fld_tvs && not (x `elemVarSet` fixed_tvs)
         fixate s (a, b) | changeable a = (s, [a, b])
                         | otherwise    = (extendTvSubst s a (mkTyVarTy a), [a])
-      where
 
     -- Make InstInfo for Has thus:
     --     instance forall b tyvars . b ~ fld_ty => Has t_ty f b where
