@@ -111,6 +111,7 @@ import Maybes
 import Outputable
 import FastString
 import Constants
+import Binary
 import Util
 import qualified Data.Data as Data
 import Data.Typeable (Typeable)
@@ -471,6 +472,15 @@ instance Functor FieldLbl where
 instance Outputable a => Outputable (FieldLbl a) where
   ppr (FieldLabel occ sel) = ppr occ <> braces (ppr sel)
 
+instance Binary a => Binary (FieldLbl a) where
+    put_ bh (FieldLabel aa ab) = do
+        put_ bh aa
+        put_ bh ab
+
+    get bh = do
+        aa <- get bh
+        ab <- get bh
+        return (FieldLabel aa ab)
 
 
 -- | Represents right-hand-sides of 'TyCon's for algebraic types
