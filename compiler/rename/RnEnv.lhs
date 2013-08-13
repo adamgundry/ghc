@@ -60,7 +60,7 @@ import Avail
 import Module
 import UniqFM
 import DataCon          ( dataConFieldLabels, dataConTyCon )
-import TyCon            ( TyCon, FieldLabel, isTupleTyCon, tyConArity )
+import TyCon            ( TyCon, FieldLbl(..), FieldLabel, isTupleTyCon, tyConArity )
 import PrelNames        ( mkUnboundName, isUnboundName, rOOT_MAIN, forall_tv_RDR )
 import ErrUtils         ( MsgDoc )
 import BasicTypes       ( Fixity(..), FixityDirection(..), minPrecedence )
@@ -676,7 +676,27 @@ lookupOccRn_overloaded rdr_name
   = do { local_env <- getLocalRdrEnv
        ; case lookupLocalRdrEnv local_env rdr_name of {
           Just name -> return (Just (Left name)) ;
-          Nothing   -> lookupGlobalOccRn_overloaded rdr_name } }
+          Nothing   -> do
+       { mb_name <- lookupGlobalOccRn_overloaded rdr_name
+       ; case mb_name of {
+           Just name -> return (Just name) ;
+           Nothing   -> do
+       { -- We allow qualified names on the command line to refer to
+         --  *any* name exported by any module in scope, just as if there
+         -- was an "import qualified M" declaration for every module.
+         -- But we DONT allow it under Safe Haskell as we need to check
+         -- imports. We can and should instead check the qualified import
+         -- but at the moment this requires some refactoring so leave as a TODO
+       ; dflags <- getDynFlags
+       ; let allow_qual = gopt Opt_ImplicitImportQualified dflags &&
+                          not (safeDirectImpsReq dflags)
+       ; is_ghci <- getIsGHCi
+               -- This test is not expensive,
+               -- and only happens for failed lookups
+       ; if isQual rdr_name && allow_qual && is_ghci
+         then lookupQualifiedName_overloaded rdr_name
+         else do { traceRn (text "lookupOccRn_overloaded" <+> ppr rdr_name)
+                 ; return Nothing } } } } } }
 
 lookupGlobalOccRn_overloaded :: RdrName -> RnM (Maybe (Either Name (OccName, [(Name, Name)])))
 lookupGlobalOccRn_overloaded rdr_name
@@ -885,6 +905,33 @@ lookupQualifiedName rdr_name
 
   | otherwise
   = pprPanic "RnEnv.lookupQualifiedName" (ppr rdr_name)
+  where
+    doc = ptext (sLit "Need to find") <+> ppr rdr_name
+
+lookupQualifiedName_overloaded :: RdrName -> RnM (Maybe (Either Name (OccName, [(Name, Name)])))
+lookupQualifiedName_overloaded rdr_name
+  | Just (mod,occ) <- isQual_maybe rdr_name
+   -- Note: we want to behave as we would for a source file import here,
+   -- and respect hiddenness of modules/packages, hence loadSrcInterface.
+   = do { iface <- loadSrcInterface doc mod False Nothing
+        ; overload_ok <- xoptM Opt_OverloadedRecordFields
+        ; case  [ name
+                | avail <- mi_exports iface,
+                  name  <- availNames avail,
+                  nameOccName name == occ ] of
+              (n:ns) -> ASSERT(null ns) return (Just (Left n))
+              _ -> case [ (availName avail, fl)
+                        | avail <- mi_exports iface,
+                          fl <- availFlds avail,
+                          flOccName fl == occ ] of
+                       xs@((_,fl):ys) | null ys || overload_ok
+                                          -> let zs = map (fmap flSelector) xs
+                                             in return (Just (Right (flOccName fl, zs)))
+                       xs -> do { traceRn (text "lookupQualified overloaded" <+> ppr rdr_name <+> ppr xs)
+                                ; return Nothing } }
+
+  | otherwise
+  = pprPanic "RnEnv.lookupQualifiedName_overloaded" (ppr rdr_name)
   where
     doc = ptext (sLit "Need to find") <+> ppr rdr_name
 \end{code}
