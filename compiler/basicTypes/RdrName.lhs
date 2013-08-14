@@ -47,7 +47,7 @@ module RdrName (
         lookupGlobalRdrEnv, extendGlobalRdrEnv, greOccName,
         pprGlobalRdrEnv, globalRdrEnvElts,
         lookupGRE_RdrName, lookupGRE_Name, getGRE_NameQualifier_maybes,
-        transformGREs, findLocalDupsRdrEnv, pickGREs,
+        transformGREs, findLocalDupsRdrEnv, findLocalSelectorDupsRdrEnv, pickGREs,
 
         -- ** Global 'RdrName' mapping elements: 'GlobalRdrElt', 'Provenance', 'ImportSpec'
         GlobalRdrElt(..), isLocalGRE, isRecFldGRE, isOverloadedRecFldGRE,
@@ -619,6 +619,28 @@ findLocalDupsRdrEnv rdr_env occs
           [_]      -> go rdr_env  dups                           occs   -- The common case
           dup_gres -> go rdr_env' (map gre_name dup_gres : dups) occs
       where
+        gres = lookupOccEnv rdr_env occ `orElse` []
+        rdr_env' = delFromOccEnv rdr_env occ
+            -- The delFromOccEnv avoids repeating the same
+            -- complaint twice, when occs itself has a duplicate
+            -- which is a common case
+
+findLocalSelectorDupsRdrEnv :: GlobalRdrEnv -> [(OccName, Name)] -> [[GlobalRdrElt]]
+-- ^ For each field label 'OccName' and selector 'Name', see if there
+-- are multiple local definitions for it with the same selector;
+-- return a list of all such and return a list of the duplicate
+-- bindings
+findLocalSelectorDupsRdrEnv rdr_env occs
+  = go rdr_env [] occs
+  where
+    go _       dups [] = dups
+    go rdr_env dups ((occ, sel_name):occs)
+      = case filter isDupGRE gres of
+          []       -> go rdr_env  dups              occs
+          [_]      -> go rdr_env  dups              occs   -- The common case
+          dup_gres -> go rdr_env' (dup_gres : dups) occs
+      where
+        isDupGRE gre = isLocalGRE gre && gre_name gre == sel_name
         gres = lookupOccEnv rdr_env occ `orElse` []
         rdr_env' = delFromOccEnv rdr_env occ
             -- The delFromOccEnv avoids repeating the same
