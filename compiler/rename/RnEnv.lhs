@@ -717,7 +717,7 @@ lookupGlobalOccRn_overloaded rdr_name
                 [gre]                   -> do { addUsedRdrName True gre rdr_name
                                               ; return (Just (Left (gre_name gre))) }
                 gres  | all isRecFldGRE gres
-                        && overload_ok  -> do { addUsedRdrName True (head gres) rdr_name
+                        && overload_ok  -> do { mapM_ (\ gre -> addUsedRdrName True gre rdr_name) gres
                                               ; return (Just (Right (greOccName (head gres), map greBits gres))) }
                 gres                    -> do { addNameClashErrRn rdr_name gres
                                               ; return (Just (Left (gre_name (head gres)))) } }
@@ -834,9 +834,10 @@ warnIfDeprecated gre@(GRE { gre_name = name, gre_prov = Imported (imp_spec : _) 
                 Just txt -> addWarn (mk_msg txt)
                 Nothing  -> return () } }
   where
+    occ = greOccName gre
     mk_msg txt = sep [ sep [ ptext (sLit "In the use of")
-                             <+> pprNonVarNameSpace (occNameSpace (nameOccName name))
-                             <+> quotes (ppr name)
+                             <+> pprNonVarNameSpace (occNameSpace occ)
+                             <+> quotes (ppr occ)
                            , parens imp_msg <> colon ]
                      , ppr txt ]
 
