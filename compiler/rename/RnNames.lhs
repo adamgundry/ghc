@@ -555,7 +555,7 @@ getLocalNonValBinders fixity_env
     new_tc tc_decl              -- NOT for type/data instances
         = do { let (bndrs, flds) = hsTyClDeclBinders (unLoc tc_decl)
              ; names@(main_name : _) <- mapM newTopSrcBinder bndrs
-             ; flds' <- mapM (new_rec_sel (nameOccName main_name) . fst) flds
+             ; flds' <- mapM (new_rec_sel (nameOccName main_name) . fstOf3) flds
              ; return (AvailTC main_name names flds') }
 
     new_rec_sel :: OccName -> Located RdrName -> RnM FieldLabel
@@ -588,7 +588,7 @@ getLocalNonValBinders fixity_env
         = do { main_name <- lookupFamInstName mb_cls (dfid_tycon ti_decl)
              ; let (bndrs, flds) = hsDataFamInstBinders ti_decl
              ; sub_names <- mapM newTopSrcBinder bndrs
-             ; flds' <- mapM (new_rec_sel (nameOccName $ unLoc main_name) . fst) flds
+             ; flds' <- mapM (new_rec_sel (nameOccName $ unLoc main_name) . fstOf3) flds
              ; return (AvailTC (unLoc main_name) sub_names flds') }
                         -- main_name is not bound here!
 \end{code}
