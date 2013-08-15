@@ -13,7 +13,8 @@ TcInstDecls: Typechecking instance declarations
 --     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
-module TcInstDcls ( tcInstDecls1, tcInstDecls2 ) where
+module TcInstDcls ( tcInstDecls1, tcInstDecls2,
+                    makeImportedRecFldInsts, addPrivateClsInsts, addPrivateTyFamInsts ) where
 
 #include "HsVersions.h"
 
@@ -430,17 +431,15 @@ tcInstDecls1 tycl_decls inst_decls deriv_decls
              mapM_ (\x -> when (typInstCheck x) recordUnsafeInfer) local_infos
 
        -- Create overloaded record field instances
-       ; (fld_infos, fld_fam_insts) <- if xopt Opt_OverloadedRecordFields dflags
-                                       then makeOverloadedRecFldInstances gbl_env
-                                       else return ([], [])
        ; setGblEnv gbl_env $
-         addPrivateClsInsts fld_infos $
-         addPrivateTyFamInsts fld_fam_insts $
-           do { env <- getGblEnv
-              ; return ( env
-                       , fld_infos ++ bagToList deriv_inst_info ++ local_infos
-                       , deriv_binds)
-    }}}
+         do { (fld_infos, fld_fams) <- makeLocalRecFldInsts tycl_decls inst_decls
+            ; addPrivateClsInsts fld_infos $
+              addPrivateTyFamInsts fld_fams $
+              do { env <- getGblEnv
+                 ; return ( env
+                          , fld_infos ++ bagToList deriv_inst_info ++ local_infos
+                          , deriv_binds)
+    }}}}
   where
     -- Separate the Typeable instances from the rest
     splitTypeable _   []     = ([],[])
@@ -1572,11 +1571,11 @@ exactly to the fields in scope in that module.  Note that while the
 instance declarations are not exported, the dfunids and axioms must
 be, because they may appear in unfoldings.
 
-To achieve this, the results of makeOverloadedRecFldInstances should
-be added using addPrivateClsInsts and addPrivateFamInsts. The former
-extends the tcg_inst_env field of the TcGblEnv, but not the tcg_insts
-field, so the instances are available locally but will not appear in
-the module's interface.
+To achieve this, the results of makeRecFldInsts should be added using
+addPrivateClsInsts and addPrivateFamInsts. The former extends the
+tcg_inst_env field of the TcGblEnv, but not the tcg_insts field, so
+the instances are available locally but will not appear in the
+module's interface.
 
 AMG TODO: This strategy doesn't work for addPrivateFamInsts, because
 for some reason the axiom doesn't get exported. This may have
@@ -1620,21 +1619,43 @@ In general, a type variable can be changed provided:
 
 
 AMG TODO: once GHCi works properly, perhaps we can refactor this so
-that makeOverloadedRecFldInstances always adds the instances
-privately; we might not need to separate creating from adding the
-instances.
+that makeRecFldInsts always adds the instances privately; we might not
+need to separate creating from adding the instances.
 
 \begin{code}
-makeOverloadedRecFldInstances :: TcGblEnv -> TcM ([InstInfo Name], [FamInst])
-makeOverloadedRecFldInstances gbl_env
-  = do { xs <- concatMapM greToFldInst fld_gres
-       ; dumpDerivingInfo (hang (text "Overloaded record field instances:") 2 (ppr xs))
-       ; return (unzip xs) }
-  where
-    fld_gres = filter isRecFldGRE . concat . occEnvElts $ tcg_rdr_env gbl_env
+-- Make instances from type and data instance declarations in the
+-- module being compiled
+makeLocalRecFldInsts :: [LTyClDecl Name] -> [LInstDecl Name]
+                            -> TcM ([InstInfo Name], [FamInst])
+makeLocalRecFldInsts tycl_decls inst_decls
+    = makeRecFldInsts $
+          map (\ (x, y, z) -> (rdrNameOcc x, y, z)) $
+              snd $ hsTyClDeclsBinders [tycl_decls] inst_decls
 
-    greToFldInst :: GlobalRdrElt -> TcM [(InstInfo Name, FamInst)]
-    greToFldInst (GRE {gre_name = sel_name, gre_par = FldParent tycon_name lbl})
+-- Make instances for imported declarations by consulting the
+-- GlobalRdrEnv for those in scope
+makeImportedRecFldInsts :: TcM ([InstInfo Name], [FamInst])
+makeImportedRecFldInsts
+  = do { gbl_env <- getGblEnv
+       ; makeRecFldInsts
+             [ (par_lbl (gre_par gre), gre_name gre, par_is (gre_par gre))
+               | gre <- concat (occEnvElts (tcg_rdr_env gbl_env))
+               , isRecFldGRE gre && not (isLocalGRE gre) ] }
+
+makeRecFldInsts :: [(OccName, Name, Name)] -> TcM ([InstInfo Name], [FamInst])
+makeRecFldInsts flds
+  = do { overload_ok <- xoptM Opt_OverloadedRecordFields
+       ; if not overload_ok
+         then return ([], [])
+         else do
+         { traceRn (text "makeRecFldInsts" <+> ppr flds)
+         ; xs <- concatMapM fieldInsts flds
+         ; dumpDerivingInfo (hang (text "Overloaded record field instances:")
+                              2 (ppr xs))
+         ; return (unzip xs) } }
+  where
+    fieldInsts :: (OccName, Name, Name) -> TcM [(InstInfo Name, FamInst)]
+    fieldInsts (lbl, sel_name, tycon_name)
       = do { addUsedRdrNames [mkRdrUnqual (nameOccName sel_name)]
            ; tc <- tcLookupTyCon tycon_name
            ; rep_tc <- if isDataFamilyTyCon tc
