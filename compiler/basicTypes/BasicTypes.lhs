@@ -77,15 +77,20 @@ module BasicTypes(
 
         FractionalLit(..), negateFractionalLit, integralFractionalLit,
 
+        FldInsts(..),
+
         HValue(..)
    ) where
 
 import FastString
 import Outputable
 
+import Control.Applicative ( (<$>), (<*>) )
 import Data.Data hiding (Fixity)
 import Data.Function (on)
 import GHC.Exts (Any)
+import Data.Foldable
+import Data.Traversable
 \end{code}
 
 %************************************************************************
@@ -906,4 +911,31 @@ instance Outputable FractionalLit where
 
 newtype HValue = HValue Any
 
+
+%************************************************************************
+%*                                                                      *
+\subsection{Overloaded record field instances}
+%*                                                                      *
+%************************************************************************
+
+\begin{code}
+-- | Represents names for overloaded record field instances, specifically
+--   the dfuns for Has and Upd, and axioms for GetResult and SetResult
+data FldInsts a = FldInsts { fldInstsHas :: a
+                           , fldInstsUpd :: a
+                           , fldInstsGetResult :: a
+                           , fldInstsSetResult :: a }
+  deriving (Eq, Ord)
+
+instance Functor FldInsts where
+  fmap = fmapDefault
+
+instance Foldable FldInsts where
+  foldMap = foldMapDefault
+
+instance Traversable FldInsts where
+  traverse f (FldInsts a b c d) = FldInsts <$> f a <*> f b <*> f c <*> f d
+
+instance Outputable a => Outputable (FldInsts a) where
+  ppr (FldInsts a b c d) = ppr (a, b, c, d)
 \end{code}

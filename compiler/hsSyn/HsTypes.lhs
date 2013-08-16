@@ -23,7 +23,7 @@ module HsTypes (
         LBangType, BangType, HsBang(..), 
         getBangType, getBangStrictness, 
 
-        ConDeclField(..), pprConDeclFields, cd_fld_name, cd_fld_fld,
+        ConDeclField(..), pprConDeclFields, cd_fld_name,
         
         mkHsQTvs, hsQTvBndrs,
         mkExplicitHsForAllTy, mkImplicitHsForAllTy, hsExplicitTvs,
@@ -379,10 +379,6 @@ data ConDeclField name  -- Record fields have Haddoc docs on them
 
 cd_fld_name :: ConDeclField name -> Located name
 cd_fld_name x = L (getLoc (cd_fld_lbl x)) $ cd_fld_sel x
-
-cd_fld_fld :: ConDeclField name -> FieldLbl name
-cd_fld_fld x = FieldLabel { flOccName = rdrNameOcc . unLoc . cd_fld_lbl $ x
-                          , flSelector = cd_fld_sel x }
 
 -----------------------
 -- Combine adjacent for-alls. 

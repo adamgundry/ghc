@@ -57,6 +57,7 @@ import Name
 import NameSet
 import NameEnv
 import RdrName
+import RnEnv
 import Outputable
 import Maybes
 import Unify
@@ -1123,8 +1124,9 @@ tcConDecl new_or_data tc_name rep_tycon tmpl_tvs res_tmpl        -- Data types
               do { ctxt    <- tcHsContext hs_ctxt
                  ; details <- tcConArgs new_or_data hs_details
                  ; res_ty  <- tcConRes tc_name (unLoc name) hs_res_ty
-                 ; let (is_infix, field_lbls, btys) = details
-                       (arg_tys, stricts)           = unzip btys
+                 ; field_lbls <- lookupConstructorFields (unLoc name)
+                 ; let (is_infix, btys)   = details
+                       (arg_tys, stricts) = unzip btys
                  ; return (ctxt, arg_tys, res_ty, is_infix, field_lbls, stricts) }
 
              -- Generalise the kind variables (returning quantifed TcKindVars)
@@ -1157,20 +1159,19 @@ tcConDecl new_or_data tc_name rep_tycon tmpl_tvs res_tmpl        -- Data types
                 --      that way checkValidDataCon can complain if it's wrong.
        }
 
-tcConArgs :: NewOrData -> HsConDeclDetails Name -> TcM (Bool, [FieldLabel], [(TcType, HsBang)])
+tcConArgs :: NewOrData -> HsConDeclDetails Name -> TcM (Bool, [(TcType, HsBang)])
 tcConArgs new_or_data (PrefixCon btys)
   = do { btys' <- mapM (tcConArg new_or_data) btys
-       ; return (False, [], btys') }
+       ; return (False, btys') }
 tcConArgs new_or_data (InfixCon bty1 bty2)
   = do { bty1' <- tcConArg new_or_data bty1
        ; bty2' <- tcConArg new_or_data bty2
-       ; return (True, [], [bty1', bty2']) }
+       ; return (True, [bty1', bty2']) }
 tcConArgs new_or_data (RecCon fields)
   = do { btys' <- mapM (tcConArg new_or_data) btys
-       ; return (False, field_names, btys') }
+       ; return (False, btys') }
   where
-    field_names = map cd_fld_fld fields
-    btys        = map cd_fld_type fields
+    btys = map cd_fld_type fields
 
 tcConArg :: NewOrData -> LHsType Name -> TcM (TcType, HsBang)
 tcConArg new_or_data bty

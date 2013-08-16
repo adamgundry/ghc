@@ -37,6 +37,7 @@ import ErrUtils
 import Util
 import FastString
 import ListSetOps
+import BasicTypes       ( FldInsts(..) )
 
 import Control.Monad
 import Data.Map         ( Map )
@@ -561,10 +562,26 @@ getLocalNonValBinders fixity_env
     new_rec_sel :: OccName -> Located RdrName -> RnM FieldLabel
     new_rec_sel tc (L loc fld) = 
       do { overloaded <- xoptM Opt_OverloadedRecordFields
-         ; let occ | overloaded = mkRecSelOcc (rdrNameOcc fld) tc
-                   | otherwise  = rdrNameOcc fld
-         ; sel_name <- newTopSrcBinder . L loc . mkRdrUnqual $ occ
-         ; return (FieldLabel { flOccName = rdrNameOcc fld, flSelector = sel_name }) }
+         ; (sel_occ, insts) <- if not overloaded
+                               then return (lbl, Nothing)
+                               else new_names
+         ; sel_name <- newTopSrcBinder $ L loc $ mkRdrUnqual sel_occ
+         ; return (FieldLabel { flOccName = lbl
+                              , flSelector = sel_name
+                              , flInstances = insts }) }
+      where
+        lbl = rdrNameOcc fld
+        new_names = do { has <- newDFunName' has_str loc
+                       ; upd <- newDFunName' upd_str loc
+                       ; getResult <- newFamInstAxiomName' loc get_str
+                       ; setResult <- newFamInstAxiomName' loc set_str
+                       ; return ( mkRecSelOcc lbl tc
+                                , Just (FldInsts has upd getResult setResult) ) }
+        str     = occNameString tc ++ occNameString lbl
+        has_str = occNameString (nameOccName recordHasClassName) ++ str
+        upd_str = occNameString (nameOccName recordUpdClassName) ++ str
+        get_str = occNameString (nameOccName getResultFamName)   ++ str
+        set_str = occNameString (nameOccName setResultFamName)   ++ str
 
     new_assoc :: LInstDecl RdrName -> RnM [AvailInfo]
     new_assoc (L _ (TyFamInstD {})) = return []
@@ -831,7 +848,7 @@ greExportAvail :: GlobalRdrElt -> AvailInfo
 greExportAvail gre
   = case gre_par gre of
       ParentIs p                -> AvailTC p [me] []
-      FldParent p f             -> AvailTC p [] [FieldLabel f me]
+      FldParent p f is          -> AvailTC p [] [FieldLabel f me is]
       NoParent   | isTyConName me -> AvailTC me [me] []
                  | otherwise      -> Avail   me
   where
@@ -908,7 +925,7 @@ mkChildEnv :: [GlobalRdrElt] -> NameEnv [ChildName]
 mkChildEnv gres = foldr add emptyNameEnv gres
     where
         add (GRE { gre_name = n, gre_par = ParentIs p }) env = extendNameEnv_Acc (:) singleton env p (Left n)
-        add (GRE { gre_name = n, gre_par = FldParent p f}) env = extendNameEnv_Acc (:) singleton env p (Right (FieldLabel f n))
+        add (GRE { gre_name = n, gre_par = FldParent p f is}) env = extendNameEnv_Acc (:) singleton env p (Right (FieldLabel f n is))
         add _                                            env = env
 
 findChildren :: NameEnv [ChildName] -> Name -> [ChildName]
@@ -1373,7 +1390,7 @@ warnUnusedImportDecls gbl_env
                                      | gres <- occEnvElts rdr_env
                                      , gre <- gres
                                      , isRecFldGRE gre
-                                     , let FldParent p lbl = gre_par gre ]
+                                     , let FldParent p lbl _ = gre_par gre ]
 
        ; traceRn (vcat [ ptext (sLit "Uses:") <+> ppr (Set.elems uses)
                        , ptext (sLit "Import usage") <+> ppr usage])
@@ -1461,7 +1478,7 @@ findImportUsage imports rdr_env rdrs
 
         look_fld p occ = gre_name sel_gre
           where
-            sel_gres = lookupSubBndrGREs rdr_env (FldParent p occ) (mkRdrUnqual occ)
+            sel_gres = lookupSubBndrGREs rdr_env (ParentIs p) (mkRdrUnqual occ)
             sel_gre = ASSERT ( notNull sel_gres ) head sel_gres
 
 extendImportMap :: GlobalRdrEnv -> RdrName -> ImportMap -> ImportMap

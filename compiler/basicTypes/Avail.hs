@@ -65,7 +65,7 @@ stableAvailCmp (AvailTC n ns nfs) (AvailTC m ms mfs) =
 stableAvailCmp (AvailTC {})       (Avail {})     = GT
 
 stableFieldLabelCmp :: FieldLabel -> FieldLabel -> Ordering
-stableFieldLabelCmp (FieldLabel occ sel) (FieldLabel occ' sel')
+stableFieldLabelCmp (FieldLabel occ sel _) (FieldLabel occ' sel' _)
     = compare occ occ' `thenCmp` stableNameCmp sel sel'
 
 
@@ -126,7 +126,7 @@ gresFromAvail prov_fn prov_fld avail
     parent n (AvailTC m _ _) | n == m                  = NoParent
                              | otherwise               = ParentIs m
 
-    fldParent fl (AvailTC p _ _)  = FldParent p (flOccName fl)
+    fldParent fl (AvailTC p _ _)  = FldParent p (flOccName fl) (flInstances fl)
     fldParent _   _               = panic "gresFromAvail/fldParent"
 
 -- -----------------------------------------------------------------------------

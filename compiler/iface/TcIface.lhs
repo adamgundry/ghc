@@ -68,6 +68,7 @@ import DynFlags
 import Util
 import FastString
 
+import Data.Traversable (traverse)
 import Control.Monad
 import qualified Data.Map as Map
 import Data.Traversable ( traverse )
@@ -631,7 +632,7 @@ tcIfaceDataCons tycon_name tycon _ if_cons
                         -- The IfBang field can mention 
                         -- the type itself; hence inside forkM
                 ; return (eq_spec, theta, arg_tys, stricts) }
-        ; lbl_names <- mapM tc_fld_lbl field_lbls
+        ; lbl_names <- mapM (traverse lookupIfaceTop) field_lbls
 
         -- Remember, tycon is the representation tycon
         ; let orig_res_ty = mkFamilyTyConApp tycon 
@@ -646,10 +647,6 @@ tcIfaceDataCons tycon_name tycon _ if_cons
         ; traceIf (text "Done interface-file tc_con_decl" <+> ppr name)
         ; return con } 
     mk_doc con_name = ptext (sLit "Constructor") <+> ppr con_name
-
-    tc_fld_lbl fl
-      = do { sel <- lookupIfaceTop (flSelector fl)
-           ; return (fl{ flSelector = sel }) }
 
     tc_strict IfNoBang = return HsNoBang
     tc_strict IfStrict = return HsStrict

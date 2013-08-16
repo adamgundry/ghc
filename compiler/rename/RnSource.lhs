@@ -1380,7 +1380,7 @@ extendRecordFieldEnv tycl_decls inst_decls flds
 
     lookFld overload_ok tc x = expectJust "extendRecordFieldEnv/lookFld" (find is_sel flds)
       where
-        lbl = flOccName $ cd_fld_fld x
+        lbl = rdrNameOcc $ unLoc $ cd_fld_lbl x
         sel_occ = mkRecSelOcc lbl tc
         is_sel fl | overload_ok = nameOccName (flSelector fl) == sel_occ
                   | otherwise   = flOccName fl == lbl

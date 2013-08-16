@@ -75,7 +75,7 @@ import DataCon
 import Type
 import Class
 import CoAxiom
-import Inst     ( tcGetInstEnvs, tcGetInsts )
+import Inst
 import Data.List ( sortBy )
 import Data.IORef ( readIORef )
 import Data.Ord
@@ -305,11 +305,12 @@ tcRnImports hsc_env this_mod import_decls
 
 addImportedRecFldInsts :: TcM TcGblEnv
 addImportedRecFldInsts
-  = do { (fld_insts, fld_fams) <- makeImportedRecFldInsts
-       ; addPrivateClsInsts fld_insts $
+  = do { (fld_cls_insts, fld_inst_infos, fld_fams) <- makeImportedRecFldInsts
+       ; tcExtendPrivateInstEnv fld_cls_insts $
+         addPrivateClsInsts fld_inst_infos $
          addPrivateTyFamInsts fld_fams $
          do { (inst_binds, lie) <- captureConstraints $
-                                   setXOptM Opt_TypeFamilies $ tcInstDecls2 [] fld_insts
+                                   setXOptM Opt_TypeFamilies $ tcInstDecls2 [] fld_inst_infos
             ; ev_binds <- simplifyTop lie
             ; (_, ev_binds', inst_binds', _, _, _, _) <-
                   zonkTopDecls ev_binds inst_binds emptyNameSet [] [] [] []

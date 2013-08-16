@@ -78,6 +78,7 @@ import Control.Monad
 import Maybes     ( orElse, isNothing, isJust, whenIsJust )
 import qualified Data.ByteString as BS
 import Data.List
+import Data.Monoid ( mconcat )
 \end{code}
 
 Typechecking instance declarations is done in two passes. The first
@@ -1624,38 +1625,59 @@ need to separate creating from adding the instances.
 
 \begin{code}
 -- Make instances from type and data instance declarations in the
--- module being compiled
+-- module being compiled; these must all subsequently be typechecked
 makeLocalRecFldInsts :: [LTyClDecl Name] -> [LInstDecl Name]
                             -> TcM ([InstInfo Name], [FamInst])
 makeLocalRecFldInsts tycl_decls inst_decls
-    = makeRecFldInsts $
-          map (\ (x, y, z) -> (rdrNameOcc x, y, z)) $
-              snd $ hsTyClDeclsBinders [tycl_decls] inst_decls
-
--- Make instances for imported declarations by consulting the
--- GlobalRdrEnv for those in scope
-makeImportedRecFldInsts :: TcM ([InstInfo Name], [FamInst])
-makeImportedRecFldInsts
-  = do { gbl_env <- getGblEnv
-       ; makeRecFldInsts
-             [ (par_lbl (gre_par gre), gre_name gre, par_is (gre_par gre))
-               | gre <- concat (occEnvElts (tcg_rdr_env gbl_env))
-               , isRecFldGRE gre && not (isLocalGRE gre) ] }
-
-makeRecFldInsts :: [(OccName, Name, Name)] -> TcM ([InstInfo Name], [FamInst])
-makeRecFldInsts flds
   = do { overload_ok <- xoptM Opt_OverloadedRecordFields
        ; if not overload_ok
          then return ([], [])
-         else do
-         { traceRn (text "makeRecFldInsts" <+> ppr flds)
-         ; xs <- concatMapM fieldInsts flds
-         ; dumpDerivingInfo (hang (text "Overloaded record field instances:")
-                              2 (ppr xs))
-         ; return (unzip xs) } }
+         else mconcat <$> mapM makeRecFldInsts flds' }
   where
-    fieldInsts :: (OccName, Name, Name) -> TcM [(InstInfo Name, FamInst)]
-    fieldInsts (lbl, sel_name, tycon_name)
+    (_, flds) = hsTyClDeclsBinders [tycl_decls] inst_decls
+    flds'     = map (\ (x, y, z) -> (rdrNameOcc x, y, z)) flds
+
+-- Make instances for imported declarations by consulting the
+-- GlobalRdrEnv for those in scope; typeclass instances are a mixture
+-- of 'ClsInst' for imported instances and 'InstInfo' for generated
+-- instances (which must be typechecked)
+makeImportedRecFldInsts :: TcM ([ClsInst], [InstInfo Name], [FamInst])
+makeImportedRecFldInsts
+  = do { overload_ok <- xoptM Opt_OverloadedRecordFields
+       ; gbl_env     <- getGblEnv
+       ; if not overload_ok
+         then return ([], [], [])
+         else mconcat <$> mapM acquireRecFldInsts (gres_of gbl_env) }
+  where
+    gres_of gbl_env = concat (occEnvElts (tcg_rdr_env gbl_env))
+
+acquireRecFldInsts :: GlobalRdrElt -> TcM ([ClsInst], [InstInfo Name], [FamInst])
+acquireRecFldInsts gre@(GRE{ gre_name = sel_name, gre_par = FldParent tycon_name lbl mb_insts})
+    | not (isLocalGRE gre) = case mb_insts of
+        Just insts -> existingInsts <$> lookupRecFldInsts tycon_name insts
+        Nothing    -> newInsts <$> makeRecFldInsts (lbl, sel_name, tycon_name)
+  where
+    existingInsts cs  = (cs, [], [])
+    newInsts (is, fs) = ([], is, fs)
+acquireRecFldInsts _ = return ([], [], [])
+
+lookupRecFldInsts :: Name -> FldInsts Name -> TcM [ClsInst]
+lookupRecFldInsts tycon_name fis
+  = do { (_, mb_has_dfun) <- tryTc $ tcLookupId (fldInstsHas fis)
+       -- Will not exist if the field is quantified
+       -- Perhaps has_dfun should be a dummy binder, like naughty record selectors?
+       ; case mb_has_dfun of
+           Nothing -> return []
+           Just has_dfun -> do {
+       ; upd_dfun <- tcLookupId (fldInstsUpd fis)
+       ; let has = mkImportedInstance recordHasClassName
+                       [Just tycon_name, Nothing, Nothing] has_dfun (NoOverlap False)
+             upd = mkImportedInstance recordUpdClassName
+                       [Just tycon_name, Nothing, Nothing] upd_dfun (NoOverlap False)
+       ; return [has, upd] } }
+
+makeRecFldInsts :: (OccName, Name, Name) -> TcM ([InstInfo Name], [FamInst])
+makeRecFldInsts (lbl, sel_name, tycon_name)
       = do { addUsedRdrNames [mkRdrUnqual (nameOccName sel_name)]
            ; tc <- tcLookupTyCon tycon_name
            ; rep_tc <- if isDataFamilyTyCon tc
@@ -1665,7 +1687,8 @@ makeRecFldInsts flds
                        else return tc
            ; let relevant_cons = filter (is_relevant_con lbl) (tyConDataCons rep_tc)
                  dc            = ASSERT (notNull relevant_cons) head relevant_cons
-                 fld_ty0       = dataConFieldType dc lbl
+                 (fl, fld_ty0) = dataConFieldLabel dc lbl
+                 inst_names    = flInstances fl
                  f             = mkStrLitTy (occNameFS lbl)
                  (univ_tvs, ex_tvs, eq_spec0, _, _, data_ty0) = dataConFullSig dc
            ; (subst0, tyvars) <- tcInstSkolTyVars (univ_tvs ++ ex_tvs)
@@ -1676,18 +1699,22 @@ makeRecFldInsts flds
                  inst_tys = substTyVars (mkTopTvSubst eq_spec0) univ_tvs -- for dataConCannotMatch
            ; (_, mb) <- tryTc (checkValidMonoType fld_ty) -- TODO: make this pure?
            ; if isNothing mb || not (tyVarsOfType fld_ty0 `subVarSet` tyVarsOfType data_ty0)
-             then return [] -- Universally or existentially quantified, so give up
+             then return ([], []) -- Universally or existentially quantified, so give up
              else do
              { b        <- mkTyVar <$> newSysName (mkVarOcc "b") <*> pure liftedTypeKind
-             ; has_inst <- mkHasInstInfo sel_name tycon_name lbl f tyvars eq_spec t_ty fld_ty b
-             ; get_fam  <- mkFamInst getResultFamName [data_ty, f] fld_ty
+             ; has_inst <- mkHasInstInfo sel_name tycon_name inst_names lbl f tyvars eq_spec t_ty fld_ty b
+             ; get_fam  <- mkFamInst getResultFamName (fmap fldInstsGetResult inst_names) [data_ty, f] fld_ty
 
              ; (subst, tyvars') <- updatingSubst lbl relevant_cons tyvars (tyVarsOfType fld_ty)
              ; let fld_ty'  = substTy subst fld_ty
                    data_ty' = substTy subst data_ty
-             ; upd_inst <- mkUpdInstInfo lbl f eq_spec t_ty b tyvars' fld_ty' relevant_cons inst_tys rep_tc
-             ; set_fam  <- mkFamInst setResultFamName [data_ty, f, fld_ty'] data_ty'
-             ; return [(has_inst, get_fam), (upd_inst, set_fam)] } }
+             ; upd_inst <- mkUpdInstInfo inst_names lbl f eq_spec t_ty b tyvars' fld_ty' relevant_cons inst_tys rep_tc
+             ; set_fam  <- mkFamInst setResultFamName (fmap fldInstsSetResult inst_names) [data_ty, f, fld_ty'] data_ty'
+             ; dumpDerivingInfo (hang (text "Overloaded record field instances:")
+                              2 (vcat [ppr has_inst, ppr get_fam, ppr upd_inst, ppr set_fam]))
+             ; return ([has_inst, upd_inst], [get_fam, set_fam]) } }
+
+  where
 
     is_relevant_con lbl dc = any (\ fl -> flOccName fl == lbl) (dataConFieldLabels dc)
 
@@ -1705,13 +1732,21 @@ makeRecFldInsts flds
         fixate s (a, b) | changeable a = (s, [a, b])
                         | otherwise    = (extendTvSubst s a (mkTyVarTy a), [a])
 
+    -- Make a dfun id in one of two ways:
+    -- * if this is a local field, make a new dfun for it with the appropriate name
+    -- * if this is an imported field, invent a new name
+    mkDFunId mb_name tycon_name lbl tyvars theta clas args = case mb_name of
+        Just x  -> return $ mkDictFunId x tyvars theta clas args
+        Nothing -> do { dfun_name <- newDFunName' (infoFor clas tycon_name lbl) loc
+                      ; return $ mkDictFunId dfun_name tyvars theta clas args }
+
     -- Make InstInfo for Has thus:
     --     instance forall b tyvars . b ~ fld_ty => Has t_ty f b where
     --         getField _ = sel_name
-    mkHasInstInfo sel_name tycon_name lbl f tyvars eq_spec t_ty fld_ty b
+    mkHasInstInfo sel_name tycon_name inst_names lbl f tyvars eq_spec t_ty fld_ty b
         = do { hasClass  <- tcLookupClass recordHasClassName
-             ; dfun_name <- newDFunName' (infoFor hasClass tycon_name lbl) loc
-             ; cls_inst  <- mkFreshenedClsInst dfun_name (b:tyvars) theta hasClass args
+             ; dfun      <- mkDFunId (fmap fldInstsHas inst_names) tycon_name lbl (b:tyvars) theta hasClass args
+             ; cls_inst  <- mkFreshenedClsInst dfun (b:tyvars) theta hasClass args
              ; return (InstInfo cls_inst inst_bind) }
       where
         args      = [t_ty, f, mkTyVarTy b]
@@ -1729,10 +1764,10 @@ makeRecFldInsts flds
     --  fld_ty' is fld_ty with fresh tyvars (if type-changing update is possible)
     --  It would be nicer to use record-update syntax, but that isn't
     --  possible because of Trac #2595.
-    mkUpdInstInfo lbl f eq_spec t_ty b tyvars'' fld_ty'' relevant_cons inst_tys rep_tc
+    mkUpdInstInfo inst_names lbl f eq_spec t_ty b tyvars'' fld_ty'' relevant_cons inst_tys rep_tc
         = do { updClass  <- tcLookupClass recordUpdClassName
-             ; dfun_name <- newDFunName' (infoFor updClass tycon_name lbl) loc
-             ; cls_inst  <- mkFreshenedClsInst dfun_name (b:tyvars'') theta updClass args
+             ; dfun      <- mkDFunId (fmap fldInstsUpd inst_names) tycon_name lbl (b:tyvars'') theta updClass args
+             ; cls_inst  <- mkFreshenedClsInst dfun (b:tyvars'') theta updClass args
              ; matches   <- mapM matchCon relevant_cons
              ; return (InstInfo cls_inst (inst_bind matches)) }
       where
@@ -1763,17 +1798,17 @@ makeRecFldInsts flds
             dealt_with con = con `elem` relevant_cons
                                  || dataConCannotMatch inst_tys con
 
-
     -- See Note [Template tyvars are fresh] in InstEnv
-    mkFreshenedClsInst dfun_name tyvars theta clas tys
+    mkFreshenedClsInst dfun tyvars theta clas tys
       = do { (subst, tyvars') <- tcInstSkolTyVars tyvars
-           ; let dfun = mkDictFunId dfun_name tyvars theta clas tys
            ; return $ mkLocalInstance dfun (NoOverlap False) tyvars' clas (substTys subst tys) }
 
     -- Make a type family instance
     --    type instance fam_name args = result
-    mkFamInst fam_name args result
-      = do { rep_tc_name <- newFamInstAxiomName loc fam_name []
+    mkFamInst fam_name mb_axiom_name args result
+      = do { rep_tc_name <- case mb_axiom_name of
+                              Just n  -> return n
+                              Nothing -> newFamInstAxiomName loc fam_name []
            ; fam <- tcLookupTyCon fam_name
            ; let tyvars = varSetElems (tyVarsOfTypes (result:args))
                  axiom  = mkSingleCoAxiom rep_tc_name tyvars fam args result

@@ -30,7 +30,7 @@ module DataCon (
 	dataConStupidTheta,  
 	dataConInstArgTys, dataConOrigArgTys, dataConOrigResTy,
 	dataConInstOrigArgTys, dataConRepArgTys, 
-	dataConFieldLabels, dataConFieldType,
+	dataConFieldLabels, dataConFieldLabel, dataConFieldType,
 	tyConFieldLabels,
 	dataConStrictMarks, 
 	dataConSourceArity, dataConRepArity, dataConRepRepArity,
@@ -765,6 +765,13 @@ dataConImplicitIds (MkData { dcWorkId = work, dcRep = rep})
 -- | The labels for the fields of this particular 'DataCon'
 dataConFieldLabels :: DataCon -> [FieldLabel]
 dataConFieldLabels = dcFields
+
+-- | Extract the 'FieldLabel' and type for any given field of the 'DataCon'
+dataConFieldLabel :: DataCon -> OccName -> (FieldLabel, Type)
+dataConFieldLabel con occ
+  = case find ((== occ) . flOccName . fst) (dcFields con `zip` dcOrigArgTys con) of
+      Just x  -> x
+      Nothing -> pprPanic "dataConFieldLabel" (ppr con <+> ppr occ)
 
 -- | Extract the type for any given labelled field of the 'DataCon'
 dataConFieldType :: DataCon -> OccName -> Type
