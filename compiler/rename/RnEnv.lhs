@@ -381,7 +381,7 @@ greRdrName gre
       Imported is -> used_rdr_name_from_is is
 
   where
-    occ = nameOccName (gre_name gre)
+    occ = greOccName gre
     unqual_rdr = mkRdrUnqual occ
 
     used_rdr_name_from_is imp_specs     -- rdr_name is unqualified

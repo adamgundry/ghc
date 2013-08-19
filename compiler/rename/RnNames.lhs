@@ -1598,15 +1598,20 @@ printMinimalImports imports_w_usage
     to_ie _ (AvailTC n [m] [])
        | n==m = [IEThingAbs n]
     to_ie iface (AvailTC n ns fs)
-      = case [xs | AvailTC x xs gs <- mi_exports iface  -- AMG TODO: ???
-                 , x == n
-                 , x `elem` xs    -- Note [Partial export]
-                 ] of
+      = case [(xs, gs) | AvailTC x xs gs <- mi_exports iface
+                       , x == n
+                       , x `elem` xs    -- Note [Partial export]
+                       ] of
            [xs] | all_used xs -> [IEThingAll n]
                 | otherwise   -> [IEThingWith n (filter (/= n) ns) (map flOccName fs)]
-           _other             -> map IEVar ns
+
+                                             -- Note [Overloaded field import]
+           _other | all not_overloaded fs -> map IEVar ns ++ map (IEVar . flSelector) fs
+                  | otherwise -> [IEThingWith n (filter (/= n) ns) (map flOccName fs)]
         where
-          all_used avail_occs = all (`elem` ns) avail_occs
+          all_used (avail_occs, avail_flds) = all (`elem` ns) avail_occs
+                                                  && all (`elem` fs) avail_flds
+          not_overloaded fl = flOccName fl == nameOccName (flSelector fl)
 \end{code}
 
 Note [Partial export]
@@ -1627,6 +1632,24 @@ not
    import A( C( op ) )
 which we would usually generate if C was exported from B.  Hence
 the (x `elem` xs) test when deciding what to generate.
+
+
+Note [Overloaded field import]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+On the other hand, if we have
+
+    {-# LANGUAGE OverloadedRecordFields #-}
+    module A where
+      data T = MkT { foo :: Int }
+
+    module B where
+      import A
+      f = ...foo...
+
+then the minimal import for module B must be
+    import A ( T(foo) )
+because when OverloadedRecordFields is enabled, field selectors are
+not in scope without their enclosing datatype.
 
 
 %************************************************************************
