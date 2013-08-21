@@ -1753,7 +1753,7 @@ makeRecFldInsts (lbl, sel_name, tycon_name)
         args      = [t_ty, f, mkTyVarTy b]
         theta     = mkEqPred (mkTyVarTy b) fld_ty : eq_spec
 
-        inst_bind = VanillaInst bind [] False
+        inst_bind = VanillaInst bind [] True
           where
             bind  = unitBag $ noLoc ((mkTopFunBind (noLoc getFieldName) [match])
                                      { bind_fvs = missing })
@@ -1783,7 +1783,7 @@ makeRecFldInsts (lbl, sel_name, tycon_name)
                ; return $ mkSimpleMatch [nlWildPat, nlConVarPat con_name vars, nlVarPat x]
                                         (nlHsVarApps con_name vars') }
 
-        inst_bind matches = VanillaInst bind [] False
+        inst_bind matches = VanillaInst bind [] True
           where
             bind = unitBag $ noLoc ((mkTopFunBind (noLoc setFieldName) all_matches)
                                        { bind_fvs = missing })
