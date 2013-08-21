@@ -589,7 +589,7 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
                                 , let lbl = flOccName fl
                                 , let sel = flSelector fl
                                 , not (lbl `elem` present_flds)
-                                , let gres = lookupGRE_Name rdr_env sel
+                                , let gres = lookupGRE_Field_Name rdr_env sel lbl
                                 , not (null gres)  -- Check selector is in scope
                                 , case ctxt of
                                     HsRecFieldCon {} -> arg_in_scope lbl

@@ -46,7 +46,7 @@ module RdrName (
         GlobalRdrEnv, emptyGlobalRdrEnv, mkGlobalRdrEnv, plusGlobalRdrEnv,
         lookupGlobalRdrEnv, extendGlobalRdrEnv, greOccName,
         pprGlobalRdrEnv, globalRdrEnvElts,
-        lookupGRE_RdrName, lookupGRE_Name, getGRE_NameQualifier_maybes,
+        lookupGRE_RdrName, lookupGRE_Name, lookupGRE_Field_Name, getGRE_NameQualifier_maybes,
         transformGREs, findLocalDupsRdrEnv, findLocalSelectorDupsRdrEnv, pickGREs,
 
         -- ** Global 'RdrName' mapping elements: 'GlobalRdrElt', 'Provenance', 'ImportSpec'
@@ -518,6 +518,14 @@ lookupGRE_Name :: GlobalRdrEnv -> Name -> [GlobalRdrElt]
 lookupGRE_Name env name
   = [ gre | gre <- lookupGlobalRdrEnv env (nameOccName name),
             gre_name gre == name ]
+
+lookupGRE_Field_Name :: GlobalRdrEnv -> Name -> OccName -> [GlobalRdrElt]
+-- Used when looking up record fields, where the selector name and
+-- field label are different: the GlobalRdrEnv is keyed on the label
+lookupGRE_Field_Name env sel_name lbl
+  = [ gre | gre <- lookupGlobalRdrEnv env lbl,
+            gre_name gre == sel_name ]
+
 
 getGRE_NameQualifier_maybes :: GlobalRdrEnv -> Name -> [Maybe [ModuleName]]
 -- Returns all the qualifiers by which 'x' is in scope
