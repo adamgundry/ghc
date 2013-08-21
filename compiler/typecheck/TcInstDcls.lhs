@@ -1808,7 +1808,8 @@ makeRecFldInsts (lbl, sel_name, tycon_name)
     mkFamInst fam_name ax_name args result
       = do { fam <- tcLookupTyCon fam_name
            ; let tyvars = varSetElems (tyVarsOfTypes (result:args))
-                 axiom  = mkSingleCoAxiom ax_name tyvars fam args result
+           ; (subst, tyvars') <- tcInstSkolTyVars tyvars
+           ; let axiom  = mkSingleCoAxiom ax_name tyvars' fam (substTys subst args) (substTy subst result)
            ; newFamInst SynFamilyInst axiom }
 
     loc = mkGeneralSrcSpan (fsLit "<Has record field instance>")
