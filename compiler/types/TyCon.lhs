@@ -465,9 +465,9 @@ data TyCon
 
 -- | Fields in an algebraic record type
 data FieldLbl a = FieldLabel {
-      flOccName  :: OccName,            -- ^ Label of the field
-      flSelector :: a,                  -- ^ Record selector function
-      flInstances :: Maybe (FldInsts a) -- ^ Instances for overloading
+      flOccName  :: OccName,    -- ^ Label of the field
+      flSelector :: a,          -- ^ Record selector function
+      flInstances :: FldInsts a -- ^ Instances for overloading
     }
   deriving (Eq, Ord)
 
@@ -480,8 +480,8 @@ instance Foldable FieldLbl where
     foldMap = foldMapDefault
 
 instance Traversable FieldLbl where
-    traverse f (FieldLabel occ sel mb_is) = FieldLabel occ <$> f sel
-                                                <*> traverse (traverse f) mb_is
+    traverse f (FieldLabel occ sel mb_is)
+        = FieldLabel occ <$> f sel <*> traverse f mb_is
 
 instance Outputable a => Outputable (FieldLbl a) where
     ppr (FieldLabel occ sel _) = ppr occ <> braces (ppr sel)

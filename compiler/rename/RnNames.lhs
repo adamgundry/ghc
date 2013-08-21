@@ -562,21 +562,18 @@ getLocalNonValBinders fixity_env
     new_rec_sel :: OccName -> Located RdrName -> RnM FieldLabel
     new_rec_sel tc (L loc fld) = 
       do { overloaded <- xoptM Opt_OverloadedRecordFields
-         ; (sel_occ, insts) <- if not overloaded
-                               then return (lbl, Nothing)
-                               else new_names
+         ; let sel_occ | overloaded = mkRecSelOcc lbl tc
+                       | otherwise  = lbl
          ; sel_name <- newTopSrcBinder $ L loc $ mkRdrUnqual sel_occ
-         ; return (FieldLabel { flOccName = lbl
-                              , flSelector = sel_name
-                              , flInstances = insts }) }
+         ; has      <- newDFunName' has_str loc
+         ; upd      <- newDFunName' upd_str loc
+         ; get_ax   <- newFamInstAxiomName' loc get_str
+         ; set_ax   <- newFamInstAxiomName' loc set_str
+         ; return $ FieldLabel { flOccName = lbl
+                               , flSelector = sel_name
+                               , flInstances = FldInsts has upd get_ax set_ax } }
       where
-        lbl = rdrNameOcc fld
-        new_names = do { has <- newDFunName' has_str loc
-                       ; upd <- newDFunName' upd_str loc
-                       ; getResult <- newFamInstAxiomName' loc get_str
-                       ; setResult <- newFamInstAxiomName' loc set_str
-                       ; return ( mkRecSelOcc lbl tc
-                                , Just (FldInsts has upd getResult setResult) ) }
+        lbl     = rdrNameOcc fld
         str     = occNameString tc ++ occNameString lbl
         has_str = occNameString (nameOccName recordHasClassName) ++ str
         upd_str = occNameString (nameOccName recordUpdClassName) ++ str

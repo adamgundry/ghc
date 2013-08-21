@@ -405,7 +405,7 @@ data Parent = NoParent
             | ParentIs { par_is :: Name }
             | FldParent { par_is    :: Name
                         , par_lbl   :: OccName
-                        , par_insts :: Maybe (FldInsts Name) }
+                        , par_insts :: FldInsts Name }
             deriving (Eq)
 
 {- Note [Parents]
@@ -470,7 +470,7 @@ hasParentIs n (ParentIs n')
 #endif
 hasParentIs n _  = ParentIs n
 
-hasFldParent :: Name -> OccName -> Maybe (FldInsts Name) -> Parent -> Parent
+hasFldParent :: Name -> OccName -> FldInsts Name -> Parent -> Parent
 #ifdef DEBUG
 hasFldParent n f is (FldParent n' f' is')
   | n /= n' || f /= f' || is /= is' = pprPanic "hasFldParent" (ppr n <+> ppr f <+> ppr is <+> ppr n' <+> ppr f' <+> ppr is')  -- Parents should agree

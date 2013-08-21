@@ -301,23 +301,6 @@ tcRnImports hsc_env this_mod import_decls
         ; checkFamInstConsistency (imp_finsts imports) dir_imp_mods ;
 
         ; addImportedRecFldInsts } }
-
-
-addImportedRecFldInsts :: TcM TcGblEnv
-addImportedRecFldInsts
-  = do { (fld_cls_insts, fld_inst_infos, fld_fams) <- makeImportedRecFldInsts
-       ; tcExtendPrivateInstEnv fld_cls_insts $
-         addPrivateClsInsts fld_inst_infos $
-         addPrivateTyFamInsts fld_fams $
-         do { (inst_binds, lie) <- captureConstraints $
-                                   setXOptM Opt_TypeFamilies $ tcInstDecls2 [] fld_inst_infos
-            ; ev_binds <- simplifyTop lie
-            ; (_, ev_binds', inst_binds', _, _, _, _) <-
-                  zonkTopDecls ev_binds inst_binds emptyNameSet [] [] [] []
-            ; updGblEnv (\ tcg_env -> tcg_env
-                            { tcg_ev_binds = tcg_ev_binds tcg_env `unionBags` ev_binds'
-                            , tcg_binds = tcg_binds tcg_env `unionBags` inst_binds'})
-                        getGblEnv } }
 \end{code}
 
 
