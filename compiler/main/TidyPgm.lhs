@@ -295,6 +295,7 @@ tidyProgram hsc_env  (ModGuts { mg_module    = mod
                               , mg_tcs       = tcs
                               , mg_insts     = insts
                               , mg_fam_insts = fam_insts
+                              , mg_priv_fis  = priv_fam_insts
                               , mg_binds     = binds
                               , mg_rules     = imp_rules
                               , mg_vect_info = vect_info
@@ -311,7 +312,7 @@ tidyProgram hsc_env  (ModGuts { mg_module    = mod
               }
         ; showPass dflags CoreTidy
 
-        ; let { type_env = typeEnvFromEntities [] tcs fam_insts
+        ; let { type_env = typeEnvFromEntities [] tcs (fam_insts ++ priv_fam_insts)
 
               ; implicit_binds
                   = concatMap getClassImplicitBinds (typeEnvClasses type_env) ++

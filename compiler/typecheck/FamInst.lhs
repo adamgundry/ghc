@@ -255,10 +255,11 @@ tcExtendLocalFamInstEnv fam_insts thing_inside
 tcExtendPrivateFamInstEnv :: [FamInst] -> TcM a -> TcM a
 tcExtendPrivateFamInstEnv fam_insts thing_inside
  = do { env <- getGblEnv
-      ; (inst_env', _) <- foldlM addLocalFamInst
-                                          (tcg_fam_inst_env env, tcg_fam_insts env)
+      ; (inst_env', fam_insts') <- foldlM addLocalFamInst
+                                          (tcg_fam_inst_env env, tcg_priv_fis env)
                                           fam_insts
-      ; let env' = env { tcg_fam_inst_env = inst_env' }
+      ; let env' = env { tcg_fam_inst_env = inst_env'
+                       , tcg_priv_fis = fam_insts' }
       ; setGblEnv env' thing_inside
       }
 

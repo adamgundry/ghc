@@ -1581,9 +1581,15 @@ To achieve this, the results of makeRecFldInsts should be added using
 addPrivateClsInsts and addPrivateTyFamInsts. The former extends the
 tcg_inst_env field of the TcGblEnv, but not the tcg_insts field, so
 the instances are available locally but will not appear in the
-module's interface.
+module's interface. The latter extends tcg_fam_inst_env and
+tcg_priv_fis rather than tcg_fam_insts, which means the axiom will be
+exported but not the family instance.
 
-AMG TODO: What is the new FamInst story?
+Why are private class instances are not tracked, but lists of private
+family instances are needed in TcGblEnv and ModGuts? DFuns are Ids, so
+they are exported via tcg_binds, but we need to make sure that
+tidyProgram doesn't throw away the CoAxioms corresponding to private
+family instances.
 
 
 Note [Availability of type-changing update]
@@ -1628,7 +1634,7 @@ addLocalRecFldInsts tycl_decls inst_decls k
        ; overload_ok <- xoptM Opt_OverloadedRecordFields
        ; if not overload_ok
          then addPrivateClsInsts infos $
-                  addFamInsts fams $ k infos  -- AMG TODO: sort out what is going on here
+                  addPrivateTyFamInsts fams $ k infos
          else addPrivateClsInsts infos $
                   addPrivateTyFamInsts fams $ k infos }
   where

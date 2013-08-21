@@ -983,8 +983,9 @@ data ModGuts
         mg_tcs       :: ![TyCon],        -- ^ TyCons declared in this module
                                          -- (includes TyCons for classes)
         mg_insts     :: ![ClsInst],      -- ^ Class instances declared in this module
-        mg_fam_insts :: ![FamInst],
-                                         -- ^ Family instances declared in this module
+        mg_fam_insts :: ![FamInst],      -- ^ Family instances declared in this module
+        mg_priv_fis  :: ![FamInst],      -- ^ Family instances private to this module
+                                         -- See Note [Private instances] in TcInstDcls
         mg_rules     :: ![CoreRule],     -- ^ Before the core pipeline starts, contains
                                          -- See Note [Overall plumbing for rules] in Rules.lhs
         mg_binds     :: !CoreProgram,    -- ^ Bindings for this module

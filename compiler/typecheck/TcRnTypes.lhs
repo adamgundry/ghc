@@ -299,6 +299,8 @@ data TcGblEnv
         tcg_tcs       :: [TyCon],           -- ...TyCons and Classes
         tcg_insts     :: [ClsInst],         -- ...Instances
         tcg_fam_insts :: [FamInst],         -- ...Family instances
+        tcg_priv_fis  :: [FamInst],         -- ...Private family instances
+                                               -- (see Note [Private instances] in TcInstDcls)
         tcg_rules     :: [LRuleDecl Id],    -- ...Rules
         tcg_fords     :: [LForeignDecl Id], -- ...Foreign import & exports
         tcg_vects     :: [LVectDecl Id],    -- ...Vectorisation declarations
