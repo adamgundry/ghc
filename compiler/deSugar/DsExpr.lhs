@@ -605,6 +605,8 @@ dsExpr (EViewPat      {})  = panic "dsExpr:EViewPat"
 dsExpr (ELazyPat      {})  = panic "dsExpr:ELazyPat"
 dsExpr (HsType        {})  = panic "dsExpr:HsType"
 dsExpr (HsDo          {})  = panic "dsExpr:HsDo"
+dsExpr (HsOverloadedRecFld {}) = panic "dsExpr: HsOverloadedRecFld"
+dsExpr (HsSingleRecFld     {}) = panic "dsExpr: HsOverloadedRecFld"
 
 
 findField :: [HsRecField Id arg] -> OccName -> [arg]
