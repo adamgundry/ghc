@@ -325,7 +325,7 @@ data HsExpr id
                 (HsExpr id)
   |  HsUnboundVar RdrName
   |  HsOverloadedRecFld OccName
-  |  HsSingleRecFld OccName id
+  |  HsSingleRecFld RdrName id   -- Used to attach a selector id to non-overloaded fields
   deriving (Data, Typeable)
 
 -- | HsTupArg is used for tuple sections

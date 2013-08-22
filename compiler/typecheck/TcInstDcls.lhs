@@ -1757,7 +1757,7 @@ makeRecFldInsts (lbl, sel_name, tycon_name)
           where
             bind  = unitBag $ noLoc ((mkTopFunBind (noLoc getFieldName) [match])
                                      { bind_fvs = missing })
-            match = mkMatch [nlWildPat] (noLoc (HsSingleRecFld lbl sel_name)) EmptyLocalBinds
+            match = mkMatch [nlWildPat] (noLoc (HsSingleRecFld (mkVarUnqual (occNameFS lbl)) sel_name)) EmptyLocalBinds
 
     -- Make InstInfo for Upd thus:
     --     instance forall b tyvars . b ~ fld_ty' => Upd t_ty f b where

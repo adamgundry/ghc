@@ -121,7 +121,7 @@ rnExpr (HsVar v)
                                   warnTc (isQual v) (qualifiedOverloadedRecordField v)
                             ; return (HsOverloadedRecFld fld, emptyFVs) }
                     else case xs of
-                         [(_, name)] -> return (HsSingleRecFld fld name, unitFV name)
+                         [(_, name)] -> return (HsSingleRecFld v name, unitFV name)
                          _           -> error "rnExpr/HsVar" } } }
 
 rnExpr (HsIPVar v)

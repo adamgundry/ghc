@@ -771,7 +771,8 @@ tcExpr (HsOverloadedRecFld fld) res_ty
              tm        = L loc (mkHsWrap wrap (HsVar field)) `HsApp` proxy_arg
        ; tcWrapResult tm (mkAppTys p [r, t]) res_ty }
 
-tcExpr (HsSingleRecFld f sel_name) res_ty = tcCheckId sel_name res_ty
+tcExpr (HsSingleRecFld f sel_name) res_ty
+    = tcCheckRecSelId f sel_name res_ty
 \end{code}
 
 %************************************************************************
@@ -1024,7 +1025,7 @@ tcSyntaxOp :: CtOrigin -> HsExpr Name -> TcType -> TcM (HsExpr TcId)
 -- Typecheck a syntax operator, checking that it has the specified type
 -- The operator is always a variable at this stage (i.e. renamer output)
 -- This version assumes res_ty is a monotype
-tcSyntaxOp orig (HsVar op) res_ty = do { (expr, rho) <- tcInferIdWithOrig orig op
+tcSyntaxOp orig (HsVar op) res_ty = do { (expr, rho) <- tcInferIdWithOrig orig (nameRdrName op) op
                                        ; tcWrapResult expr rho res_ty }
 tcSyntaxOp _ other         _      = pprPanic "tcSyntaxOp" (ppr other)
 \end{code}
@@ -1068,16 +1069,26 @@ tcCheckId name res_ty
        ; addErrCtxtM (funResCtxt False (HsVar name) actual_res_ty res_ty) $
          tcWrapResult expr actual_res_ty res_ty }
 
+tcCheckRecSelId :: RdrName -> Name -> TcRhoType -> TcM (HsExpr TcId)
+tcCheckRecSelId lbl name res_ty
+  = do { (expr, actual_res_ty) <- tcInferRecSelId lbl name
+       ; addErrCtxtM (funResCtxt False (HsSingleRecFld lbl name) actual_res_ty res_ty) $
+         tcWrapResult expr actual_res_ty res_ty }
+
 ------------------------
 tcInferId :: Name -> TcM (HsExpr TcId, TcRhoType)
 -- Infer type, and deeply instantiate
-tcInferId n = tcInferIdWithOrig (OccurrenceOf n) n
+tcInferId n = tcInferIdWithOrig (OccurrenceOf n) (nameRdrName n) n
+
+tcInferRecSelId :: RdrName -> Name -> TcM (HsExpr TcId, TcRhoType)
+tcInferRecSelId lbl n = tcInferIdWithOrig (OccurrenceOfRecSel lbl) lbl n
 
 ------------------------
-tcInferIdWithOrig :: CtOrigin -> Name -> TcM (HsExpr TcId, TcRhoType)
+tcInferIdWithOrig :: CtOrigin -> RdrName -> Name ->
+                         TcM (HsExpr TcId, TcRhoType)
 -- Look up an occurrence of an Id, and instantiate it (deeply)
 
-tcInferIdWithOrig orig id_name
+tcInferIdWithOrig orig lbl id_name
   = do { id <- lookup_id
        ; (id_expr, id_rho) <- instantiateOuter orig id
        ; (wrap, rho) <- deeplyInstantiate orig id_rho
@@ -1105,7 +1116,7 @@ tcInferIdWithOrig orig id_name
     bad_lookup thing = ppr thing <+> ptext (sLit "used where a value identifer was expected")
 
     check_naughty id
-      | isNaughtyRecordSelector id = failWithTc (naughtyRecordSel id)
+      | isNaughtyRecordSelector id = failWithTc (naughtyRecordSel lbl)
       | otherwise                  = return ()
 
 ------------------------
@@ -1742,7 +1753,7 @@ Finding the smallest subset is hard, so the code here makes
 a decent stab, no more.  See Trac #7989. 
 
 \begin{code}
-naughtyRecordSel :: TcId -> SDoc
+naughtyRecordSel :: RdrName -> SDoc
 naughtyRecordSel sel_id
   = ptext (sLit "Cannot use record selector") <+> quotes (ppr sel_id) <+>
     ptext (sLit "as a function due to escaped type variables") $$

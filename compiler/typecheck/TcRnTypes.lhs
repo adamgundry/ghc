@@ -1590,6 +1590,7 @@ data CtOrigin
 
   -- All the others are for *wanted* constraints
   | OccurrenceOf Name           -- Occurrence of an overloaded identifier
+  | OccurrenceOfRecSel RdrName  -- Occurrence of a record selector
   | AppOrigin                   -- An application of some kind
 
   | SpecPragOrigin Name         -- Specialisation pragma for identifier
@@ -1634,6 +1635,7 @@ data CtOrigin
 pprO :: CtOrigin -> SDoc
 pprO (GivenOrigin sk)      = ppr sk
 pprO (OccurrenceOf name)   = hsep [ptext (sLit "a use of"), quotes (ppr name)]
+pprO (OccurrenceOfRecSel name) = hsep [ptext (sLit "a use of the record selector"), quotes (ppr name)]
 pprO AppOrigin             = ptext (sLit "an application")
 pprO (SpecPragOrigin name) = hsep [ptext (sLit "a specialisation pragma for"), quotes (ppr name)]
 pprO (IPOccOrigin name)    = hsep [ptext (sLit "a use of implicit parameter"), quotes (ppr name)]
