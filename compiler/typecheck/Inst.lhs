@@ -423,7 +423,8 @@ tcExtendPrivateInstEnv dfuns thing_inside
  = do { traceDFuns dfuns
       ; env <- getGblEnv
       ; inst_env' <- foldlM addLocalInst (tcg_inst_env env) dfuns
-      ; let env' = env { tcg_inst_env = inst_env' }
+      ; let env' = env { tcg_priv_insts = dfuns ++ tcg_priv_insts env
+                       , tcg_inst_env = inst_env' }
       ; setGblEnv env' thing_inside }
 
 addLocalInst :: InstEnv -> ClsInst -> TcM InstEnv

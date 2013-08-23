@@ -1122,6 +1122,10 @@ data InteractiveContext
              -- time we update the context, we just take the results
              -- from the instance code that already does that.
 
+         ic_priv_instances :: ([ClsInst], [FamInst]),
+             -- ^ Ditto, but for private instances
+             -- (see Note [Private instances] in TcInstDcls)
+
          ic_fix_env :: FixityEnv,
             -- ^ Fixities declared in let statements
 
@@ -1173,6 +1177,7 @@ emptyInteractiveContext dflags
                          ic_tythings   = [],
                          ic_sys_vars   = [],
                          ic_instances  = ([],[]),
+                         ic_priv_instances = ([],[]),
                          ic_fix_env    = emptyNameEnv,
                          -- System.IO.print by default
                          ic_int_print  = printName,

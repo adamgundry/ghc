@@ -1404,6 +1404,8 @@ hscDeclsWithLocation hsc_env0 str source linenumber =
     -- (ic_instances) for more details.
     let finsts = tcg_fam_insts tc_gblenv
         insts  = tcg_insts     tc_gblenv
+        priv_finsts = tcg_priv_fis tc_gblenv
+        priv_insts  = tcg_priv_insts tc_gblenv
 
     let defaults = tcg_default tc_gblenv
 
@@ -1459,6 +1461,7 @@ hscDeclsWithLocation hsc_env0 str source linenumber =
     let ictxt1 = extendInteractiveContext icontext tythings
         ictxt  = ictxt1 { ic_sys_vars  = sys_vars ++ ic_sys_vars ictxt1,
                           ic_instances = (insts, finsts),
+                          ic_priv_instances = (priv_insts, priv_finsts),
                           ic_default   = defaults }
 
     return (tythings, ictxt)

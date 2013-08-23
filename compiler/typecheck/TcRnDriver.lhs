@@ -1411,6 +1411,7 @@ setInteractiveContext hsc_env icxt thing_inside
         -- This mimics the more selective call to hptInstances in tcRnImports
         (home_insts, home_fam_insts) = hptInstances hsc_env (\_ -> True)
         (ic_insts, ic_finsts) = ic_instances icxt
+        (priv_insts, priv_finsts) = ic_priv_instances icxt
 
         -- Note [GHCi temporary Ids]
         -- Ideally we would just make a type_env from ic_tythings
@@ -1461,14 +1462,13 @@ setInteractiveContext hsc_env icxt thing_inside
                                  -- Note [delete shadowed tcg_rdr_env entries]
         , tcg_type_env     = type_env
         , tcg_insts        = ic_insts
-        , tcg_inst_env     = extendInstEnvList
-                              (extendInstEnvList (tcg_inst_env env) ic_insts)
-                              home_insts
+        , tcg_priv_insts   = priv_insts
+        , tcg_inst_env     = foldl extendInstEnvList (tcg_inst_env env)
+                                 [ic_insts, home_insts, priv_insts]
         , tcg_fam_insts    = ic_finsts
-        , tcg_fam_inst_env = extendFamInstEnvList
-                              (extendFamInstEnvList (tcg_fam_inst_env env)
-                                                    ic_finsts)
-                              home_fam_insts
+        , tcg_priv_fis     = priv_finsts
+        , tcg_fam_inst_env = foldl extendFamInstEnvList (tcg_fam_inst_env env)
+                                 [ic_finsts, home_fam_insts, priv_finsts]
         , tcg_field_env    = mkNameEnv con_fields
              -- setting tcg_field_env is necessary to make RecordWildCards work
              -- (test: ghci049)

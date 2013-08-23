@@ -13,7 +13,8 @@ TcInstDecls: Typechecking instance declarations
 --     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
-module TcInstDcls ( tcInstDecls1, tcInstDecls2, addImportedRecFldInsts ) where
+module TcInstDcls ( tcInstDecls1, tcInstDecls2,
+                    addImportedRecFldInsts, makeImportedRecFldInsts ) where
 
 #include "HsVersions.h"
 
