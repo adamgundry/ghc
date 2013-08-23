@@ -1701,24 +1701,26 @@ makeRecFldInsts (lbl, sel_name, tycon_name)
                  inst_names    = flInstances fl
                  f             = mkStrLitTy (occNameFS lbl)
                  (univ_tvs, ex_tvs, eq_spec0, _, _, data_ty0) = dataConFullSig dc
+                 stupid_theta0 = dataConStupidTheta dc
            ; (subst0, tyvars) <- tcInstSkolTyVars (univ_tvs ++ ex_tvs)
            ; let t_ty    = substTy subst0 (mkFamilyTyConApp rep_tc (mkTyVarTys univ_tvs))
                  data_ty = substTy subst0 data_ty0
                  fld_ty  = substTy subst0 fld_ty0
                  eq_spec = substTys subst0 (eqSpecPreds eq_spec0)
+                 stupid_theta = substTys subst0 stupid_theta0
                  inst_tys = substTyVars (mkTopTvSubst eq_spec0) univ_tvs -- for dataConCannotMatch
            ; (_, mb) <- tryTc (checkValidMonoType fld_ty) -- TODO: make this pure?
            ; if isNothing mb || not (tyVarsOfType fld_ty0 `subVarSet` tyVarsOfType data_ty0)
              then return ([], []) -- Universally or existentially quantified, so give up
              else do
              { b        <- mkTyVar <$> newSysName (mkVarOcc "b") <*> pure liftedTypeKind
-             ; has_inst <- mkHasInstInfo (fldInstsHas inst_names) sel_name tycon_name lbl f tyvars eq_spec t_ty fld_ty b
+             ; has_inst <- mkHasInstInfo (fldInstsHas inst_names) sel_name tycon_name lbl f tyvars eq_spec stupid_theta t_ty fld_ty b
              ; get_fam  <- mkFamInst getResultFamName (fldInstsGetResult inst_names) [data_ty, f] fld_ty
 
              ; (subst, tyvars') <- updatingSubst lbl relevant_cons tyvars (tyVarsOfType fld_ty)
              ; let fld_ty'  = substTy subst fld_ty
                    data_ty' = substTy subst data_ty
-             ; upd_inst <- mkUpdInstInfo (fldInstsUpd inst_names) lbl f eq_spec t_ty b tyvars' fld_ty' relevant_cons inst_tys rep_tc
+             ; upd_inst <- mkUpdInstInfo (fldInstsUpd inst_names) lbl f eq_spec (stupid_theta ++ substTys subst stupid_theta) t_ty b tyvars' fld_ty' relevant_cons inst_tys rep_tc
              ; set_fam  <- mkFamInst setResultFamName (fldInstsSetResult inst_names) [data_ty, f, fld_ty'] data_ty'
              ; dumpDerivingInfo (hang (text "Overloaded record field instances:")
                               2 (vcat [ppr has_inst, ppr get_fam, ppr upd_inst, ppr set_fam]))
@@ -1745,14 +1747,14 @@ makeRecFldInsts (lbl, sel_name, tycon_name)
     -- Make InstInfo for Has thus:
     --     instance forall b tyvars . b ~ fld_ty => Has t_ty f b where
     --         getField _ = sel_name
-    mkHasInstInfo dfun_name sel_name tycon_name lbl f tyvars eq_spec t_ty fld_ty b
+    mkHasInstInfo dfun_name sel_name tycon_name lbl f tyvars eq_spec stupid_theta t_ty fld_ty b
         = do { hasClass  <- tcLookupClass recordHasClassName
              ; let dfun = mkDictFunId dfun_name (b:tyvars) theta hasClass args
              ; cls_inst  <- mkFreshenedClsInst dfun (b:tyvars) hasClass args
              ; return (InstInfo cls_inst inst_bind) }
       where
         args      = [t_ty, f, mkTyVarTy b]
-        theta     = mkEqPred (mkTyVarTy b) fld_ty : eq_spec
+        theta     = mkEqPred (mkTyVarTy b) fld_ty : eq_spec ++ stupid_theta
 
         inst_bind = VanillaInst bind [] True
           where
@@ -1766,7 +1768,7 @@ makeRecFldInsts (lbl, sel_name, tycon_name)
     --  fld_ty' is fld_ty with fresh tyvars (if type-changing update is possible)
     --  It would be nicer to use record-update syntax, but that isn't
     --  possible because of Trac #2595.
-    mkUpdInstInfo dfun_name lbl f eq_spec t_ty b tyvars'' fld_ty'' relevant_cons inst_tys rep_tc
+    mkUpdInstInfo dfun_name lbl f eq_spec stupid_theta t_ty b tyvars'' fld_ty'' relevant_cons inst_tys rep_tc
         = do { updClass  <- tcLookupClass recordUpdClassName
              ; let dfun = mkDictFunId dfun_name (b:tyvars'') theta updClass args
              ; cls_inst  <- mkFreshenedClsInst dfun (b:tyvars'') updClass args
@@ -1774,7 +1776,7 @@ makeRecFldInsts (lbl, sel_name, tycon_name)
              ; return (InstInfo cls_inst (inst_bind matches)) }
       where
         args  = [t_ty, f, mkTyVarTy b]
-        theta = mkEqPred (mkTyVarTy b) fld_ty'' : eq_spec
+        theta = mkEqPred (mkTyVarTy b) fld_ty'' : eq_spec ++ stupid_theta
 
         matchCon con
           = do { x <- newSysName (mkVarOcc "x")
