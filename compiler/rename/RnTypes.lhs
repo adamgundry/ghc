@@ -548,7 +548,7 @@ rnOverloadedField doc (ConDeclField name _ ty haddock_doc)
   = do { (new_ty, fvs) <- rnLHsType doc ty
        ; when (isJust haddock_doc) $
            addErr (ptext (sLit "Haddock docs are forbidden on overloaded record fields"))
-       ; return (ConDeclField name (error "rnOverloadedField") new_ty haddock_doc, fvs) }
+       ; return (ConDeclField name (mkUnboundName (unLoc name)) new_ty haddock_doc, fvs) }
 \end{code}
 
 
