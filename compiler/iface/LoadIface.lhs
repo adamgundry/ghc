@@ -740,15 +740,15 @@ When printing export lists, we print like this:
 \begin{code}
 pprExport :: IfaceExport -> SDoc
 pprExport (Avail n)         = ppr n
-pprExport (AvailTC _ [] []) = empty
+pprExport (AvailTC _ [] fs) | nullAvailFields fs = empty
 pprExport (AvailTC n (n':ns) fs) 
   | n==n'     = ppr n <> pp_export ns fs
   | otherwise = ppr n <> char '|' <> pp_export (n':ns) fs
 pprExport (AvailTC n [] fs) = ppr n <> char '|' <> pp_export [] fs
 
-pp_export :: [Name] -> [FieldLabel] -> SDoc
-pp_export []    [] = empty
-pp_export names fs = braces (hsep (map ppr names ++ map ppr fs))
+pp_export :: [Name] -> AvailFields -> SDoc
+pp_export []    fs | nullAvailFields fs = empty
+pp_export names fs = braces (hsep (map ppr names ++ pprAvailFields fs))
 
 
 pprUsage :: Usage -> SDoc

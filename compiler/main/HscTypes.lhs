@@ -62,7 +62,7 @@ module HscTypes (
         FixityEnv, FixItem(..), lookupFixity, emptyFixityEnv,
 
         -- * TyThings and type environments
-        TyThing(..),  tyThingAvailInfo,
+        TyThing(..),  tyThingAvailInfo, tyThingGREs,
         tyThingTyCon, tyThingDataCon,
         tyThingId, tyThingCoAxiom, tyThingParent_maybe, tyThingsTyVars,
         implicitTyThings, implicitTyConThings, implicitClassThings,
@@ -1225,7 +1225,7 @@ setInteractivePrintName ic n = ic{ic_int_print = n}
 -- later ones, and shadowing existing entries in the GlobalRdrEnv.
 icPlusGblRdrEnv :: [TyThing] -> GlobalRdrEnv -> GlobalRdrEnv
 icPlusGblRdrEnv tythings env = extendOccEnvList env list
-  where new_gres = gresFromAvails LocalDef (map tyThingAvailInfo tythings)
+  where new_gres = concatMap tyThingGREs tythings
         list = [ (greOccName gre, [gre]) | gre <- new_gres ]
 
 substInteractiveContext :: InteractiveContext -> TvSubst -> InteractiveContext
@@ -1500,14 +1500,41 @@ tyThingAvailInfo (ATyCon t)
    = case tyConClass_maybe t of
         Just c  -> AvailTC n (n : map getName (classMethods c)
                                  ++ map getName (classATs c))
-                             []
+                             (NonOverloaded [])
              where n = getName c
-        Nothing -> AvailTC n (n : map getName dcs)
-                             (concatMap dataConFieldLabels dcs)
+        Nothing -> AvailTC n (n : map getName dcs) flds'
              where n = getName t
                    dcs = tyConDataCons t
+                   flds = concatMap dataConFieldLabels dcs
+                   flds' = case flds of
+                       []     -> NonOverloaded []
+                       fls@(fl:_) | flOccName fl == nameOccName (flSelector fl)
+                                      -> NonOverloaded (map flSelector fls)
+                                  | otherwise -> Overloaded (map flOccName fls)
 tyThingAvailInfo t
    = Avail (getName t)
+
+-- | The GlobalRdrElts that a TyThing should bring into scope. This
+-- should be the composition of gresFromAvail and tyThingAvailInfo,
+-- but does not need to lookup overloaded record field selectors.
+tyThingGREs :: TyThing -> [GlobalRdrElt]
+tyThingGREs (ATyCon t)
+   = case tyConClass_maybe t of
+        Just c  -> localGRE n NoParent : map (subGRE n) (classMethods c)
+                                      ++ map (subGRE n) (classATs c)
+                     where
+                       n = getName c
+        Nothing -> localGRE n NoParent : map (subGRE n) dcs ++ map (fldGRE n) flds
+                     where
+                       n    = getName t
+                       dcs  = tyConDataCons t
+                       flds = concatMap dataConFieldLabels dcs
+  where
+    localGRE n par = GRE { gre_name = n, gre_par = par, gre_prov = LocalDef }
+    subGRE n x     = localGRE (getName x) (ParentIs n)
+    fldGRE n fl    = localGRE (flSelector fl) (FldParent n (flOccName fl))
+
+tyThingGREs t = [GRE { gre_name = getName t, gre_par = NoParent, gre_prov = LocalDef }]
 \end{code}
 
 %************************************************************************

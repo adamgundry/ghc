@@ -73,7 +73,7 @@ module OccName (
 	mkPDatasTyConOcc, mkPDatasDataConOcc,
         mkPReprTyConOcc, 
         mkPADFunOcc,
-        mkRecSelOcc,
+        mkRecSelOcc, mkOverloadedRecFldOccs,
 
 	-- ** Deconstruction
 	occNameFS, occNameString, occNameSpace, 
@@ -705,7 +705,24 @@ the name of the type constructor, to support overloaded record fields.
 
 \begin{code}
 mkRecSelOcc :: OccName -> OccName -> OccName
-mkRecSelOcc lbl tc = mk_deriv varName "$sel_" (occNameString lbl ++ "_" ++ occNameString tc)
+mkRecSelOcc lbl tc = fst $ mkOverloadedRecFldOccs lbl tc
+
+mkOverloadedRecFldOccs :: OccName -> OccName -> (OccName, FldInsts OccName)
+mkOverloadedRecFldOccs lbl tc = (sel_occ, is)
+  where
+    str     = ":" ++ occNameString lbl ++ ":" ++ occNameString tc
+    has_str = "Has"
+    upd_str = "Upd"
+    get_str = "GetResult"
+    set_str = "SetResult"
+
+    sel_occ = mk_deriv varName "$sel" str
+    has_occ = mk_deriv varName "$f" (has_str ++ str)
+    upd_occ = mk_deriv varName "$f" (upd_str ++ str)
+    get_occ = mkInstTyCoOcc (mkTcOcc (get_str ++ str))
+    set_occ = mkInstTyCoOcc (mkTcOcc (set_str ++ str))
+
+    is = FldInsts has_occ upd_occ get_occ set_occ
 \end{code}
 
 

@@ -915,7 +915,7 @@ lookupQualifiedName_overloaded rdr_name
    -- Note: we want to behave as we would for a source file import here,
    -- and respect hiddenness of modules/packages, hence loadSrcInterface.
    = do { iface <- loadSrcInterface doc mod False Nothing
-        ; overload_ok <- xoptM Opt_OverloadedRecordFields
+
         ; case  [ name
                 | avail <- mi_exports iface,
                   name  <- availNames avail,
@@ -923,18 +923,26 @@ lookupQualifiedName_overloaded rdr_name
               (n:ns) -> ASSERT(null ns) return (Just (Left n))
               _ -> case [ (availName avail, fl)
                         | avail <- mi_exports iface,
-                          fl <- availFlds avail,
-                          flOccName fl == occ ] of
-                       xs@((_,fl):ys) | null ys || overload_ok
-                                          -> let zs = map (fmap flSelector) xs
-                                             in return (Just (Right (flOccName fl, zs)))
-                       xs -> do { traceRn (text "lookupQualified overloaded" <+> ppr rdr_name <+> ppr xs)
-                                ; return Nothing } }
-
+                          fl <- availOverloadedFlds avail,
+                          fl == occ ] of
+                       []           -> do { traceRn (text "lookupQualified overloaded" <+> ppr rdr_name)
+                                          ; return Nothing }
+                       ((p, fl):xs) -> do { sel <- lookupOrig (nameModule p)
+                                                       (mkRecSelOcc fl (nameOccName p))
+                                          ; when (not (null xs)) $
+                                                addNameClashErrRn rdr_name (map (toFakeGRE mod) ((p,fl):xs))
+                                          ; return (Just (Right (occ, [(p, sel)]))) } }
   | otherwise
   = pprPanic "RnEnv.lookupQualifiedName_overloaded" (ppr rdr_name)
   where
     doc = ptext (sLit "Need to find") <+> ppr rdr_name
+
+    -- Make up a fake GRE solely for error-reporting purposes: the
+    -- selector name is bogus but we'll only look at its module.
+    toFakeGRE mod (p, lbl) = GRE { gre_name = p
+                                 , gre_par  = FldParent p lbl
+                                 , gre_prov = Imported [imp_spec] }
+      where imp_spec = ImpSpec (ImpDeclSpec mod mod True noSrcSpan) ImpAll
 \end{code}
 
 Note [Looking up signature names]

@@ -55,6 +55,7 @@ import CoreUnfold ( mkDFunUnfolding )
 import CoreSyn    ( Expr(Var, Type), CoreExpr, mkTyApps, mkVarApps )
 import PrelNames
 import RnEnv      ( addUsedRdrNames )
+import IfaceEnv
 
 import Bag
 import BasicTypes
@@ -68,6 +69,7 @@ import Name
 import NameSet
 import NameEnv
 import RdrName
+import Module
 import Outputable
 import SrcLoc
 import Util
@@ -79,6 +81,7 @@ import Maybes     ( orElse, isNothing, isJust, whenIsJust )
 import qualified Data.ByteString as BS
 import Data.List
 import Data.Monoid ( mconcat )
+import Data.Traversable ( traverse )
 \end{code}
 
 Typechecking instance declarations is done in two passes. The first
@@ -1662,14 +1665,14 @@ makeImportedRecFldInsts
     gres_of gbl_env = concat (occEnvElts (tcg_rdr_env gbl_env))
 
 acquireRecFldInsts :: GlobalRdrElt -> TcM ([ClsInst], [FamInst])
-acquireRecFldInsts gre@(GRE{ gre_name = sel_name
-                           , gre_par = FldParent tycon_name _ insts})
-    | not (isLocalGRE gre) = lookupRecFldInsts tycon_name insts
+acquireRecFldInsts gre@(GRE{ gre_par = FldParent tycon_name lbl})
+    | not (isLocalGRE gre) = lookupRecFldInsts lbl tycon_name
 acquireRecFldInsts _ = return ([], [])
 
-lookupRecFldInsts :: Name -> FldInsts Name -> TcM ([ClsInst], [FamInst])
-lookupRecFldInsts tycon_name fis
-  = do { (_, mb_has_dfun) <- tryTc $ tcLookupId (fldInstsHas fis)
+lookupRecFldInsts :: OccName -> Name -> TcM ([ClsInst], [FamInst])
+lookupRecFldInsts lbl tycon_name
+  = do { fis <- lookupRecFldInstNames (nameModule tycon_name) lbl (nameOccName tycon_name)
+       ; (_, mb_has_dfun) <- tryTc $ tcLookupId (fldInstsHas fis)
        -- Will not exist if the field is quantified
        -- Perhaps has_dfun should be a dummy binder, like naughty record selectors?
        ; case mb_has_dfun of
@@ -1685,6 +1688,11 @@ lookupRecFldInsts tycon_name fis
              get = mkImportedFamInst getResultFamName [Just tycon_name, Nothing] get_ax
              set = mkImportedFamInst setResultFamName [Just tycon_name, Nothing, Nothing] set_ax
        ; return ([has, upd], [get, set]) } }
+
+lookupRecFldInstNames :: Module -> OccName -> OccName -> TcM (FldInsts Name)
+lookupRecFldInstNames mod lbl tc = traverse (lookupOrig mod) fis
+  where
+    (_, fis) = mkOverloadedRecFldOccs lbl tc
 
 makeRecFldInsts :: (OccName, Name, Name) -> TcM ([InstInfo Name], [FamInst])
 makeRecFldInsts (lbl, sel_name, tycon_name)
@@ -1815,11 +1823,7 @@ makeRecFldInsts (lbl, sel_name, tycon_name)
            ; let axiom  = mkSingleCoAxiom ax_name tyvars' fam (substTys subst args) (substTy subst result)
            ; newFamInst SynFamilyInst axiom }
 
-    loc = mkGeneralSrcSpan (fsLit "<Has record field instance>")
-    missing = error "greToFldInst: missing"
-
-    infoFor clas tycon_name lbl = concatMap occNameString
-                                     [ nameOccName (className clas), nameOccName tycon_name, lbl ]
+    missing = error "makeRecFldInsts: missing"
 \end{code}
 
 

@@ -402,10 +402,8 @@ data GlobalRdrElt
 -- | The children of a Name are the things that are abbreviated by the ".."
 --   notation in export lists.  See Note [Parents]
 data Parent = NoParent
-            | ParentIs { par_is :: Name }
-            | FldParent { par_is    :: Name
-                        , par_lbl   :: OccName
-                        , par_insts :: FldInsts Name }
+            | ParentIs  { par_is :: Name }
+            | FldParent { par_is :: Name, par_lbl :: OccName }
             deriving (Eq)
 
 {- Note [Parents]
@@ -450,18 +448,18 @@ That's why plusParent picks the "best" case.
 -}
 
 instance Outputable Parent where
-   ppr NoParent          = empty
-   ppr (ParentIs n)      = ptext (sLit "parent:") <> ppr n
-   ppr (FldParent n f _) = ptext (sLit "fldparent:")
-                               <> ppr n <> colon <> ppr f
+   ppr NoParent        = empty
+   ppr (ParentIs n)    = ptext (sLit "parent:") <> ppr n
+   ppr (FldParent n f) = ptext (sLit "fldparent:")
+                             <> ppr n <> colon <> ppr f
 
 plusParent :: Parent -> Parent -> Parent
 -- See Note [Combining parents]
-plusParent (ParentIs n)    p2    = hasParentIs n p2
-plusParent (FldParent n f is) p2 = hasFldParent n f is p2
-plusParent p1 (ParentIs n)       = hasParentIs n p1
-plusParent p1 (FldParent n f is) = hasFldParent n f is p1
-plusParent NoParent NoParent     = NoParent
+plusParent (ParentIs n)    p2 = hasParentIs n p2
+plusParent (FldParent n f) p2 = hasFldParent n f p2
+plusParent p1 (ParentIs n)    = hasParentIs n p1
+plusParent p1 (FldParent n f) = hasFldParent n f p1
+plusParent NoParent NoParent  = NoParent
 
 hasParentIs :: Name -> Parent -> Parent
 #ifdef DEBUG
@@ -470,12 +468,13 @@ hasParentIs n (ParentIs n')
 #endif
 hasParentIs n _  = ParentIs n
 
-hasFldParent :: Name -> OccName -> FldInsts Name -> Parent -> Parent
+hasFldParent :: Name -> OccName -> Parent -> Parent
 #ifdef DEBUG
-hasFldParent n f is (FldParent n' f' is')
-  | n /= n' || f /= f' || is /= is' = pprPanic "hasFldParent" (ppr n <+> ppr f <+> ppr is <+> ppr n' <+> ppr f' <+> ppr is')  -- Parents should agree
+hasFldParent n f (FldParent n' f')
+  | n /= n' || f /= f'    -- Parents should agree
+    = pprPanic "hasFldParent" (ppr n <+> ppr f <+> ppr n' <+> ppr f')
 #endif
-hasFldParent n f is _  = FldParent n f is
+hasFldParent n f _  = FldParent n f
 
 emptyGlobalRdrEnv :: GlobalRdrEnv
 emptyGlobalRdrEnv = emptyOccEnv

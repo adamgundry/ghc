@@ -112,6 +112,7 @@ import IfaceEnv         ( initNameCache )
 import LoadIface        ( ifaceStats, initExternalPackageState )
 import PrelInfo
 import MkIface
+import IfaceEnv
 import Desugar
 import SimplCore
 import TidyPgm

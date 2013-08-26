@@ -3,30 +3,26 @@
 --
 
 module Avail (
-    Avails,
+    Avails, AvailFlds(..), AvailFields,
     AvailInfo(..),
     availsToNameSet,
     availsToNameEnv,
-    availName, availNames, availNonFldNames, availFlds,
-    stableAvailCmp, stableFieldLabelCmp,
-    gresFromAvails,
-    gresFromAvail
+    availName, availNames, availNonFldNames,
+    availFlds, availOverloadedFlds,
+    stableAvailCmp, stableAvailFieldsCmp,
+    nullAvailFields,
+    availFieldsOccs,
+    isOverloaded,
+    pprAvailFields
   ) where
 
 import Name
 import NameEnv
 import NameSet
-import RdrName
-import OccName
-import TyCon
 
 import Binary
 import Outputable
 import Util
-
-import Data.Foldable (foldMap)
-import Data.List
-import Data.Maybe
 
 -- -----------------------------------------------------------------------------
 -- The AvailInfo type
@@ -35,7 +31,7 @@ import Data.Maybe
 data AvailInfo = Avail Name      -- ^ An ordinary identifier in scope
                | AvailTC Name
                          [Name]
-                         [FieldLabel]
+                         AvailFields
                                  -- ^ A type or class in scope. Parameters:
                                  --
                                  --  1) The name of the type or class
@@ -54,6 +50,13 @@ data AvailInfo = Avail Name      -- ^ An ordinary identifier in scope
 -- | A collection of 'AvailInfo' - several things that are \"available\"
 type Avails = [AvailInfo]
 
+-- | Record fields in an 'AvailInfo'
+data AvailFlds name = NonOverloaded [name] | Overloaded [OccName]
+  deriving Eq
+
+type AvailFields = AvailFlds Name
+
+
 -- | Compare lexicographically
 stableAvailCmp :: AvailInfo -> AvailInfo -> Ordering
 stableAvailCmp (Avail n1)         (Avail n2)     = n1 `stableNameCmp` n2
@@ -61,13 +64,14 @@ stableAvailCmp (Avail {})         (AvailTC {})   = LT
 stableAvailCmp (AvailTC n ns nfs) (AvailTC m ms mfs) =
     (n `stableNameCmp` m) `thenCmp`
     (cmpList stableNameCmp ns ms) `thenCmp`
-    (cmpList stableFieldLabelCmp nfs mfs)
+    (stableAvailFieldsCmp nfs mfs)
 stableAvailCmp (AvailTC {})       (Avail {})     = GT
 
-stableFieldLabelCmp :: FieldLabel -> FieldLabel -> Ordering
-stableFieldLabelCmp (FieldLabel occ sel _) (FieldLabel occ' sel' _)
-    = compare occ occ' `thenCmp` stableNameCmp sel sel'
-
+stableAvailFieldsCmp :: AvailFields -> AvailFields -> Ordering
+stableAvailFieldsCmp (NonOverloaded xs) (NonOverloaded ys) = cmpList stableNameCmp xs ys
+stableAvailFieldsCmp (NonOverloaded {}) (Overloaded {})    = LT
+stableAvailFieldsCmp (Overloaded xs)    (Overloaded ys)    = compare xs ys
+stableAvailFieldsCmp (Overloaded {})    (NonOverloaded {}) = GT
 
 -- -----------------------------------------------------------------------------
 -- Operations on AvailInfo
@@ -89,8 +93,9 @@ availName (AvailTC n _ _) = n
 
 -- | All names made available by the availability information
 availNames :: AvailInfo -> [Name]
-availNames (Avail n)         = [n]
-availNames (AvailTC _ ns fs) = ns ++ map flSelector fs
+availNames (Avail n)                         = [n]
+availNames (AvailTC _ ns (NonOverloaded fs)) = ns ++ fs
+availNames (AvailTC _ ns (Overloaded _))     = ns
 
 -- | Names for non-fields made available by the availability information
 availNonFldNames :: AvailInfo -> [Name]
@@ -98,36 +103,29 @@ availNonFldNames (Avail n)        = [n]
 availNonFldNames (AvailTC _ ns _) = ns
 
 -- | Fields made available by the availability information
-availFlds :: AvailInfo -> [FieldLabel]
+availFlds :: AvailInfo -> AvailFields
 availFlds (AvailTC _ _ fs) = fs
-availFlds _                = []
+availFlds _                = NonOverloaded []
 
--- | make a 'GlobalRdrEnv' where all the elements point to the same
--- Provenance (useful for "hiding" imports, or imports with
--- no details).
-gresFromAvails :: Provenance -> [AvailInfo] -> [GlobalRdrElt]
-gresFromAvails prov avails
-  = concatMap (gresFromAvail (const prov) (const prov)) avails
+-- | Fields made available by the availability information
+availOverloadedFlds :: AvailInfo -> [OccName]
+availOverloadedFlds (AvailTC _ _ (Overloaded fs)) = fs
+availOverloadedFlds _                             = []
 
-gresFromAvail :: (Name -> Provenance) -> (FieldLabel -> Provenance) ->
-                     AvailInfo -> [GlobalRdrElt]
-gresFromAvail prov_fn prov_fld avail
-  = [ GRE {gre_name = flSelector fl,
-           gre_par = fldParent fl avail,
-           gre_prov = prov_fld fl}
-    | fl <- availFlds avail ]
-    ++
-    [ GRE {gre_name = n,
-           gre_par = parent n avail,
-           gre_prov = prov_fn n}
-    | n <- availNonFldNames avail ]
-  where
-    parent _ (Avail _)                                 = NoParent
-    parent n (AvailTC m _ _) | n == m                  = NoParent
-                             | otherwise               = ParentIs m
+-- -----------------------------------------------------------------------------
+-- Operations on AvailFields
 
-    fldParent fl (AvailTC p _ _)  = FldParent p (flOccName fl) (flInstances fl)
-    fldParent _   _               = panic "gresFromAvail/fldParent"
+nullAvailFields :: AvailFields -> Bool
+nullAvailFields (NonOverloaded xs) = null xs
+nullAvailFields (Overloaded xs)    = null xs
+
+availFieldsOccs :: AvailFields -> [OccName]
+availFieldsOccs (NonOverloaded xs) = map nameOccName xs
+availFieldsOccs (Overloaded xs)    = xs
+
+isOverloaded :: AvailFields -> Bool
+isOverloaded (NonOverloaded _) = False
+isOverloaded (Overloaded _)    = True
 
 -- -----------------------------------------------------------------------------
 -- Printing
@@ -137,7 +135,14 @@ instance Outputable AvailInfo where
 
 pprAvail :: AvailInfo -> SDoc
 pprAvail (Avail n)          = ppr n
-pprAvail (AvailTC n ns nfs) = ppr n <> braces (hsep (punctuate comma (map ppr ns ++ map ppr nfs)))
+pprAvail (AvailTC n ns nfs) = ppr n <> braces (hsep (punctuate comma (map ppr ns ++ pprAvailFields nfs)))
+
+instance Outputable n => Outputable (AvailFlds n) where
+    ppr flds = braces $ hsep $ punctuate comma $ pprAvailFields flds
+
+pprAvailFields :: Outputable n => AvailFlds n -> [SDoc]
+pprAvailFields (Overloaded xs)    = map ppr xs
+pprAvailFields (NonOverloaded xs) = map ppr xs
 
 instance Binary AvailInfo where
     put_ bh (Avail aa) = do
@@ -158,3 +163,17 @@ instance Binary AvailInfo where
                       ad <- get bh
                       return (AvailTC ab ac ad)
 
+instance Binary n => Binary (AvailFlds n) where
+    put_ bh (NonOverloaded xs) = do
+        putByte bh 0
+        put_ bh xs
+    put_ bh (Overloaded xs) = do
+        putByte bh 1
+        put_ bh xs
+    get bh = do
+        h <- getByte bh
+        case h of
+            0 -> do xs <- get bh
+                    return (NonOverloaded xs)
+            _ -> do xs <- get bh
+                    return (Overloaded xs)

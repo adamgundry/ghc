@@ -44,7 +44,7 @@ import TcIface
 import LoadIface
 import Finder
 import PrelNames
-import Avail
+import RnNames
 import RdrName
 import HscTypes
 import Bag
@@ -301,7 +301,7 @@ loadModule doc mod
        { iface <- loadInterface doc mod ImportBySystem
        ; case iface of
            Failed err      -> pprPanic "DsMonad.loadModule: failed to load" (err $$ doc)
-           Succeeded iface -> return $ mkGlobalRdrEnv . gresFromAvails prov . mi_exports $ iface
+           Succeeded iface -> fmap mkGlobalRdrEnv $ gresFromAvails prov $ mi_exports iface
        } }
   where
     prov     = Imported [ImpSpec { is_decl = imp_spec, is_item = ImpAll }]
