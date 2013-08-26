@@ -61,7 +61,7 @@ import SrcLoc
 import FastString
 import Literal             ( inCharRange )
 import TysWiredIn          ( nilDataCon )
-import DataCon             ( dataConName )
+import DataCon
 import Control.Monad       ( when, liftM, ap )
 import Data.Ratio
 import TyCon

@@ -41,6 +41,7 @@ import Name
 import SrcLoc
 import NameSet
 import TyCon
+import DataCon
 
 import Util
 import BasicTypes       ( compareFixity, funTyFixity, negateFixity,

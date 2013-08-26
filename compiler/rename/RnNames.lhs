@@ -28,7 +28,7 @@ import NameEnv
 import NameSet
 import Avail
 import Type
-import TyCon
+import DataCon
 import HscTypes
 import RdrName
 import Outputable
@@ -38,7 +38,6 @@ import ErrUtils
 import Util
 import FastString
 import ListSetOps
-import BasicTypes       ( FldInsts(..) )
 
 import Control.Monad
 import Data.Map         ( Map )

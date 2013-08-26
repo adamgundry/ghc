@@ -86,8 +86,8 @@ import HscTypes
 import TcEvidence
 import Type
 import Class    ( Class )
-import TyCon    ( TyCon, FieldLabel )
-import DataCon  ( DataCon, dataConUserType )
+import TyCon    ( TyCon )
+import DataCon  ( DataCon, FieldLabel, dataConUserType )
 import TcType
 import Annotations
 import InstEnv

@@ -34,6 +34,7 @@ import NameSet
 import NameEnv
 import Avail
 import TyCon
+import DataCon
 import Outputable
 import Bag
 import BasicTypes       ( RuleName )

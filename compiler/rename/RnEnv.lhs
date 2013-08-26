@@ -59,8 +59,8 @@ import NameEnv
 import Avail
 import Module
 import UniqFM
-import DataCon          ( dataConFieldLabels, dataConTyCon )
-import TyCon            ( TyCon, FieldLbl(..), FieldLabel, isTupleTyCon, tyConArity )
+import DataCon          ( FieldLabel, dataConFieldLabels, dataConTyCon )
+import TyCon            ( TyCon, isTupleTyCon, tyConArity )
 import PrelNames        ( mkUnboundName, isUnboundName, rOOT_MAIN, forall_tv_RDR )
 import ErrUtils         ( MsgDoc )
 import BasicTypes       ( Fixity(..), FixityDirection(..), minPrecedence )

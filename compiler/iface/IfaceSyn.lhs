@@ -42,6 +42,7 @@ import Demand
 import Annotations
 import Class
 import TyCon
+import DataCon
 import NameSet
 import CoAxiom ( BranchIndex, Role )
 import Name
