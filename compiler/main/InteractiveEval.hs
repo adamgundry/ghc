@@ -56,6 +56,8 @@ import Name             hiding ( varName )
 import NameSet
 import Avail
 import RdrName
+import RnNames
+import TcRnMonad
 import VarSet
 import VarEnv
 import ByteCodeInstr
@@ -849,9 +851,9 @@ findGlobalRdrEnv hsc_env imports
       Left err -> Left (mod, err)
       Right env -> Right env
 
-availsToGlobalRdrEnv :: ModuleName -> [AvailInfo] -> GlobalRdrEnv
+availsToGlobalRdrEnv :: ModuleName -> [AvailInfo] -> TcRnIf a b GlobalRdrEnv
 availsToGlobalRdrEnv mod_name avails
-  = mkGlobalRdrEnv (gresFromAvails imp_prov avails)
+  = fmap mkGlobalRdrEnv $ gresFromAvails imp_prov avails
   where
       -- We're building a GlobalRdrEnv as if the user imported
       -- all the specified modules into the global interactive module
