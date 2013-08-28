@@ -24,6 +24,8 @@ import Binary
 import Outputable
 import Util
 
+import Data.Function
+
 -- -----------------------------------------------------------------------------
 -- The AvailInfo type
 
@@ -51,7 +53,7 @@ data AvailInfo = Avail Name      -- ^ An ordinary identifier in scope
 type Avails = [AvailInfo]
 
 -- | Record fields in an 'AvailInfo'
-data AvailFlds name = NonOverloaded [name] | Overloaded [OccName]
+data AvailFlds name = NonOverloaded [name] | Overloaded [(OccName, name)]
   deriving Eq
 
 type AvailFields = AvailFlds Name
@@ -70,7 +72,7 @@ stableAvailCmp (AvailTC {})       (Avail {})     = GT
 stableAvailFieldsCmp :: AvailFields -> AvailFields -> Ordering
 stableAvailFieldsCmp (NonOverloaded xs) (NonOverloaded ys) = cmpList stableNameCmp xs ys
 stableAvailFieldsCmp (NonOverloaded {}) (Overloaded {})    = LT
-stableAvailFieldsCmp (Overloaded xs)    (Overloaded ys)    = compare xs ys
+stableAvailFieldsCmp (Overloaded xs)    (Overloaded ys)    = cmpList (stableNameCmp `on` snd) xs ys
 stableAvailFieldsCmp (Overloaded {})    (NonOverloaded {}) = GT
 
 -- -----------------------------------------------------------------------------
@@ -108,7 +110,7 @@ availFlds (AvailTC _ _ fs) = fs
 availFlds _                = NonOverloaded []
 
 -- | Fields made available by the availability information
-availOverloadedFlds :: AvailInfo -> [OccName]
+availOverloadedFlds :: AvailInfo -> [(OccName, Name)]
 availOverloadedFlds (AvailTC _ _ (Overloaded fs)) = fs
 availOverloadedFlds _                             = []
 
@@ -121,7 +123,7 @@ nullAvailFields (Overloaded xs)    = null xs
 
 availFieldsOccs :: AvailFields -> [OccName]
 availFieldsOccs (NonOverloaded xs) = map nameOccName xs
-availFieldsOccs (Overloaded xs)    = xs
+availFieldsOccs (Overloaded xs)    = map fst xs
 
 isOverloaded :: AvailFields -> Bool
 isOverloaded (NonOverloaded _) = False

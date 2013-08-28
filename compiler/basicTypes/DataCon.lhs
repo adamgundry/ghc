@@ -19,7 +19,8 @@ module DataCon (
 
         -- ** Field labels
         FieldLbl(..), FieldLabel, FldInsts(..),
-	
+        isOverloadedFieldLabel, fieldLabelsToAvailFields,
+
 	-- ** Type construction
 	mkDataCon, fIRST_TAG,
         buildAlgTyCon, 
@@ -78,6 +79,7 @@ import Module
 import VarEnv
 import NameEnv
 import Binary
+import Avail
 
 import Control.Applicative ( (<$>), (<*>) )
 import qualified Data.Data as Data
@@ -1179,6 +1181,16 @@ data FieldLbl a = FieldLabel {
   deriving (Eq, Ord)
 
 type FieldLabel = FieldLbl Name
+
+isOverloadedFieldLabel :: FieldLabel -> Bool
+isOverloadedFieldLabel fl = flOccName fl /= nameOccName (flSelector fl)
+
+fieldLabelsToAvailFields :: [FieldLabel] -> AvailFields
+fieldLabelsToAvailFields [] = NonOverloaded []
+fieldLabelsToAvailFields fls@(fl:_)
+    | isOverloadedFieldLabel fl = Overloaded (map (\ fl -> (flOccName fl, flSelector fl)) fls)
+    | otherwise                 = NonOverloaded (map flSelector fls)
+
 
 instance Functor FieldLbl where
     fmap = fmapDefault

@@ -1514,15 +1514,10 @@ tyThingAvailInfo (ATyCon t)
                                  ++ map getName (classATs c))
                              (NonOverloaded [])
              where n = getName c
-        Nothing -> AvailTC n (n : map getName dcs) flds'
+        Nothing -> AvailTC n (n : map getName dcs) (fieldLabelsToAvailFields flds)
              where n = getName t
                    dcs = tyConDataCons t
                    flds = concatMap dataConFieldLabels dcs
-                   flds' = case flds of
-                       []     -> NonOverloaded []
-                       fls@(fl:_) | flOccName fl == nameOccName (flSelector fl)
-                                      -> NonOverloaded (map flSelector fls)
-                                  | otherwise -> Overloaded (map flOccName fls)
 tyThingAvailInfo t
    = Avail (getName t)
 

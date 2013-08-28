@@ -561,7 +561,7 @@ getLocalNonValBinders fixity_env
         = do { let (bndrs, flds) = hsTyClDeclBinders (unLoc tc_decl)
              ; names@(main_name : _) <- mapM newTopSrcBinder bndrs
              ; flds' <- mapM (new_rec_sel overload_ok (nameOccName main_name) . fstOf3) flds
-             ; return (AvailTC main_name names (toAvailFields overload_ok flds'), flds') }
+             ; return (AvailTC main_name names (fieldLabelsToAvailFields flds'), flds') }
 
     new_rec_sel :: Bool -> OccName -> Located RdrName -> RnM FieldLabel
     new_rec_sel overload_ok tc (L loc fld) =
@@ -600,12 +600,8 @@ getLocalNonValBinders fixity_env
              ; let (bndrs, flds) = hsDataFamInstBinders ti_decl
              ; sub_names <- mapM newTopSrcBinder bndrs
              ; flds' <- mapM (new_rec_sel overload_ok (nameOccName $ unLoc main_name) . fstOf3) flds
-             ; return (AvailTC (unLoc main_name) sub_names (toAvailFields overload_ok flds'), flds') }
+             ; return (AvailTC (unLoc main_name) sub_names (fieldLabelsToAvailFields flds'), flds') }
                         -- main_name is not bound here!
-
-    toAvailFields :: Bool -> [FieldLabel] -> AvailFields
-    toAvailFields overload_ok fls | overload_ok = Overloaded (map flOccName fls)
-                                  | otherwise   = NonOverloaded (map flSelector fls)
 \end{code}
 
 Note [Looking up family names in family instances]
@@ -851,7 +847,7 @@ greExportAvail gre
   = case gre_par gre of
       ParentIs p                -> AvailTC p [me] (NonOverloaded [])
       FldParent p f | nameOccName me == f -> AvailTC p [] (NonOverloaded [me])
-                    | otherwise           -> AvailTC p [] (Overloaded [f])
+                    | otherwise           -> AvailTC p [] (Overloaded [(f, me)])
       NoParent   | isTyConName me -> AvailTC me [me] (NonOverloaded [])
                  | otherwise      -> Avail   me
   where
@@ -935,11 +931,10 @@ gresFromAvail prov_fn prov_fld avail
             , gre_par  = FldParent (availName avail) (nameOccName n)
             , gre_prov = prov_fld (nameOccName n) }
 
-    greFromOverloadedFld lbl
-      = do { sel <- lookupOrig mod (mkRecSelOcc lbl (nameOccName (availName avail)))
-           ; return (GRE { gre_name = sel
-                         , gre_par  = FldParent (availName avail) lbl
-                         , gre_prov = prov_fld lbl }) }
+    greFromOverloadedFld (lbl, sel)
+      = return (GRE { gre_name = sel
+                    , gre_par  = FldParent (availName avail) lbl
+                    , gre_prov = prov_fld lbl })
 
     parent n = case avail of
                  Avail _                   -> NoParent
@@ -968,12 +963,12 @@ gresFromIE decl_spec (L loc ie, avail)
           item_spec = ImpSome { is_explicit = is_explicit_fld, is_iloc = loc }
 
 
-data ChildName = NonFldChild Name | FldChild Name | OverloadedFldChild OccName
+data ChildName = NonFldChild Name | FldChild Name | OverloadedFldChild (OccName, Name)
 
 childOccName :: ChildName -> OccName
-childOccName (NonFldChild n)          = nameOccName n
-childOccName (FldChild n)             = nameOccName n
-childOccName (OverloadedFldChild occ) = occ
+childOccName (NonFldChild n)               = nameOccName n
+childOccName (FldChild n)                  = nameOccName n
+childOccName (OverloadedFldChild (occ, _)) = occ
 
 
 mkChildEnv :: [GlobalRdrElt] -> NameEnv [ChildName]
@@ -983,7 +978,7 @@ mkChildEnv gres = foldr add emptyNameEnv gres
       = extendNameEnv_Acc (:) singleton env p (NonFldChild n)
     add (GRE { gre_name = n, gre_par = FldParent p f}) env
       | nameOccName n == f = extendNameEnv_Acc (:) singleton env p (FldChild n)
-      | otherwise          = extendNameEnv_Acc (:) singleton env p (OverloadedFldChild f)
+      | otherwise          = extendNameEnv_Acc (:) singleton env p (OverloadedFldChild (f, n))
     add _ env = env
 
 findChildren :: NameEnv [ChildName] -> Name -> [ChildName]
@@ -1418,7 +1413,7 @@ reportUnusedNames _export_decls gbl_env
       where
         used_child (NonFldChild n)        = n `elemNameSet` used_names
         used_child (FldChild n)           = n `elemNameSet` used_names
-        used_child (OverloadedFldChild f) = False -- AMG TODO: not really
+        used_child (OverloadedFldChild (_, n)) = n `elemNameSet` used_names
 
     -- Filter out the ones that are
     --  (a) defined in this module, and
@@ -1677,7 +1672,7 @@ printMinimalImports imports_w_usage
                 | otherwise   -> [IEThingWith n (filter (/= n) ns) fld_occs]
            _other -> case fs of -- Note [Overloaded field import]
                       NonOverloaded ys -> map IEVar (ns ++ ys)
-                      Overloaded    zs -> [IEThingWith n (filter (/= n) ns) zs]
+                      Overloaded    zs -> [IEThingWith n (filter (/= n) ns) (map fst zs)]
         where
           fld_occs = availFieldsOccs fs
 

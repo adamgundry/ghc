@@ -928,27 +928,25 @@ lookupQualifiedName_overloaded rdr_name
                   name  <- availNames avail,
                   nameOccName name == occ ] of
               (n:ns) -> ASSERT(null ns) return (Just (Left n))
-              _ -> case [ (availName avail, fl)
+              _ -> case [ (availName avail, fl, sel)
                         | avail <- mi_exports iface,
-                          fl <- availOverloadedFlds avail,
+                          (fl, sel) <- availOverloadedFlds avail,
                           fl == occ ] of
-                       []           -> do { traceRn (text "lookupQualified overloaded" <+> ppr rdr_name)
-                                          ; return Nothing }
-                       ((p, fl):xs) -> do { sel <- lookupOrig (nameModule p)
-                                                       (mkRecSelOcc fl (nameOccName p))
-                                          ; when (not (null xs)) $
-                                                addNameClashErrRn rdr_name (map (toFakeGRE mod) ((p,fl):xs))
-                                          ; return (Just (Right (occ, [(p, sel)]))) } }
+                       [] -> do { traceRn (text "lookupQualified overloaded" <+> ppr rdr_name)
+                                ; return Nothing }
+                       xs@((p, fl, sel):ys)
+                          -> do { when (not (null ys)) $
+                                      addNameClashErrRn rdr_name (map (toFakeGRE mod) xs)
+                                ; return (Just (Right (occ, [(p, sel)]))) } }
   | otherwise
   = pprPanic "RnEnv.lookupQualifiedName_overloaded" (ppr rdr_name)
   where
     doc = ptext (sLit "Need to find") <+> ppr rdr_name
 
-    -- Make up a fake GRE solely for error-reporting purposes: the
-    -- selector name is bogus but we'll only look at its module.
-    toFakeGRE mod (p, lbl) = GRE { gre_name = p
-                                 , gre_par  = FldParent p lbl
-                                 , gre_prov = Imported [imp_spec] }
+    -- Make up a fake GRE solely for error-reporting purposes.
+    toFakeGRE mod (p, lbl, sel) = GRE { gre_name = sel
+                                      , gre_par  = FldParent p lbl
+                                      , gre_prov = Imported [imp_spec] }
       where imp_spec = ImpSpec (ImpDeclSpec mod mod True noSrcSpan) ImpAll
 \end{code}
 
