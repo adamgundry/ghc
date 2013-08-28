@@ -117,8 +117,8 @@ rnExpr (HsVar v)
            Just (Right (fld, xs)) ->
                do { overloaded <- xoptM Opt_OverloadedRecordFields
                   ; if overloaded
-                    then do { whenWOptM Opt_WarnQualifiedOverloadedRecordFields $
-                                  warnTc (isQual v) (qualifiedOverloadedRecordField v)
+                    then do { when (isQual v && length xs > 1) $
+                                  addErrTc $ qualifiedOverloadedRecordField v
                             ; return (HsOverloadedRecFld fld, emptyFVs) }
                     else case xs of
                          [(_, name)] -> return (HsSingleRecFld v name, unitFV name)
