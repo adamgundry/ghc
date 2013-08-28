@@ -30,6 +30,8 @@ import TyCon
 import DataCon
 import TcEvidence
 import TysWiredIn       ( coercibleClass )
+import RnEnv
+import RdrName
 import Name
 import RdrName          ( lookupGRE_Name )
 import Id 
@@ -936,8 +938,7 @@ mk_dict_err ctxt (ct, (matches, unifiers, safe_haskell))
   | null matches  -- No matches but perhaps several unifiers
   = do { let (is_ambig, ambig_msg) = mkAmbigMsg ct
        ; (ctxt, binds_msg) <- relevantBindings True ctxt ct
-       ; overloaded <- xoptM Opt_OverloadedRecordFields
-       ; let records_msg = mkRecordsMsg overloaded
+       ; records_msg <- mkRecordsMsg
        ; traceTc "mk_dict_err" (ppr ct $$ ppr is_ambig $$ ambig_msg $$ records_msg)
        ; safe_mod <- safeLanguageOn `fmap` getDynFlags
        ; rdr_env <- getGlobalRdrEnv
@@ -1145,13 +1146,21 @@ mk_dict_err ctxt (ct, (matches, unifiers, safe_haskell))
             ]
         | otherwise = Nothing
 
-    mkRecordsMsg overloaded
-      | isRecordsClass clas, not overloaded = suggest_overloaded
-      | isRecordsClass clas, Just tc <- tyConAppTyCon_maybe r, LitTy (StrTyLit lbl) <- f
-          = case find ((== lbl) . occNameFS . flOccName) (tyConFieldLabels tc) of
-              Just _  -> unsuitable_field_type lbl tc
-              Nothing -> missing_field lbl tc
-      | otherwise = empty
+    mkRecordsMsg
+      | isRecordsClass clas
+          = do { overloaded <- xoptM Opt_OverloadedRecordFields
+               ; if not overloaded
+                 then return suggest_overloaded
+                 else case (tyConAppTyCon_maybe r, isStrLitTy f) of
+                        (Just tc, Just lbl) ->
+                            case find ((== lbl) . occNameFS . flOccName) (tyConFieldLabels tc) of
+                              Nothing -> return $ missing_field lbl tc
+                              Just _  -> do { sel <- lookupSelector (mkVarOccFS lbl) (tyConName tc)
+                                            ; case sel of
+                                                Nothing -> return $ not_in_scope lbl tc
+                                                Just _  -> return $ unsuitable_field_type lbl tc }
+                        _ -> return empty }
+      | otherwise = return empty
       where
         [r, f, _] = tys
         suggest_overloaded = ptext $ sLit "Perhaps you should enable -XOverloadedRecordFields?"
@@ -1163,6 +1172,10 @@ mk_dict_err ctxt (ct, (matches, unifiers, safe_haskell))
         missing_field lbl tc
           = ptext (sLit "The type") <+> quotes (ppr (tyConName tc))
             <+> ptext (sLit "does not have a field") <+> quotes (ppr lbl)
+        not_in_scope lbl tc
+          = ptext (sLit "The field") <+> quotes (ppr lbl)
+                <+> ptext (sLit "of") <+> quotes (ppr (tyConName tc))
+                <+> ptext (sLit "is not in scope")
 
 show_fixes :: [SDoc] -> SDoc
 show_fixes []     = empty

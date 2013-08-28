@@ -20,7 +20,7 @@ module RnEnv (
         lookupInstDeclBndr, lookupSubBndrOcc, lookupFamInstName,
         greRdrName,
         lookupSubBndrGREs, lookupConstructorFields,
-        lookupRecFldInstNames,
+        lookupRecFldInstNames, lookupSelector,
         lookupSyntaxName, lookupSyntaxNames, lookupIfThenElse,
         lookupGreRn, lookupGreRn_maybe,
         lookupGlobalOccInThisModule, lookupGreLocalRn_maybe, 
@@ -335,6 +335,13 @@ lookupRecFldInstNames :: Module -> OccName -> OccName -> TcM (FldInsts Name)
 lookupRecFldInstNames mod lbl tc = traverse (lookupOrig mod) fis
   where
     (_, fis) = mkOverloadedRecFldOccs lbl tc
+
+lookupSelector :: OccName -> Name -> RnM (Maybe Name)
+lookupSelector lbl tc
+  = do { env <- getGblEnv
+       ; case lookupSubBndrGREs (tcg_rdr_env env) (ParentIs tc) (mkRdrUnqual lbl) of
+           []      -> return Nothing
+           (gre:_) -> return $ Just (gre_name gre) }
 
 -----------------------------------------------
 -- Used for record construction and pattern matching
