@@ -11,7 +11,7 @@ The @FamInst@ type: family instance heads
 
 module FamInst ( 
         checkFamInstConsistency, tcExtendLocalFamInstEnv,
-        tcLookupFamInst, tcLookupFldInstEnv,
+        tcLookupFamInst, lookupRecFldInsts,
         tcGetFamInstEnvs,
         newFamInst,
         TcBuiltInSynFamily(..), trivialBuiltInFamily
@@ -225,44 +225,43 @@ then we have a coercion (ie, type instance of family instance coercion)
 which implies that :R42T was declared as 'data instance T [a]'.
 
 \begin{code}
-tcLookupFldInstEnv :: Name -> TcM (Maybe (DFunId, DFunId, FamInst, FamInst))
-tcLookupFldInstEnv sel_name
-  = do { env <- getGblEnv
-       ; pprTrace "AMG tcLookupFldInstEnv" (ppr sel_name) $
-         return $ lookupNameEnv (tcg_fld_inst_env env) sel_name }
+lookupRecFldInsts :: FastString -> TyCon -> ((DFunId, DFunId, FamInst, FamInst) -> a)
+                         -> (FldInsts Name -> TcM (Maybe a)) -> TcM (Maybe a)
+lookupRecFldInsts lbl tc proj look
+  = do { gbl_env <- getGblEnv
+       ; case lookupSubBndrGREs (tcg_rdr_env gbl_env) parent lbl_rdr of
+           []        -> return Nothing
+           (gre : _) ->
+             let sel_name     = gre_name gre
+                 mb_fld_insts = lookupNameEnv (tcg_fld_inst_env gbl_env) sel_name
+             in case mb_fld_insts of
+                  Just xs -> return $ Just (proj xs)
+                  Nothing -> do { rep_tc <- tcLookupRepTyCon tc sel_name
+                                ; fis    <- lookupRecFldInstNames (mod rep_tc) lbl_occ tc_occ
+                                ; look fis } }
+  where
+    parent  = ParentIs (tyConName tc)
+    lbl_occ = mkVarOccFS lbl
+    lbl_rdr = mkRdrUnqual lbl_occ
+    tc_occ  = getOccName tc
+    mod tc  = nameModule (tyConName tc)
 
 
 lookupRecFldFamInst :: TyCon -> FastString -> TyCon -> [Type] -> TcM (Maybe FamInstMatch)
 lookupRecFldFamInst fam lbl tc tys
-  = do { gbl_env <- getGblEnv
-       ; case lookupSubBndrGREs (tcg_rdr_env gbl_env) (ParentIs (tyConName tc)) (mkVarUnqual lbl) of
-           [] -> pprTrace "AMG miss fam" (ppr tc <+> ppr lbl $$
-                                         ppr (tcg_rdr_env gbl_env)) $ return Nothing
-           gres@(GRE { gre_name = sel_name } : _) -> do {
-       ; mb_fld_insts <- pprTrace "AMG gres" (ppr gres) $ tcLookupFldInstEnv sel_name
-       ; mb_fam_inst <- case mb_fld_insts of
-           Just (_, _, get, set) | is_get    -> return $ Just get
-                                 | otherwise -> return $ Just set
-           Nothing -> do { rep_tc <- if isDataFamilyTyCon tc
-                                     then do { sel_id <- tcLookupId sel_name
-                                             ; ASSERT (isRecordSelector sel_id)
-                                               return (recordSelectorTyCon sel_id) }
-                                     else return tc
-                         ; fis  <- lookupRecFldInstNames (mod rep_tc) (mkVarOccFS lbl) (getOccName tc)
-                         ; let ax_name | is_get    = fldInstsGetResult fis
-                                       | otherwise = fldInstsSetResult fis
-                         ; (err, mb_fam_inst) <- tryTc $ fmap (fam_inst_for . toUnbranchedAxiom) $ tcLookupAxiom ax_name
-                         ; pprTrace "AMG err fam" (vcat $ pprErrMsgBag $ snd err) $
-                           return mb_fam_inst }
-       ; case mb_fam_inst of
-           Just fam_inst -> case tcMatchTys (mkVarSet (fi_tvs fam_inst)) (fi_tys fam_inst) tys of
-                              Just subst -> return $ Just $ FamInstMatch fam_inst (substTyVars subst (fi_tvs fam_inst))
-                              Nothing    -> pprTrace "AMG ook fam" (ppr fam_inst $$ ppr tys) $ return Nothing
-           Nothing -> pprTrace "AMG nope fam" (ppr tc <+> ppr lbl <+> ppr sel_name <+> ppr mb_fld_insts) $ return Nothing } }
+  = do { mb_fam_inst <- lookupRecFldInsts lbl tc get_or_set look
+       ; return $ do { fam_inst <- mb_fam_inst
+                     ; subst <- tcMatchTys (mkVarSet (fi_tvs fam_inst)) (fi_tys fam_inst) tys
+                     ; return $ FamInstMatch fam_inst (substTyVars subst (fi_tvs fam_inst)) } }
   where
-    my_fam_inst ax_name fam_inst = coAxiomName (fi_axiom fam_inst) == ax_name
-    mod tc = nameModule (tyConName tc)
     is_get = fam `hasKey` getResultFamNameKey
+    get_or_set (_, _, get, set) | is_get    = get
+                                | otherwise = set
+    get_or_set_fis | is_get    = fldInstsGetResult
+                   | otherwise = fldInstsSetResult
+
+    look fis = fmap (fmap (fam_inst_for . toUnbranchedAxiom) . snd) $
+                   tryTc $ tcLookupAxiom (get_or_set_fis fis)
 
     fam_inst_for axiom | is_get    = mkImportedFamInst getResultFamName
                                          [Just (tyConName tc), Nothing] axiom

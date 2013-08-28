@@ -1799,42 +1799,30 @@ matchClassInst inerts clas tys@[r, f, t] loc
   | isRecordsClass clas
   , Just lbl <- isStrLitTy f
   , Just (tc, _) <- splitTyConApp_maybe r
-    = do { gbl_env <- getGblEnv
-         ; case lookupSubBndrGREs (tcg_rdr_env gbl_env) (ParentIs (tyConName tc)) (mkVarUnqual lbl) of
-              [] -> pprTrace "AMG miss" (ppr tc <+> ppr lbl $$ ppr (tcg_rdr_env gbl_env)) $ return NoInstance
-              gres@(GRE { gre_name = sel_name } : _) -> do {
-         ; mb_fld_insts <- pprTrace "AMG gres" (ppr gres) $ tcLookupFldInstEnv sel_name
-         ; mb_dfun <- case mb_fld_insts of
-               Just (has, upd, _, _) | is_has    -> return $ Just has
-                                     | otherwise -> return $ Just upd
-               Nothing -> do { rep_tc <- if isDataFamilyTyCon tc
-                                         then do { sel_id <- wrapWarnTcS $ tcLookupId sel_name
-                                                 ; ASSERT (isRecordSelector sel_id)
-                                                          return (recordSelectorTyCon sel_id) }
-                                         else return tc
-                             ; fis <- wrapWarnTcS $ lookupRecFldInstNames (mod rep_tc) (mkVarOccFS lbl) (getOccName tc)
-                             ; let dfun_name = hasOrUpd fis
-                             ; (err, mb_dfun) <- wrapWarnTcS $ tryTc $ tcLookupId dfun_name
-                             ; pprTrace "AMG err" (vcat $ pprErrMsgBag $ snd err) $ return mb_dfun }
+    = do { mb_dfun <- lookupRecFldInsts lbl tc has_or_upd look
          ; case mb_dfun of
-             Just dfun -> do { let cls_inst = mkImportedInstance (className clas)
-                                                  [Just (tyConName tc), Nothing, Nothing]
-                                                  dfun (NoOverlap False)
-                             ; case tcMatchTys (mkVarSet (is_tvs cls_inst)) (is_tys cls_inst) tys of
-                                 Just subst -> let mb_inst_tys = map (lookup_tv subst) (is_tvs cls_inst)
-                                               in match_one dfun mb_inst_tys pred loc
-                                 Nothing -> pprTrace "AMG ook" (ppr cls_inst $$ ppr tys) $ return NoInstance }
-             Nothing   -> pprTrace "AMG nope" (ppr tys) $ return NoInstance } }
+             Nothing   -> return NoInstance
+             Just dfun ->
+                 let cls_inst = mkImportedInstance (className clas)
+                                    [Just (tyConName tc), Nothing, Nothing]
+                                    dfun (NoOverlap False)
+                 in case tcMatchTys (mkVarSet (is_tvs cls_inst)) (is_tys cls_inst) tys of
+                      Just subst -> let mb_inst_tys = map (lookup_tv subst) (is_tvs cls_inst)
+                                    in match_one dfun mb_inst_tys pred loc
+                      Nothing -> return NoInstance }
   where
     pred = mkClassPred clas tys
     mod tc = nameModule (tyConName tc)
     doc tc = ptext (sLit "field of") <+> ppr tc
     is_has = isHasClass clas
-    hasOrUpd | is_has    = fldInstsHas
-             | otherwise = fldInstsUpd
 
-    my_inst :: Name -> ClsInst -> Bool
-    my_inst dfun_name cls_inst = idName (is_dfun cls_inst) == dfun_name
+    has_or_upd (has, upd, _, _) | is_has    = has
+                                | otherwise = upd
+
+    has_or_upd_fis | is_has    = fldInstsHas
+                   | otherwise = fldInstsUpd
+
+    look fis = fmap snd $ tryTc $ tcLookupId (has_or_upd_fis fis)
 
     lookup_tv :: TvSubst -> TyVar -> DFunInstType
         -- See Note [DFunInstType: instantiating types] in InstEnv

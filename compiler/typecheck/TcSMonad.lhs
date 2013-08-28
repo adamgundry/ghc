@@ -60,7 +60,7 @@ module TcSMonad (
     getTopEnv, getGblEnv, getTcEvBinds, getUntouchables,
     getTcEvBindsMap, getTcSTyBinds, getTcSTyBindsMap,
 
-    tcLookupFldInstEnv,
+    lookupRecFldInsts,
 
 
     lookupFlatEqn, newFlattenSkolem,            -- Flatten skolems 
@@ -141,6 +141,7 @@ import Unique
 import UniqFM
 import Maybes ( orElse, catMaybes, firstJust )
 import Pair ( pSnd )
+import BasicTypes
 
 import Control.Monad( unless, when, zipWithM )
 import Data.IORef
@@ -1298,8 +1299,9 @@ getGblEnv = wrapTcS $ TcM.getGblEnv
 addUsedRdrNamesTcS :: [RdrName] -> TcS ()
 addUsedRdrNamesTcS names = wrapTcS  $ addUsedRdrNames names
 
-tcLookupFldInstEnv :: Name -> TcS (Maybe (DFunId, DFunId, FamInst, FamInst))
-tcLookupFldInstEnv n = wrapTcS $ FamInst.tcLookupFldInstEnv n
+lookupRecFldInsts :: FastString -> TyCon -> ((DFunId, DFunId, FamInst, FamInst) -> a)
+                         -> (FldInsts Name -> TcM (Maybe a)) -> TcS (Maybe a)
+lookupRecFldInsts lbl tc proj look = wrapTcS $ FamInst.lookupRecFldInsts lbl tc proj look
 
 -- Various smaller utilities [TODO, maybe will be absorbed in the instance matcher]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

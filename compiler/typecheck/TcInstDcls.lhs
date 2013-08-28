@@ -1623,12 +1623,8 @@ makeOverloadedRecFldInsts tycl_decls inst_decls
 makeRecFldInstsFor :: (OccName, Name, Name) -> TcM [(Name, FldInstDetails)]
 makeRecFldInstsFor (lbl, sel_name, tycon_name)
       = do { addUsedRdrNames [mkRdrUnqual (nameOccName sel_name)]
-           ; tc <- tcLookupTyCon tycon_name
-           ; rep_tc <- if isDataFamilyTyCon tc
-                       then do { sel_id <- tcLookupId sel_name
-                               ; ASSERT (isRecordSelector sel_id)
-                                     return (recordSelectorTyCon sel_id) }
-                       else return tc
+           ; tc     <- tcLookupTyCon tycon_name
+           ; rep_tc <- tcLookupRepTyCon tc sel_name
            ; let relevant_cons = filter (is_relevant_con lbl) (tyConDataCons rep_tc)
                  dc            = ASSERT (notNull relevant_cons) head relevant_cons
                  (fl, fld_ty0) = dataConFieldLabel dc lbl
