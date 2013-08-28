@@ -23,6 +23,14 @@ import FamInstEnv
 import FamInst(TcBuiltInSynFamily(..))
 import InstEnv( lookupInstEnv, instanceDFunId )
 
+import RnEnv
+import RdrName
+import TcEnv
+import DataCon
+import InstEnv
+import Id
+import TcRnMonad ( tryTc )
+
 import Var
 import TcType
 import PrelNames (singIClassName, ipClassNameKey )
@@ -34,6 +42,7 @@ import DataCon
 import Name
 import RdrName ( GlobalRdrEnv, lookupGRE_Name, mkRdrQual, is_as,
                  is_decl, Provenance(Imported), gre_prov )
+import ErrUtils
 import FunDeps
 
 import TcEvidence
@@ -59,6 +68,7 @@ import UniqFM
 import FastString ( sLit ) 
 import DynFlags
 import Util
+import Data.List
 \end{code}
 **********************************************************************
 *                                                                    * 
@@ -1785,6 +1795,53 @@ matchClassInst _ clas [ ty1, ty2 ] _
       traceTcS "matchClassInst returned" $ ppr ev
       return ev
 
+matchClassInst inerts clas tys@[r, f, t] loc
+  | isRecordsClass clas
+  , Just lbl <- isStrLitTy f
+  , Just (tc, _) <- splitTyConApp_maybe r
+    = do { gbl_env <- getGblEnv
+         ; case lookupSubBndrGREs (tcg_rdr_env gbl_env) (ParentIs (tyConName tc)) (mkVarUnqual lbl) of
+              [] -> pprTrace "AMG miss" (ppr tc <+> ppr lbl $$ ppr (tcg_rdr_env gbl_env)) $ return NoInstance
+              gres@(GRE { gre_name = sel_name } : _) -> do {
+         ; mb_fld_insts <- pprTrace "AMG gres" (ppr gres) $ tcLookupFldInstEnv sel_name
+         ; mb_dfun <- case mb_fld_insts of
+               Just (has, upd, _, _) | is_has    -> return $ Just has
+                                     | otherwise -> return $ Just upd
+               Nothing -> do { rep_tc <- if isDataFamilyTyCon tc
+                                         then do { sel_id <- wrapWarnTcS $ tcLookupId sel_name
+                                                 ; ASSERT (isRecordSelector sel_id)
+                                                          return (recordSelectorTyCon sel_id) }
+                                         else return tc
+                             ; fis <- wrapWarnTcS $ lookupRecFldInstNames (mod rep_tc) (mkVarOccFS lbl) (getOccName tc)
+                             ; let dfun_name = hasOrUpd fis
+                             ; (err, mb_dfun) <- wrapWarnTcS $ tryTc $ tcLookupId dfun_name
+                             ; pprTrace "AMG err" (vcat $ pprErrMsgBag $ snd err) $ return mb_dfun }
+         ; case mb_dfun of
+             Just dfun -> do { let cls_inst = mkImportedInstance (className clas)
+                                                  [Just (tyConName tc), Nothing, Nothing]
+                                                  dfun (NoOverlap False)
+                             ; case tcMatchTys (mkVarSet (is_tvs cls_inst)) (is_tys cls_inst) tys of
+                                 Just subst -> let mb_inst_tys = map (lookup_tv subst) (is_tvs cls_inst)
+                                               in match_one dfun mb_inst_tys pred loc
+                                 Nothing -> pprTrace "AMG ook" (ppr cls_inst $$ ppr tys) $ return NoInstance }
+             Nothing   -> pprTrace "AMG nope" (ppr tys) $ return NoInstance } }
+  where
+    pred = mkClassPred clas tys
+    mod tc = nameModule (tyConName tc)
+    doc tc = ptext (sLit "field of") <+> ppr tc
+    is_has = isHasClass clas
+    hasOrUpd | is_has    = fldInstsHas
+             | otherwise = fldInstsUpd
+
+    my_inst :: Name -> ClsInst -> Bool
+    my_inst dfun_name cls_inst = idName (is_dfun cls_inst) == dfun_name
+
+    lookup_tv :: TvSubst -> TyVar -> DFunInstType
+        -- See Note [DFunInstType: instantiating types] in InstEnv
+    lookup_tv subst tv = case lookupTyVar subst tv of
+                                Just ty -> Just ty
+                                Nothing -> Nothing
+
 matchClassInst inerts clas tys loc
    = do { dflags <- getDynFlags
         ; untch <- getUntouchables
@@ -1814,7 +1871,7 @@ matchClassInst inerts clas tys loc
                                 text "witness" <+> ppr dfun_id
                                                <+> ppr (idType dfun_id) ]
 				  -- Record that this dfun is needed
-                        ; match_one dfun_id inst_tys }
+                        ; match_one dfun_id inst_tys pred loc }
 
      	    (matches, _, _)    -- More than one matches 
                                -- Defer any reactions of a multitude
@@ -1825,21 +1882,6 @@ matchClassInst inerts clas tys loc
                         ; return NoInstance } }
    where 
      pred = mkClassPred clas tys 
-
-     match_one :: DFunId -> [Maybe TcType] -> TcS LookupInstResult
-                  -- See Note [DFunInstType: instantiating types] in InstEnv
-     match_one dfun_id mb_inst_tys
-       = do { checkWellStagedDFun pred dfun_id loc
-            ; (tys, dfun_phi) <- instDFunType dfun_id mb_inst_tys
-            ; let (theta, _) = tcSplitPhiTy dfun_phi
-            ; if null theta then
-                  return (GenInst [] (EvDFunApp dfun_id tys []))
-              else do
-            { evc_vars <- instDFunConstraints theta
-            ; let new_ev_vars = freshGoals evc_vars
-                      -- new_ev_vars are only the real new variables that can be emitted 
-                  dfun_app = EvDFunApp dfun_id tys (getEvTerms evc_vars)
-            ; return $ GenInst new_ev_vars dfun_app } }
 
      givens_for_this_clas :: Cts
      givens_for_this_clas 
@@ -1865,6 +1907,21 @@ matchClassInst inerts clas tys loc
        | otherwise = False -- No overlap with a solved, already been taken care of 
                            -- by the overlap check with the instance environment.
      matchable _tys ct = pprPanic "Expecting dictionary!" (ppr ct)
+
+match_one :: DFunId -> [Maybe TcType] -> PredType -> CtLoc -> TcS LookupInstResult
+                  -- See Note [DFunInstType: instantiating types] in InstEnv
+match_one dfun_id mb_inst_tys pred loc
+       = do { checkWellStagedDFun pred dfun_id loc
+            ; (tys, dfun_phi) <- instDFunType dfun_id mb_inst_tys
+            ; let (theta, _) = tcSplitPhiTy dfun_phi
+            ; if null theta then
+                  return (GenInst [] (EvDFunApp dfun_id tys []))
+              else do
+            { evc_vars <- instDFunConstraints theta
+            ; let new_ev_vars = freshGoals evc_vars
+                      -- new_ev_vars are only the real new variables that can be emitted
+                  dfun_app = EvDFunApp dfun_id tys (getEvTerms evc_vars)
+            ; return $ GenInst new_ev_vars dfun_app } }
 
 -- See Note [Coercible Instances]
 -- Changes to this logic should likely be reflected in coercible_msg in TcErrors.

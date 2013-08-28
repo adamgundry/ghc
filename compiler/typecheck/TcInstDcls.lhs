@@ -13,8 +13,7 @@ TcInstDecls: Typechecking instance declarations
 --     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
-module TcInstDcls ( tcInstDecls1, tcInstDecls2,
-                    addImportedRecFldInsts, makeImportedRecFldInsts ) where
+module TcInstDcls ( tcInstDecls1, tcInstDecls2, makeOverloadedRecFldInsts, FldInstDetails ) where
 
 #include "HsVersions.h"
 
@@ -54,7 +53,7 @@ import Pair
 import CoreUnfold ( mkDFunUnfolding )
 import CoreSyn    ( Expr(Var, Type), CoreExpr, mkTyApps, mkVarApps )
 import PrelNames
-import RnEnv      ( addUsedRdrNames )
+import RnEnv      ( addUsedRdrNames, lookupRecFldInstNames )
 import IfaceEnv
 
 import Bag
@@ -82,6 +81,7 @@ import qualified Data.ByteString as BS
 import Data.List
 import Data.Monoid ( mconcat )
 import Data.Traversable ( traverse )
+import MonadUtils
 \end{code}
 
 Typechecking instance declarations is done in two passes. The first
@@ -434,14 +434,10 @@ tcInstDecls1 tycl_decls inst_decls deriv_decls
        ; when (safeInferOn dflags) $
              mapM_ (\x -> when (typInstCheck x) recordUnsafeInfer) local_infos
 
-       -- Create overloaded record field instances
-       ; setGblEnv gbl_env $
-         addLocalRecFldInsts tycl_decls inst_decls $ \ fld_infos ->
-             do { env <- getGblEnv
-                ; return ( env
-                         , fld_infos ++ bagToList deriv_inst_info ++ local_infos
-                         , deriv_binds)
-    }}}
+       ; return ( gbl_env
+                , bagToList deriv_inst_info ++ local_infos
+                , deriv_binds)
+    }}
   where
     -- Separate the Typeable instances from the rest
     splitTypeable _   []     = ([],[])
@@ -481,24 +477,6 @@ addFamInsts fam_insts thing_inside
     axioms = map (toBranchedAxiom . famInstAxiom) fam_insts
     tycons = famInstsRepTyCons fam_insts
     things = map ATyCon tycons ++ map ACoAxiom axioms 
-
-addPrivateClsInsts :: [InstInfo Name] -> TcM a -> TcM a
--- See Note [Private instances]
-addPrivateClsInsts infos thing_inside
- = tcExtendPrivateInstEnv (map iSpec infos) thing_inside
-
-addPrivateTyFamInsts :: [FamInst] -> TcM a -> TcM a
--- See Note [Private instances]
-addPrivateTyFamInsts fam_insts thing_inside
-  = tcExtendPrivateFamInstEnv fam_insts $
-    tcExtendGlobalEnv things $
-    do { traceTc "addPrivateTyFamInsts" (pprFamInsts fam_insts)
-       ; tcg_env <- tcAddImplicits things
-       ; setGblEnv tcg_env thing_inside }
-  where
-    axioms = map (toBranchedAxiom . famInstAxiom) fam_insts
-    tycons = famInstsRepTyCons fam_insts
-    things = map ATyCon tycons ++ map ACoAxiom axioms
 \end{code}
 
 Note [Deriving inside TH brackets]
@@ -1573,27 +1551,27 @@ Note carefullly:
 %*                                                                      *
 %************************************************************************
 
-Note [Private instances]
-~~~~~~~~~~~~~~~~~~~~~~~~
-Overloaded record field class instances are created for each module
-separately, based on the fields in scope, and are never exported. This
-ensures that the instances in scope for a given module correspond
-exactly to the fields in scope in that module.  Note that while the
-instance declarations are not exported, the dfunids and axioms must be.
+Note [Instance scoping for OverloadedRecordFields]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The instances in scope for a given module correspond exactly to the
+fields in scope in that module. To achieve this, instances are not
+exported using the normal mechanism (extending tcg_insts and
+tcg_fam_insts). Instead, only the dfun ids and axioms are exported
+(via tcg_binds for dfuns, and tcg_fld_inst_env for axioms). Special
+code in the constraint solver handles Has and Upd constraints, and the
+GetResult and SetResult type families, looking up the relevant
+instances.
 
-To achieve this, the results of makeRecFldInsts should be added using
-addPrivateClsInsts and addPrivateTyFamInsts. The former extends the
-tcg_inst_env field of the TcGblEnv, but not the tcg_insts field, so
-the instances are available locally but will not appear in the
-module's interface. The latter extends tcg_fam_inst_env and
-tcg_priv_fis rather than tcg_fam_insts, which means the axiom will be
-exported but not the family instance.
+The tcg_fld_inst_env field of TcGblEnv (and likewise the
+mg_fld_inst_env field of ModGuts) stores a map from selector names to
+their DFunIds and FamInsts, for selectors defined in the current
+module. This is needed for two reasons:
 
-Why are private class instances are not tracked, but lists of private
-family instances are needed in TcGblEnv and ModGuts? DFuns are Ids, so
-they are exported via tcg_binds, but we need to make sure that
-tidyProgram doesn't throw away the CoAxioms corresponding to private
-family instances.
+ * While checking the instances, to solve superclass constraints
+   (since the instances are not yet in scope).
+
+ * In tidyProgram, so that the CoAxioms can be kept in the tidied
+   module, as otherwise only the contents of mg_fam_insts are kept.
 
 
 Note [Availability of type-changing update]
@@ -1629,73 +1607,21 @@ In general, a type variable can be changed provided:
 
 
 \begin{code}
--- Make instances from type and data instance declarations in the
--- module being compiled; these must all subsequently be typechecked
-addLocalRecFldInsts :: [LTyClDecl Name] -> [LInstDecl Name]
-                           -> ([InstInfo Name] -> TcM a) -> TcM a
-addLocalRecFldInsts tycl_decls inst_decls k
-  = do { (infos, fams) <- mconcat <$> mapM makeRecFldInsts flds'
-       ; overload_ok <- xoptM Opt_OverloadedRecordFields
-       ; if not overload_ok
-         then addPrivateClsInsts infos $
-                  addPrivateTyFamInsts fams $ k infos
-         else addPrivateClsInsts infos $
-                  addPrivateTyFamInsts fams $ k infos }
+type FldInstDetails = (InstInfo Name, InstInfo Name, FamInst, FamInst)
+
+-- Create and typecheck instances from datatype and data instance
+-- declarations in the module being compiled.
+makeOverloadedRecFldInsts :: [[LTyClDecl Name]] -> [LInstDecl Name]
+                           -> TcM (LHsBinds Id, TcGblEnv)
+makeOverloadedRecFldInsts tycl_decls inst_decls
+    = do { fld_insts <- concatMapM makeRecFldInstsFor flds'
+         ; tcFldInsts fld_insts }
   where
-    (_, flds) = hsTyClDeclsBinders [tycl_decls] inst_decls
+    (_, flds) = hsTyClDeclsBinders tycl_decls inst_decls
     flds'     = map (\ (x, y, z) -> (rdrNameOcc x, y, z)) flds
 
-addImportedRecFldInsts :: TcM TcGblEnv
-addImportedRecFldInsts
-  = do { (fld_cls_insts, fld_fams) <- makeImportedRecFldInsts
-       ; tcExtendPrivateInstEnv fld_cls_insts $
-         addPrivateTyFamInsts fld_fams $
-         getGblEnv }
-
--- Make instances for imported declarations by consulting the
--- GlobalRdrEnv for those in scope
-makeImportedRecFldInsts :: TcM ([ClsInst], [FamInst])
-makeImportedRecFldInsts
-  = do { overload_ok <- xoptM Opt_OverloadedRecordFields
-       ; gbl_env     <- getGblEnv
-       ; if not overload_ok
-         then return ([], [])
-         else mconcat <$> mapM acquireRecFldInsts (gres_of gbl_env) }
-  where
-    gres_of gbl_env = concat (occEnvElts (tcg_rdr_env gbl_env))
-
-acquireRecFldInsts :: GlobalRdrElt -> TcM ([ClsInst], [FamInst])
-acquireRecFldInsts gre@(GRE{ gre_par = FldParent tycon_name lbl})
-    | not (isLocalGRE gre) = lookupRecFldInsts lbl tycon_name
-acquireRecFldInsts _ = return ([], [])
-
-lookupRecFldInsts :: OccName -> Name -> TcM ([ClsInst], [FamInst])
-lookupRecFldInsts lbl tycon_name
-  = do { fis <- lookupRecFldInstNames (nameModule tycon_name) lbl (nameOccName tycon_name)
-       ; (_, mb_has_dfun) <- tryTc $ tcLookupId (fldInstsHas fis)
-       -- Will not exist if the field is quantified
-       -- Perhaps has_dfun should be a dummy binder, like naughty record selectors?
-       ; case mb_has_dfun of
-           Nothing       -> return ([], [])
-           Just has_dfun -> do {
-       ; upd_dfun <- tcLookupId (fldInstsUpd fis)
-       ; get_ax   <- toUnbranchedAxiom <$> tcLookupAxiom (fldInstsGetResult fis)
-       ; set_ax   <- toUnbranchedAxiom <$> tcLookupAxiom (fldInstsSetResult fis)
-       ; let has = mkImportedInstance recordHasClassName
-                       [Just tycon_name, Nothing, Nothing] has_dfun (NoOverlap False)
-             upd = mkImportedInstance recordUpdClassName
-                       [Just tycon_name, Nothing, Nothing] upd_dfun (NoOverlap False)
-             get = mkImportedFamInst getResultFamName [Just tycon_name, Nothing] get_ax
-             set = mkImportedFamInst setResultFamName [Just tycon_name, Nothing, Nothing] set_ax
-       ; return ([has, upd], [get, set]) } }
-
-lookupRecFldInstNames :: Module -> OccName -> OccName -> TcM (FldInsts Name)
-lookupRecFldInstNames mod lbl tc = traverse (lookupOrig mod) fis
-  where
-    (_, fis) = mkOverloadedRecFldOccs lbl tc
-
-makeRecFldInsts :: (OccName, Name, Name) -> TcM ([InstInfo Name], [FamInst])
-makeRecFldInsts (lbl, sel_name, tycon_name)
+makeRecFldInstsFor :: (OccName, Name, Name) -> TcM [(Name, FldInstDetails)]
+makeRecFldInstsFor (lbl, sel_name, tycon_name)
       = do { addUsedRdrNames [mkRdrUnqual (nameOccName sel_name)]
            ; tc <- tcLookupTyCon tycon_name
            ; rep_tc <- if isDataFamilyTyCon tc
@@ -1719,20 +1645,27 @@ makeRecFldInsts (lbl, sel_name, tycon_name)
                  inst_tys = substTyVars (mkTopTvSubst eq_spec0) univ_tvs -- for dataConCannotMatch
            ; (_, mb) <- tryTc (checkValidMonoType fld_ty) -- TODO: make this pure?
            ; if isNothing mb || not (tyVarsOfType fld_ty0 `subVarSet` tyVarsOfType data_ty0)
-             then return ([], []) -- Universally or existentially quantified, so give up
+             then return [] -- Universally or existentially quantified, so give up
              else do
              { b        <- mkTyVar <$> newSysName (mkVarOcc "b") <*> pure liftedTypeKind
-             ; has_inst <- mkHasInstInfo (fldInstsHas inst_names) sel_name tycon_name lbl f tyvars eq_spec stupid_theta t_ty fld_ty b
+             ; has_inst <- mkHasInstInfo (fldInstsHas inst_names) sel_name lbl f tyvars eq_spec
+                               stupid_theta t_ty fld_ty b
              ; get_fam  <- mkFamInst getResultFamName (fldInstsGetResult inst_names) [data_ty, f] fld_ty
 
-             ; (subst, tyvars') <- updatingSubst lbl relevant_cons tyvars (tyVarsOfType fld_ty)
+             ; (fresh_subst, subst, tyvars') <- updatingSubst lbl relevant_cons tyvars (tyVarsOfType fld_ty)
              ; let fld_ty'  = substTy subst fld_ty
                    data_ty' = substTy subst data_ty
-             ; upd_inst <- mkUpdInstInfo (fldInstsUpd inst_names) lbl f eq_spec (stupid_theta ++ substTys subst stupid_theta) t_ty b tyvars' fld_ty' relevant_cons inst_tys rep_tc
-             ; set_fam  <- mkFamInst setResultFamName (fldInstsSetResult inst_names) [data_ty, f, fld_ty'] data_ty'
+             ; fresh_fld_ty <- if tyVarsOfType data_ty' `subVarSet` tyVarsOfType data_ty
+                               then mkTyVarTy <$> (mkTyVar <$> newSysName (mkVarOcc "z") <*> pure liftedTypeKind)
+                               else return $ substTy fresh_subst fld_ty
+             ; upd_inst <- mkUpdInstInfo (fldInstsUpd inst_names) lbl f eq_spec
+                               (stupid_theta ++ substTys subst stupid_theta)
+                               t_ty b tyvars' fld_ty' relevant_cons inst_tys rep_tc
+             ; set_fam  <- mkFamInst setResultFamName (fldInstsSetResult inst_names)
+                               [data_ty, f, fresh_fld_ty] data_ty'
              ; dumpDerivingInfo (hang (text "Overloaded record field instances:")
                               2 (vcat [ppr has_inst, ppr get_fam, ppr upd_inst, ppr set_fam]))
-             ; return ([has_inst, upd_inst], [get_fam, set_fam]) } }
+             ; return [(sel_name, (has_inst, upd_inst, get_fam, set_fam))] } }
 
   where
 
@@ -1741,11 +1674,11 @@ makeRecFldInsts (lbl, sel_name, tycon_name)
     -- Compute a substitution that replaces each tyvar with a fresh
     -- variable, if it can be updated, and itself if not
     -- See Note [Availability of type-changing update]
-    updatingSubst :: OccName -> [DataCon] -> [TyVar] -> TyVarSet -> TcM (TvSubst, [TyVar])
+    updatingSubst :: OccName -> [DataCon] -> [TyVar] -> TyVarSet -> TcM (TvSubst, TvSubst, [TyVar])
     updatingSubst lbl relevant_cons tyvars fld_tvs
       = do { (subst, tyvars') <- tcInstSkolTyVars tyvars
            ; let (subst', tyvarss) = mapAccumL fixate subst (zip tyvars tyvars')
-           ; return (subst', concat tyvarss) }
+           ; return (subst, subst', concat tyvarss) }
       where
         fixed_tvs       = getFixedTyVars [lbl] tyvars relevant_cons
         changeable x    = x `elemVarSet` fld_tvs && not (x `elemVarSet` fixed_tvs)
@@ -1755,7 +1688,7 @@ makeRecFldInsts (lbl, sel_name, tycon_name)
     -- Make InstInfo for Has thus:
     --     instance forall b tyvars . b ~ fld_ty => Has t_ty f b where
     --         getField _ = sel_name
-    mkHasInstInfo dfun_name sel_name tycon_name lbl f tyvars eq_spec stupid_theta t_ty fld_ty b
+    mkHasInstInfo dfun_name sel_name lbl f tyvars eq_spec stupid_theta t_ty fld_ty b
         = do { hasClass  <- tcLookupClass recordHasClassName
              ; let dfun = mkDictFunId dfun_name (b:tyvars) theta hasClass args
              ; cls_inst  <- mkFreshenedClsInst dfun (b:tyvars) hasClass args
@@ -1824,6 +1757,31 @@ makeRecFldInsts (lbl, sel_name, tycon_name)
            ; newFamInst SynFamilyInst axiom }
 
     missing = error "makeRecFldInsts: missing"
+
+
+tcFldInsts :: [(Name, FldInstDetails)] -> TcM (LHsBinds Id, TcGblEnv)
+tcFldInsts fld_insts
+    = updGblEnv (\ env -> env { tcg_fld_inst_env = extendNameEnvList (tcg_fld_inst_env env) fld_insts' }) $
+          addPrivateFamInsts fam_insts $
+              do { binds <- tcInstDecls2 [] infos
+                 ; env   <- getGblEnv
+                 ; return (binds, env) }
+  where
+    fld_insts' = map (fmap ispecs) fld_insts
+    ispecs (has, upd, get, set) = (is_dfun $ iSpec has, is_dfun $ iSpec upd, get, set)
+    infos = concatMap (\ (_, (has, upd, _, _)) -> [has, upd]) fld_insts
+    fam_insts = concatMap (\ (_, (_, _, get, set)) -> [get, set]) fld_insts
+
+addPrivateFamInsts :: [FamInst] -> TcM a -> TcM a
+addPrivateFamInsts fam_insts thing_inside
+  = tcExtendGlobalEnv things $
+    do { traceTc "addPrivateFamInsts" (pprFamInsts fam_insts)
+       ; tcg_env <- tcAddImplicits things
+       ; setGblEnv tcg_env thing_inside }
+  where
+    axioms = map (toBranchedAxiom . famInstAxiom) fam_insts
+    tycons = famInstsRepTyCons fam_insts
+    things = map ATyCon tycons ++ map ACoAxiom axioms
 \end{code}
 
 

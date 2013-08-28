@@ -60,6 +60,8 @@ module TcSMonad (
     getTopEnv, getGblEnv, getTcEvBinds, getUntouchables,
     getTcEvBindsMap, getTcSTyBinds, getTcSTyBindsMap,
 
+    tcLookupFldInstEnv,
+
 
     lookupFlatEqn, newFlattenSkolem,            -- Flatten skolems 
 
@@ -105,7 +107,7 @@ import HscTypes
 
 import Inst
 import InstEnv 
-import FamInst 
+import qualified FamInst
 import FamInstEnv
 
 import qualified TcRnMonad as TcM
@@ -1296,6 +1298,9 @@ getGblEnv = wrapTcS $ TcM.getGblEnv
 addUsedRdrNamesTcS :: [RdrName] -> TcS ()
 addUsedRdrNamesTcS names = wrapTcS  $ addUsedRdrNames names
 
+tcLookupFldInstEnv :: Name -> TcS (Maybe (DFunId, DFunId, FamInst, FamInst))
+tcLookupFldInstEnv n = wrapTcS $ FamInst.tcLookupFldInstEnv n
+
 -- Various smaller utilities [TODO, maybe will be absorbed in the instance matcher]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1674,7 +1679,7 @@ rewriteCtFlavor (CtWanted { ctev_evar = evar, ctev_pred = old_pred }) new_pred c
 
 
 matchOpenFam :: TyCon -> [Type] -> TcS (Maybe FamInstMatch)
-matchOpenFam tycon args = wrapTcS $ tcLookupFamInst tycon args
+matchOpenFam tycon args = wrapTcS $ FamInst.tcLookupFamInst tycon args
 
 matchFam :: TyCon -> [Type] -> TcS (Maybe (TcCoercion, TcType))
 -- Given (F tys) return (ty, co), where co :: F tys ~ ty

@@ -1405,8 +1405,7 @@ hscDeclsWithLocation hsc_env0 str source linenumber =
     -- (ic_instances) for more details.
     let finsts = tcg_fam_insts tc_gblenv
         insts  = tcg_insts     tc_gblenv
-        priv_finsts = tcg_priv_fis tc_gblenv
-        priv_insts  = tcg_priv_insts tc_gblenv
+        fld_insts = tcg_fld_inst_env tc_gblenv
 
     let defaults = tcg_default tc_gblenv
 
@@ -1462,7 +1461,7 @@ hscDeclsWithLocation hsc_env0 str source linenumber =
     let ictxt1 = extendInteractiveContext icontext tythings
         ictxt  = ictxt1 { ic_sys_vars  = sys_vars ++ ic_sys_vars ictxt1,
                           ic_instances = (insts, finsts),
-                          ic_priv_instances = (priv_insts, priv_finsts),
+                          ic_fld_inst_env = fld_insts,
                           ic_default   = defaults }
 
     return (tythings, ictxt)
@@ -1573,7 +1572,7 @@ mkModGuts mod safe binds =
         mg_tcs          = [],
         mg_insts        = [],
         mg_fam_insts    = [],
-        mg_priv_fis     = [],
+        mg_fld_inst_env = emptyNameEnv,
         mg_rules        = [],
         mg_vect_decls   = [],
         mg_binds        = binds,

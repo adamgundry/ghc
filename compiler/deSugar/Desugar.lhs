@@ -83,7 +83,7 @@ deSugar hsc_env
                             tcg_tcs          = tcs,
                             tcg_insts        = insts,
                             tcg_fam_insts    = fam_insts,
-                            tcg_priv_fis     = priv_fam_insts,
+                            tcg_fld_inst_env = fld_insts,
                             tcg_hpc          = other_hpc_info })
 
   = do { let dflags = hsc_dflags hsc_env
@@ -175,7 +175,7 @@ deSugar hsc_env
                 mg_tcs          = tcs,
                 mg_insts        = insts,
                 mg_fam_insts    = fam_insts,
-                mg_priv_fis     = priv_fam_insts,
+                mg_fld_inst_env = fld_insts,
                 mg_inst_env     = inst_env,
                 mg_fam_inst_env = fam_inst_env,
                 mg_rules        = ds_rules_for_imps,

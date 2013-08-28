@@ -10,8 +10,8 @@ The @FamInst@ type: family instance heads
 -- for details
 
 module FamInst ( 
-        checkFamInstConsistency, tcExtendLocalFamInstEnv, tcExtendPrivateFamInstEnv,
-	tcLookupFamInst, 
+        checkFamInstConsistency, tcExtendLocalFamInstEnv,
+        tcLookupFamInst, tcLookupFldInstEnv,
         tcGetFamInstEnvs,
         newFamInst,
         TcBuiltInSynFamily(..), trivialBuiltInFamily
@@ -23,9 +23,12 @@ import FamInstEnv
 import InstEnv( roughMatchTcs )
 import Coercion( pprCoAxBranchHdr )
 import LoadIface
+import Type
 import TypeRep
 import TcRnMonad
+import Unify
 import TyCon
+import DataCon
 import CoAxiom
 import DynFlags
 import Module
@@ -36,9 +39,18 @@ import Util
 import Maybes
 import TcMType
 import TcType
+import TcEnv
+import Id
 import Name
+import NameEnv
+import RdrName
+import RnEnv
+import Var
 import VarSet
+import PrelNames
+import ErrUtils
 import Control.Monad
+import Data.List
 import Data.Map (Map)
 import qualified Data.Map as Map
 import TcEvidence(TcCoercion)
@@ -213,11 +225,69 @@ then we have a coercion (ie, type instance of family instance coercion)
 which implies that :R42T was declared as 'data instance T [a]'.
 
 \begin{code}
+tcLookupFldInstEnv :: Name -> TcM (Maybe (DFunId, DFunId, FamInst, FamInst))
+tcLookupFldInstEnv sel_name
+  = do { env <- getGblEnv
+       ; pprTrace "AMG tcLookupFldInstEnv" (ppr sel_name) $
+         return $ lookupNameEnv (tcg_fld_inst_env env) sel_name }
+
+
+lookupRecFldFamInst :: TyCon -> FastString -> TyCon -> [Type] -> TcM (Maybe FamInstMatch)
+lookupRecFldFamInst fam lbl tc tys
+  = do { gbl_env <- getGblEnv
+       ; case lookupSubBndrGREs (tcg_rdr_env gbl_env) (ParentIs (tyConName tc)) (mkVarUnqual lbl) of
+           [] -> pprTrace "AMG miss fam" (ppr tc <+> ppr lbl $$
+                                         ppr (tcg_rdr_env gbl_env)) $ return Nothing
+           gres@(GRE { gre_name = sel_name } : _) -> do {
+       ; mb_fld_insts <- pprTrace "AMG gres" (ppr gres) $ tcLookupFldInstEnv sel_name
+       ; mb_fam_inst <- case mb_fld_insts of
+           Just (_, _, get, set) | is_get    -> return $ Just get
+                                 | otherwise -> return $ Just set
+           Nothing -> do { rep_tc <- if isDataFamilyTyCon tc
+                                     then do { sel_id <- tcLookupId sel_name
+                                             ; ASSERT (isRecordSelector sel_id)
+                                               return (recordSelectorTyCon sel_id) }
+                                     else return tc
+                         ; fis  <- lookupRecFldInstNames (mod rep_tc) (mkVarOccFS lbl) (getOccName tc)
+                         ; let ax_name | is_get    = fldInstsGetResult fis
+                                       | otherwise = fldInstsSetResult fis
+                         ; (err, mb_fam_inst) <- tryTc $ fmap (fam_inst_for . toUnbranchedAxiom) $ tcLookupAxiom ax_name
+                         ; pprTrace "AMG err fam" (vcat $ pprErrMsgBag $ snd err) $
+                           return mb_fam_inst }
+       ; case mb_fam_inst of
+           Just fam_inst -> case tcMatchTys (mkVarSet (fi_tvs fam_inst)) (fi_tys fam_inst) tys of
+                              Just subst -> return $ Just $ FamInstMatch fam_inst (substTyVars subst (fi_tvs fam_inst))
+                              Nothing    -> pprTrace "AMG ook fam" (ppr fam_inst $$ ppr tys) $ return Nothing
+           Nothing -> pprTrace "AMG nope fam" (ppr tc <+> ppr lbl <+> ppr sel_name <+> ppr mb_fld_insts) $ return Nothing } }
+  where
+    my_fam_inst ax_name fam_inst = coAxiomName (fi_axiom fam_inst) == ax_name
+    mod tc = nameModule (tyConName tc)
+    is_get = fam `hasKey` getResultFamNameKey
+
+    fam_inst_for axiom | is_get    = mkImportedFamInst getResultFamName
+                                         [Just (tyConName tc), Nothing] axiom
+                       | otherwise = mkImportedFamInst setResultFamName
+                                         [Just (tyConName tc), Nothing, Nothing] axiom
+
+
 tcLookupFamInst :: TyCon -> [Type] -> TcM (Maybe FamInstMatch)
 tcLookupFamInst tycon tys
   | not (isOpenFamilyTyCon tycon)
   = return Nothing
-  | otherwise
+
+tcLookupFamInst fam tys@[r, f]
+  | fam `hasKey` getResultFamNameKey || fam `hasKey` setResultFamNameKey
+  , Just lbl <- isStrLitTy f
+  , Just (tc, _) <- tcSplitTyConApp_maybe r
+  = lookupRecFldFamInst fam lbl tc tys
+
+tcLookupFamInst fam tys@[r, f, t]
+  | fam `hasKey` setResultFamNameKey
+  , Just lbl <- isStrLitTy f
+  , Just (tc, _) <- tcSplitTyConApp_maybe r
+  = lookupRecFldFamInst fam lbl tc tys
+
+tcLookupFamInst tycon tys
   = do { instEnv <- tcGetFamInstEnvs
        ; let mb_match = lookupFamInstEnv instEnv tycon tys 
        ; traceTc "lookupFamInst" ((ppr tycon <+> ppr tys) $$ 
@@ -248,19 +318,6 @@ tcExtendLocalFamInstEnv fam_insts thing_inside
       ; let env' = env { tcg_fam_insts    = fam_insts'
 		       , tcg_fam_inst_env = inst_env' }
       ; setGblEnv env' thing_inside 
-      }
-
--- Add family instances that are private to this module
--- See Note [Private instances] in TcInstDcls
-tcExtendPrivateFamInstEnv :: [FamInst] -> TcM a -> TcM a
-tcExtendPrivateFamInstEnv fam_insts thing_inside
- = do { env <- getGblEnv
-      ; (inst_env', fam_insts') <- foldlM addLocalFamInst
-                                          (tcg_fam_inst_env env, tcg_priv_fis env)
-                                          fam_insts
-      ; let env' = env { tcg_fam_inst_env = inst_env'
-                       , tcg_priv_fis = fam_insts' }
-      ; setGblEnv env' thing_inside
       }
 
 -- Check that the proposed new instance is OK, 

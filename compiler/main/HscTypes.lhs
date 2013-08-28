@@ -61,6 +61,9 @@ module HscTypes (
         -- * Fixity
         FixityEnv, FixItem(..), lookupFixity, emptyFixityEnv,
 
+        -- * Overloaded record field instances
+        RecFldInstEnv, fldInstEnvFamInsts,
+
         -- * TyThings and type environments
         TyThing(..),  tyThingAvailInfo, tyThingGREs,
         tyThingTyCon, tyThingDataCon,
@@ -959,6 +962,16 @@ emptyModDetails
 type ImportedMods = ModuleEnv [ImportedModsVal]
 type ImportedModsVal = (ModuleName, Bool, SrcSpan, IsSafeImport)
 
+
+-- | Maps a record selector name *in this module* to the DFunIds for
+-- the Has and Upd classes, and the FamInsts for the GetResult and
+-- SetResult type families.
+type RecFldInstEnv = NameEnv (DFunId, DFunId, FamInst, FamInst)
+
+fldInstEnvFamInsts :: RecFldInstEnv -> [FamInst]
+fldInstEnvFamInsts = foldNameEnv (\ (_, _, get, set) fis -> get : set : fis) []
+
+
 -- | A ModGuts is carried through the compiler, accumulating stuff as it goes
 -- There is only one ModGuts at any time, the one for the module
 -- being compiled right now.  Once it is compiled, a 'ModIface' and
@@ -984,8 +997,7 @@ data ModGuts
                                          -- (includes TyCons for classes)
         mg_insts     :: ![ClsInst],      -- ^ Class instances declared in this module
         mg_fam_insts :: ![FamInst],      -- ^ Family instances declared in this module
-        mg_priv_fis  :: ![FamInst],      -- ^ Family instances private to this module
-                                         -- See Note [Private instances] in TcInstDcls
+        mg_fld_inst_env :: !RecFldInstEnv, -- ^ Overloaded record field instances
         mg_rules     :: ![CoreRule],     -- ^ Before the core pipeline starts, contains
                                          -- See Note [Overall plumbing for rules] in Rules.lhs
         mg_binds     :: !CoreProgram,    -- ^ Bindings for this module
@@ -1122,9 +1134,9 @@ data InteractiveContext
              -- time we update the context, we just take the results
              -- from the instance code that already does that.
 
-         ic_priv_instances :: ([ClsInst], [FamInst]),
-             -- ^ Ditto, but for private instances
-             -- (see Note [Private instances] in TcInstDcls)
+         ic_fld_inst_env :: RecFldInstEnv,
+             -- ^ Overloaded record field instances created during
+             -- this session.
 
          ic_fix_env :: FixityEnv,
             -- ^ Fixities declared in let statements
@@ -1177,7 +1189,7 @@ emptyInteractiveContext dflags
                          ic_tythings   = [],
                          ic_sys_vars   = [],
                          ic_instances  = ([],[]),
-                         ic_priv_instances = ([],[]),
+                         ic_fld_inst_env = emptyNameEnv,
                          ic_fix_env    = emptyNameEnv,
                          -- System.IO.print by default
                          ic_int_print  = printName,

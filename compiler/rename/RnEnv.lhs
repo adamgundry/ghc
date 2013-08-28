@@ -20,6 +20,7 @@ module RnEnv (
         lookupInstDeclBndr, lookupSubBndrOcc, lookupFamInstName,
         greRdrName,
         lookupSubBndrGREs, lookupConstructorFields,
+        lookupRecFldInstNames,
         lookupSyntaxName, lookupSyntaxNames, lookupIfThenElse,
         lookupGreRn, lookupGreRn_maybe,
         lookupGlobalOccInThisModule, lookupGreLocalRn_maybe, 
@@ -63,7 +64,7 @@ import DataCon          ( FieldLabel, dataConFieldLabels, dataConTyCon )
 import TyCon            ( TyCon, isTupleTyCon, tyConArity )
 import PrelNames        ( mkUnboundName, isUnboundName, rOOT_MAIN, forall_tv_RDR )
 import ErrUtils         ( MsgDoc )
-import BasicTypes       ( Fixity(..), FixityDirection(..), minPrecedence )
+import BasicTypes
 import SrcLoc
 import Outputable
 import Util
@@ -74,6 +75,7 @@ import FastString
 import Control.Monad
 import Data.List
 import qualified Data.Set as Set
+import Data.Traversable ( traverse )
 import Constants        ( mAX_TUPLE_SIZE )
 \end{code}
 
@@ -328,6 +330,11 @@ lookupConstructorFields con_name
           do { con <- tcLookupDataCon con_name
              ; return (dataConFieldLabels con) } }
 
+-----------------------------------------------
+lookupRecFldInstNames :: Module -> OccName -> OccName -> TcM (FldInsts Name)
+lookupRecFldInstNames mod lbl tc = traverse (lookupOrig mod) fis
+  where
+    (_, fis) = mkOverloadedRecFldOccs lbl tc
 
 -----------------------------------------------
 -- Used for record construction and pattern matching

@@ -205,6 +205,7 @@ data TcGblEnv
 
         tcg_fix_env   :: FixityEnv,     -- ^ Just for things in this module
         tcg_field_env :: RecFieldEnv,   -- ^ Just for things in this module
+        tcg_fld_inst_env :: RecFldInstEnv, -- ^ Overloaded record field instances
 
         tcg_type_env :: TypeEnv,
           -- ^ Global type env for the module we are compiling now.  All
@@ -298,11 +299,7 @@ data TcGblEnv
         tcg_anns      :: [Annotation],      -- ...Annotations
         tcg_tcs       :: [TyCon],           -- ...TyCons and Classes
         tcg_insts     :: [ClsInst],         -- ...Instances
-        tcg_priv_insts :: [ClsInst],        -- ...Private instances
-                                               -- (see Note [Private instances] in TcInstDcls)
         tcg_fam_insts :: [FamInst],         -- ...Family instances
-        tcg_priv_fis  :: [FamInst],         -- ...Private family instances
-                                               -- (see Note [Private instances] in TcInstDcls)
         tcg_rules     :: [LRuleDecl Id],    -- ...Rules
         tcg_fords     :: [LForeignDecl Id], -- ...Foreign import & exports
         tcg_vects     :: [LVectDecl Id],    -- ...Vectorisation declarations

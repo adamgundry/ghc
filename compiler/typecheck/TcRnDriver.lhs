@@ -300,7 +300,7 @@ tcRnImports hsc_env this_mod import_decls
                              $ imports }
         ; checkFamInstConsistency (imp_finsts imports) dir_imp_mods ;
 
-        ; addImportedRecFldInsts } }
+        ; getGblEnv } }
 \end{code}
 
 
@@ -373,7 +373,7 @@ tcRnExtCore hsc_env (HsExtCore this_mod decls src_binds)
                                 mg_tcs       = tcg_tcs tcg_env,
                                 mg_insts     = tcg_insts tcg_env,
                                 mg_fam_insts = tcg_fam_insts tcg_env,
-                                mg_priv_fis  = tcg_priv_fis tcg_env,
+                                mg_fld_inst_env = tcg_fld_inst_env tcg_env,
                                 mg_inst_env  = tcg_inst_env tcg_env,
                                 mg_fam_inst_env = tcg_fam_inst_env tcg_env,
                                 mg_rules        = [],
@@ -1148,6 +1148,11 @@ tcTopSrcDecls boot_details
         traceTc "Tc3b" empty ;
         tcAmpWarn ;
 
+                -- Create overloaded record field instances
+        traceTc "Tc3.5" empty ;
+        (fld_inst_binds, tcg_env) <- makeOverloadedRecFldInsts tycl_decls inst_decls ;
+        setGblEnv tcg_env       $ do {
+
                 -- Foreign import declarations next.
         traceTc "Tc4" empty ;
         (fi_ids, fi_decls, fi_gres) <- tcForeignImports foreign_decls ;
@@ -1190,6 +1195,7 @@ tcTopSrcDecls boot_details
                 -- Wrap up
         traceTc "Tc7a" empty ;
         let { all_binds = inst_binds     `unionBags`
+                          fld_inst_binds `unionBags`
                           foe_binds
 
             ; fo_gres = fi_gres `unionBags` foe_gres
@@ -1214,7 +1220,7 @@ tcTopSrcDecls boot_details
 
         addUsedRdrNames fo_rdr_names ;
         return (tcg_env', tcl_env)
-    }}}}}}
+    }}}}}}}
   where
     gre_to_rdr_name :: GlobalRdrElt -> [RdrName] -> [RdrName]
         -- For *imported* newtype data constructors, we want to
@@ -1411,7 +1417,7 @@ setInteractiveContext hsc_env icxt thing_inside
         -- This mimics the more selective call to hptInstances in tcRnImports
         (home_insts, home_fam_insts) = hptInstances hsc_env (\_ -> True)
         (ic_insts, ic_finsts) = ic_instances icxt
-        (priv_insts, priv_finsts) = ic_priv_instances icxt
+        ic_fld_insts = ic_fld_inst_env icxt
 
         -- Note [GHCi temporary Ids]
         -- Ideally we would just make a type_env from ic_tythings
@@ -1461,14 +1467,17 @@ setInteractiveContext hsc_env icxt thing_inside
                                                (map getOccName visible_tmp_ids)
                                  -- Note [delete shadowed tcg_rdr_env entries]
         , tcg_type_env     = type_env
+        , tcg_fld_inst_env = tcg_fld_inst_env env `plusNameEnv` ic_fld_insts
         , tcg_insts        = ic_insts
-        , tcg_priv_insts   = priv_insts
-        , tcg_inst_env     = foldl extendInstEnvList (tcg_inst_env env)
-                                 [ic_insts, home_insts, priv_insts]
+        , tcg_inst_env     = extendInstEnvList
+                              (extendInstEnvList (tcg_inst_env env) ic_insts)
+                              home_insts
+
         , tcg_fam_insts    = ic_finsts
-        , tcg_priv_fis     = priv_finsts
-        , tcg_fam_inst_env = foldl extendFamInstEnvList (tcg_fam_inst_env env)
-                                 [ic_finsts, home_fam_insts, priv_finsts]
+        , tcg_fam_inst_env = extendFamInstEnvList
+                              (extendFamInstEnvList (tcg_fam_inst_env env)
+                                                    ic_finsts)
+                              home_fam_insts
         , tcg_field_env    = mkNameEnv con_fields
              -- setting tcg_field_env is necessary to make RecordWildCards work
              -- (test: ghci049)
