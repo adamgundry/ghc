@@ -41,6 +41,7 @@ import TcTyDecls  ( emptyRoleAnnots )
 import TcExpr
 import MkCore     ( nO_METHOD_BINDING_ERROR_ID, pAT_ERROR_ID )
 import Type
+import TypeRep
 import TcEvidence
 import TyCon
 import CoAxiom
@@ -1603,7 +1604,48 @@ In general, a type variable can be changed provided:
     different field of a relevant data constructor, just as in
     Note [Type of a record update] in TcExpr.
 
-(2) It occurs in the new type of the field.
+(2) It occurs rigidly in the new type of the field (not under a type
+    family).
+
+For an example of why (2) is restricted to rigid occurrences, consider
+the following:
+
+    type family Foo a
+    data T a = MkT { foo :: Foo a }
+
+Without the restriction, we would generate this:
+
+    type instance SetResult (T a) "foo" (Foo b) = T b
+
+But we can't sensibly pattern-match on type families!
+
+
+Note that we have to be particularly careful with kind variables when
+PolyKinds is enabled, since the conditions above apply also to them.
+Consider the following definition, with kinds made explicit:
+
+    data FC (x :: BOX)(y :: BOX)(f :: x -> *)(g :: y -> x)(a :: y) :: * where
+        FC :: { runFC :: f (g a) } -> FC x y f g a
+
+The obvious SetResult instance is this:
+
+    type instance SetResult (FC x y f g a) "runFC" (f' (g' a')) = FC x' y' f' g' a'
+
+But this is bogus, because the kind variables x' and y' are not bound
+on the left-hand side!
+
+Similarly, kind variables may or may not be fixed. In the following
+example, updates to fields of U may change their types or kinds, while
+updates to fields of V may change the types but not the kinds:
+
+    data T (a :: x -> *)(b :: x) :: * where
+        MkT :: a b -> T a b
+
+    data U (a :: x -> *)(b :: x)(c :: y -> *)(d :: y)
+        = MkU { bar :: T a b, baz :: T c d }
+
+    data V (a :: x -> *)(b :: x)(c :: x -> *)(d :: x)
+        = MkV { bar :: T a b, baz :: T c d }
 
 
 \begin{code}
@@ -1648,17 +1690,16 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
                                stupid_theta t_ty fld_ty b
              ; get_fam  <- mkFamInst getResultFamName (fldInstsGetResult inst_names) [data_ty, f] fld_ty
 
-             ; (fresh_subst, subst, tyvars') <- updatingSubst lbl relevant_cons tyvars (tyVarsOfType fld_ty)
+             ; (subst, tyvars') <- updatingSubst lbl relevant_cons tyvars (rigidTyVarsOfType fld_ty)
              ; let fld_ty'  = substTy subst fld_ty
                    data_ty' = substTy subst data_ty
-             ; fresh_fld_ty <- if tyVarsOfType data_ty' `subVarSet` tyVarsOfType data_ty
-                               then mkTyVarTy <$> (mkTyVar <$> newSysName (mkVarOcc "z") <*> pure liftedTypeKind)
-                               else return $ substTy fresh_subst fld_ty
+               -- See Note [Calculating the hull type]
+             ; hull_ty <- hullType (tyVarsOfType data_ty') fld_ty'
              ; upd_inst <- mkUpdInstInfo (fldInstsUpd inst_names) lbl f eq_spec
                                (stupid_theta ++ substTys subst stupid_theta)
                                t_ty b tyvars' fld_ty' relevant_cons inst_tys rep_tc
              ; set_fam  <- mkFamInst setResultFamName (fldInstsSetResult inst_names)
-                               [data_ty, f, fresh_fld_ty] data_ty'
+                               [data_ty, f, hull_ty] data_ty'
              ; dumpDerivingInfo (hang (text "Overloaded record field instances:")
                               2 (vcat [ppr has_inst, ppr get_fam, ppr upd_inst, ppr set_fam]))
              ; return [(sel_name, (has_inst, upd_inst, get_fam, set_fam))] } }
@@ -1668,18 +1709,22 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
     is_relevant_con lbl dc = any (\ fl -> flOccName fl == lbl) (dataConFieldLabels dc)
 
     -- Compute a substitution that replaces each tyvar with a fresh
-    -- variable, if it can be updated, and itself if not
-    -- See Note [Availability of type-changing update]
-    updatingSubst :: OccName -> [DataCon] -> [TyVar] -> TyVarSet -> TcM (TvSubst, TvSubst, [TyVar])
+    -- variable, if it can be updated; also returns a list of all the
+    -- tyvars (old and new). See Note [Availability of type-changing update]
+    updatingSubst :: OccName -> [DataCon] -> [TyVar] -> TyVarSet -> TcM (TvSubst, [TyVar])
     updatingSubst lbl relevant_cons tyvars fld_tvs
-      = do { (subst, tyvars') <- tcInstSkolTyVars tyvars
-           ; let (subst', tyvarss) = mapAccumL fixate subst (zip tyvars tyvars')
-           ; return (subst, subst', concat tyvarss) }
+      = do { (subst, tyvarss) <- mapAccumLM updateTyVar emptyTvSubst tyvars
+           ; return (subst, concat tyvarss) }
       where
-        fixed_tvs       = getFixedTyVars [lbl] tyvars relevant_cons
-        changeable x    = x `elemVarSet` fld_tvs && not (x `elemVarSet` fixed_tvs)
-        fixate s (a, b) | changeable a = (s, [a, b])
-                        | otherwise    = (extendTvSubst s a (mkTyVarTy a), [a])
+        fixed_tvs    = getFixedTyVars [lbl] tyvars relevant_cons
+        changeable x = x `elemVarSet` fld_tvs && not (x `elemVarSet` fixed_tvs)
+
+        updateTyVar :: TvSubst -> TyVar -> TcM (TvSubst, [TyVar])
+        updateTyVar subst tv
+            | changeable tv = do { (subst', tv') <- tcInstSkolTyVar noSrcSpan False subst tv
+                                 ; return (subst', [tv,tv']) }
+            | otherwise     = return (subst, [tv])
+
 
     -- Make InstInfo for Has thus:
     --     instance forall b tyvars . b ~ fld_ty => Has t_ty f b where
@@ -1753,6 +1798,79 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
            ; newFamInst SynFamilyInst axiom }
 
     missing = error "makeRecFldInsts: missing"
+
+rigidTyVarsOfType :: Type -> VarSet
+-- ^ Returns free type (not kind) variables of a type, that are not
+-- under a type family application.
+rigidTyVarsOfType (TyVarTy v)         = unitVarSet v
+rigidTyVarsOfType (TyConApp tc tys)   | isDecomposableTyCon tc = rigidTyVarsOfTypes tys
+                                      | otherwise              = emptyVarSet
+rigidTyVarsOfType (LitTy {})          = emptyVarSet
+rigidTyVarsOfType (FunTy arg res)     = rigidTyVarsOfType arg `unionVarSet` rigidTyVarsOfType res
+rigidTyVarsOfType (AppTy fun arg)     = rigidTyVarsOfType fun `unionVarSet` rigidTyVarsOfType arg
+rigidTyVarsOfType (ForAllTy tyvar ty) = delVarSet (rigidTyVarsOfType ty) tyvar
+                                            `unionVarSet` rigidTyVarsOfType (tyVarKind tyvar)
+
+rigidTyVarsOfTypes :: [Type] -> TyVarSet
+rigidTyVarsOfTypes tys = foldr (unionVarSet . rigidTyVarsOfType) emptyVarSet tys
+\end{code}
+
+
+Note [Calculating the hull type]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+SetResult must not pattern-match on type families (see Note
+[Availability of type-changing update]). More generally, in order to
+get the best possible type inference behaviour, we want SetResult to
+match as little of the new field type as possible. For example, given
+the datatype
+
+    data T a b = MkT { foo :: (a, Int, F b) }
+
+we generate
+
+    type instance SetResult (T a b) "foo" (a', x0, x1) = T a' b
+
+rather than
+
+    type instance SetResult (T a b) "foo" (a', Int, F b') = T a' b'.
+
+This is accomplished by the `hullType` function, which returns a type
+in which all the unused subexpressions have been replaced with fresh
+variables.
+
+\begin{code}
+hullType :: TyVarSet -> Type -> TcM Type
+hullType tvs t = hullEither =<< hull tvs t
+  where
+    hull :: TyVarSet -> Type -> TcM (Either Kind Type)
+    hull tvs ty@(TyVarTy v) | v `elemVarSet` tvs = return $ Right ty
+                            | otherwise          = return $ Left (tyVarKind v)
+    hull tvs ty@(AppTy f s) = do { f' <- hull tvs f
+                                 ; s' <- hull tvs s
+                                 ; hullAppTy f' s' }
+      where
+        hullAppTy (Left _) (Left _) = return $ Left (typeKind ty)
+        hullAppTy f'        s'      = Right <$> (mkAppTy <$> hullEither f' <*> hullEither s')
+    hull tvs ty@(TyConApp tc tys)
+        | isDecomposableTyCon tc = do { tys' <- mapM (hull tvs) tys
+                                      ; if all isLeft tys'
+                                        then return $ Left (typeKind ty)
+                                        else Right <$> (mkTyConApp tc <$> mapM hullEither tys') }
+        | otherwise = return $ Left (typeKind ty)
+      where
+        isLeft        = either (const True) (const False)
+    hull tvs ty@(FunTy t u) = do { t' <- hull tvs t
+                                 ; u' <- hull tvs u
+                                 ; hullFunTy t' u' }
+      where
+        hullFunTy (Left _) (Left _) = return $ Left (typeKind ty)
+        hullFunTy t'       u'       = Right <$> (mkFunTy <$> hullEither t' <*> hullEither u')
+    hull _ ty@(ForAllTy _ _) = return $ Left (typeKind ty)
+    hull _ ty@(LitTy _)      = return $ Left (typeKind ty)
+
+    hullEither :: Either Kind Type -> TcM Type
+    hullEither (Left k)  = mkTyVarTy <$> (mkTyVar <$> newSysName (mkVarOcc "x") <*> pure k)
+    hullEither (Right t) = return t
 
 
 tcFldInsts :: [(Name, FldInstDetails)] -> TcM (LHsBinds Id, TcGblEnv)
