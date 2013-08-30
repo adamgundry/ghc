@@ -2,6 +2,8 @@
 -- (c) The University of Glasgow
 --
 
+{-# LANGUAGE DeriveDataTypeable #-}
+
 module Avail (
     Avails, AvailFlds(..), AvailFields,
     AvailInfo(..),
@@ -12,6 +14,7 @@ module Avail (
     stableAvailCmp, stableAvailFieldsCmp,
     nullAvailFields,
     availFieldsOccs,
+    availFieldsNames,
     isOverloaded,
     pprAvailFields
   ) where
@@ -25,6 +28,7 @@ import Outputable
 import Util
 
 import Data.Function
+import Data.Data
 
 -- -----------------------------------------------------------------------------
 -- The AvailInfo type
@@ -54,7 +58,7 @@ type Avails = [AvailInfo]
 
 -- | Record fields in an 'AvailInfo'
 data AvailFlds name = NonOverloaded [name] | Overloaded [(OccName, name)]
-  deriving Eq
+  deriving (Eq, Data, Typeable)
 
 type AvailFields = AvailFlds Name
 
@@ -124,6 +128,10 @@ nullAvailFields (Overloaded xs)    = null xs
 availFieldsOccs :: AvailFields -> [OccName]
 availFieldsOccs (NonOverloaded xs) = map nameOccName xs
 availFieldsOccs (Overloaded xs)    = map fst xs
+
+availFieldsNames :: AvailFlds name -> [name]
+availFieldsNames (NonOverloaded xs) = xs
+availFieldsNames (Overloaded xs)    = map snd xs
 
 isOverloaded :: AvailFields -> Bool
 isOverloaded (NonOverloaded _) = False

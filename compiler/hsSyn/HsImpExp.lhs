@@ -13,6 +13,7 @@ module HsImpExp where
 import Module           ( ModuleName )
 import HsDoc            ( HsDocString )
 import OccName          ( OccName, HasOccName(..), isTcOcc, isSymOcc )
+import Avail
 
 import Outputable
 import FastString
@@ -107,7 +108,7 @@ data IE name
   = IEVar               name
   | IEThingAbs          name             -- ^ Class/Type (can't tell)
   | IEThingAll          name             -- ^ Class/Type plus all methods/constructors
-  | IEThingWith         name [name] [OccName]  -- ^ Class/Type plus some methods/constructors and record fields
+  | IEThingWith         name [name] (AvailFlds name)  -- ^ Class/Type plus some methods/constructors and record fields
   | IEModuleContents    ModuleName       -- ^ (Export Only)
   | IEGroup             Int HsDocString  -- ^ Doc section heading
   | IEDoc               HsDocString      -- ^ Some documentation
@@ -127,7 +128,8 @@ ieNames :: IE a -> [a]
 ieNames (IEVar            n     ) = [n]
 ieNames (IEThingAbs       n     ) = [n]
 ieNames (IEThingAll       n     ) = [n]
-ieNames (IEThingWith      n ns _) = n : ns
+ieNames (IEThingWith      n ns (NonOverloaded fs)) = n : ns ++ fs
+ieNames (IEThingWith      n ns (Overloaded _)) = n : ns
 ieNames (IEModuleContents _     ) = []
 ieNames (IEGroup          _ _   ) = []
 ieNames (IEDoc            _     ) = []
@@ -149,7 +151,7 @@ instance (HasOccName name, OutputableBndr name) => Outputable (IE name) where
     ppr (IEThingAll     thing)  = hcat [pprImpExp thing, text "(..)"]
     ppr (IEThingWith thing withs flds)
         = pprImpExp thing <> parens (fsep (punctuate comma
-                                        (map pprImpExp withs ++ map ppr flds)))
+                                        (map pprImpExp withs ++ pprAvailFields flds)))
     ppr (IEModuleContents mod')
         = ptext (sLit "module") <+> ppr mod'
     ppr (IEGroup n _)           = text ("<IEGroup: " ++ (show n) ++ ">")

@@ -780,20 +780,20 @@ filterImports iface decl_spec (Just (want_hiding, import_items))
                subfldchildren = case subflds of
                                   NonOverloaded xs -> map FldChild xs
                                   Overloaded xs    -> map OverloadedFldChild xs
-               mb_children = lookupChildren subs (ns ++ map mkRdrUnqual fs)
+               mb_children = lookupChildren subs (ns ++ availFieldsRdrNames fs)
 
            (childnames, childflds) <- if any isNothing mb_children
                                       then failLookupWith BadImport
                                       else return (childrenNamesFlds (catMaybes mb_children))
            case mb_parent of
              -- non-associated ty/cls
-             Nothing     -> return ([(IEThingWith name childnames (availFieldsOccs childflds),
+             Nothing     -> return ([(IEThingWith name childnames childflds,
                                       AvailTC name (name:childnames) childflds)],
                                     [])
              -- associated ty
-             Just parent -> return ([(IEThingWith name childnames (availFieldsOccs childflds),
+             Just parent -> return ([(IEThingWith name childnames childflds,
                                       AvailTC name childnames childflds),
-                                     (IEThingWith name childnames (availFieldsOccs childflds),
+                                     (IEThingWith name childnames childflds,
                                       AvailTC parent [name] (NonOverloaded []))],
                                     [])
 
@@ -880,7 +880,7 @@ plusAvailFields fs1 fs2 = pprPanic "plusAvailFields" (hsep [ppr fs1, ppr fs2])
 -- | trims an 'AvailInfo' to keep only a single name
 trimAvail :: AvailInfo -> Name -> AvailInfo
 trimAvail (Avail n)         _ = Avail n
-trimAvail (AvailTC n ns (Overloaded fs)) m
+trimAvail (AvailTC n ns (Overloaded _)) m
     = ASSERT (m `elem` ns) AvailTC n [m] (NonOverloaded [])
 trimAvail (AvailTC n ns (NonOverloaded fs)) m = case find (== m) fs of
     Just x  -> AvailTC n [] (NonOverloaded [x])
@@ -1243,18 +1243,19 @@ exports_from_avail (Just rdr_items) rdr_env imports this_mod
     lookup_ie ie@(IEThingWith rdr sub_rdrs sub_flds)
         = do name <- lookupGlobalOccRn rdr
              if isUnboundName name
-                then return (IEThingWith name [] []
+                then return (IEThingWith name [] (NonOverloaded [])
                             , AvailTC name [name] (NonOverloaded []))
                 else do
-             let mb_names = lookupChildren (findChildren kids_env name) (sub_rdrs ++ map mkRdrUnqual sub_flds)
+             let mb_names = lookupChildren (findChildren kids_env name)
+                                           (sub_rdrs ++ availFieldsRdrNames sub_flds)
              if any isNothing mb_names
                 then do addErr (exportItemErr ie)
-                        return ( IEThingWith name [] []
+                        return ( IEThingWith name [] (NonOverloaded [])
                                , AvailTC name [name] (NonOverloaded []))
                 else do let kids          = catMaybes mb_names
                             (names, flds) = childrenNamesFlds kids
                         addUsedKids rdr kids
-                        return ( IEThingWith name names (availFieldsOccs flds)
+                        return ( IEThingWith name names flds
                                , AvailTC name (name:names) flds)
 
     lookup_ie _ = panic "lookup_ie"    -- Other cases covered earlier
@@ -1282,6 +1283,10 @@ isDoc (IEDoc _)      = True
 isDoc (IEDocNamed _) = True
 isDoc (IEGroup _ _)  = True
 isDoc _ = False
+
+availFieldsRdrNames :: AvailFlds RdrName -> [RdrName]
+availFieldsRdrNames (NonOverloaded xs) = xs
+availFieldsRdrNames (Overloaded xs)    = map (mkRdrUnqual . fst) xs
 
 -------------------------------
 isModuleExported :: Bool -> ModuleName -> GlobalRdrElt -> Bool
@@ -1523,7 +1528,7 @@ findImportUsage imports rdr_env rdrs
         add_unused (IEVar n)             acc = add_unused_name n acc
         add_unused (IEThingAbs n)        acc = add_unused_name n acc
         add_unused (IEThingAll n)        acc = add_unused_all  n acc
-        add_unused (IEThingWith p ns fs) acc = add_unused_with p (ns ++ map (look_fld p) fs) acc
+        add_unused (IEThingWith p ns fs) acc = add_unused_with p (ns ++ availFieldsNames fs) acc
         add_unused _                     acc = acc
 
         add_unused_name n acc
@@ -1541,11 +1546,6 @@ findImportUsage imports rdr_env rdrs
        -- If you use 'signum' from Num, then the user may well have
        -- imported Num(signum).  We don't want to complain that
        -- Num is not itself mentioned.  Hence the two cases in add_unused_with.
-
-        look_fld p occ = gre_name sel_gre
-          where
-            sel_gres = lookupSubBndrGREs rdr_env (ParentIs p) (mkRdrUnqual occ)
-            sel_gre = ASSERT ( notNull sel_gres ) head sel_gres
 
 extendImportMap :: GlobalRdrEnv -> RdrName -> ImportMap -> ImportMap
 -- For a used RdrName, find all the import decls that brought
@@ -1669,10 +1669,10 @@ printMinimalImports imports_w_usage
                        , x `elem` xs    -- Note [Partial export]
                        ] of
            [xs] | all_used xs -> [IEThingAll n]
-                | otherwise   -> [IEThingWith n (filter (/= n) ns) fld_occs]
+                | otherwise   -> [IEThingWith n (filter (/= n) ns) fs]
            _other -> case fs of -- Note [Overloaded field import]
                       NonOverloaded ys -> map IEVar (ns ++ ys)
-                      Overloaded    zs -> [IEThingWith n (filter (/= n) ns) (map fst zs)]
+                      Overloaded    _  -> [IEThingWith n (filter (/= n) ns) fs]
         where
           fld_occs = availFieldsOccs fs
 
