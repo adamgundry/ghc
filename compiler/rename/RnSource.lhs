@@ -73,29 +73,33 @@ Checks the @(..)@ etc constraints in the export list.
 -- does NOT assume that anything is in scope already
 rnSrcDecls :: [Name] -> HsGroup RdrName -> RnM (TcGblEnv, HsGroup Name)
 -- Rename a HsGroup; used for normal source files *and* hs-boot files
-rnSrcDecls extra_deps group@(HsGroup { hs_valds   = val_decls,
-                                       hs_tyclds  = tycl_decls,
-                                       hs_instds  = inst_decls,
-                                       hs_derivds = deriv_decls,
-                                       hs_fixds   = fix_decls,
-                                       hs_warnds  = warn_decls,
-                                       hs_annds   = ann_decls,
-                                       hs_fords   = foreign_decls,
-                                       hs_defds   = default_decls,
-                                       hs_ruleds  = rule_decls,
-                                       hs_vects   = vect_decls,
-                                       hs_docs    = docs })
+rnSrcDecls extra_deps grp
  = do {
    -- (A) Process the fixity declarations, creating a mapping from
    --     FastStrings to FixItems.
    --     Also checks for duplcates.
-   local_fix_env <- makeMiniFixityEnv fix_decls ;
+   local_fix_env <- makeMiniFixityEnv (hs_fixds grp) ;
 
    -- (B) Bring top level binders (and their fixities) into scope,
    --     *except* for the value bindings, which get brought in below.
    --     However *do* include class ops, data constructors
-   --     And for hs-boot files *do* include the value signatures
-   (tc_envs, tc_bndrs, flds) <- getLocalNonValBinders local_fix_env group ;
+   --     and for hs-boot files *do* include the value signatures.
+   --     Update the group with the names of implicit bindings.
+   (group, tc_envs, tc_bndrs, flds) <- getLocalNonValBinders local_fix_env grp ;
+
+   let { (HsGroup { hs_valds   = val_decls,
+                    hs_tyclds  = tycl_decls,
+                    hs_instds  = inst_decls,
+                    hs_derivds = deriv_decls,
+                    hs_fixds   = fix_decls,
+                    hs_warnds  = warn_decls,
+                    hs_annds   = ann_decls,
+                    hs_fords   = foreign_decls,
+                    hs_defds   = default_decls,
+                    hs_ruleds  = rule_decls,
+                    hs_vects   = vect_decls,
+                    hs_docs    = docs }) = group } ;
+
    setEnvs tc_envs $ do {
 
    failIfErrsM ; -- No point in continuing if (say) we have duplicate declarations
@@ -567,11 +571,13 @@ rnDataFamInstDecl :: Maybe (Name, [Name])
                   -> DataFamInstDecl RdrName
                   -> RnM (DataFamInstDecl Name, FreeVars)
 rnDataFamInstDecl mb_cls (DataFamInstDecl { dfid_tycon = tycon
+                                          , dfid_rep_tycon = rep_tycon
                                           , dfid_pats  = HsWB { hswb_cts = pats }
                                           , dfid_defn  = defn })
   = do { (tycon', pats', defn', fvs) <-
            rnFamInstDecl (TyDataCtx tycon) mb_cls tycon pats defn rnDataDefn
        ; return (DataFamInstDecl { dfid_tycon = tycon'
+                                 , dfid_rep_tycon = rep_tycon
                                  , dfid_pats  = pats'
                                  , dfid_defn  = defn'
                                  , dfid_fvs   = fvs }, fvs) }

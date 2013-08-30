@@ -153,7 +153,9 @@ mkFamInstData :: SrcSpan
 mkFamInstData loc new_or_data cType (L _ (mcxt, tycl_hdr)) ksig data_cons maybe_deriv
   = do { (tc, tparams) <- checkTyClHdr tycl_hdr
        ; defn <- mkDataDefn new_or_data cType mcxt ksig data_cons maybe_deriv
-       ; return (L loc (DataFamInstDecl { dfid_tycon = tc, dfid_pats = mkHsWithBndrs tparams
+       ; return (L loc (DataFamInstDecl { dfid_tycon = tc
+                                        , dfid_rep_tycon = placeHolderRepTyCon
+                                        , dfid_pats = mkHsWithBndrs tparams
                                         , dfid_defn = defn, dfid_fvs = placeHolderNames })) }
 
 mkDataDefn :: NewOrData

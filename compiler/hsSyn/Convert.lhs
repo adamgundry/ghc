@@ -237,8 +237,11 @@ cvtDec (DataInstD ctxt tc tys constrs derivs)
                                , dd_cons = cons', dd_derivs = derivs' }
 
        ; returnL $ InstD $ DataFamInstD
-           { dfid_inst = DataFamInstDecl { dfid_tycon = tc', dfid_pats = typats'
-                                         , dfid_defn = defn, dfid_fvs = placeHolderNames } }}
+           { dfid_inst = DataFamInstDecl { dfid_tycon = tc'
+                                         , dfid_rep_tycon = placeHolderRepTyCon
+                                         , dfid_pats = typats'
+                                         , dfid_defn = defn
+                                         , dfid_fvs = placeHolderNames} }}
 
 cvtDec (NewtypeInstD ctxt tc tys constr derivs)
   = do { (ctxt', tc', typats') <- cvt_tyinst_hdr ctxt tc tys
@@ -249,8 +252,11 @@ cvtDec (NewtypeInstD ctxt tc tys constr derivs)
                                , dd_kindSig = Nothing
                                , dd_cons = [con'], dd_derivs = derivs' }
        ; returnL $ InstD $ DataFamInstD
-           { dfid_inst = DataFamInstDecl { dfid_tycon = tc', dfid_pats = typats'
-                                         , dfid_defn = defn, dfid_fvs = placeHolderNames } }}
+           { dfid_inst = DataFamInstDecl { dfid_tycon = tc'
+                                         , dfid_rep_tycon = placeHolderRepTyCon
+                                         , dfid_pats = typats'
+                                         , dfid_defn = defn
+                                         , dfid_fvs = placeHolderNames } }}
 
 cvtDec (TySynInstD tc eqn)
   = do  { tc' <- tconNameL tc

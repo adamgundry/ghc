@@ -502,7 +502,8 @@ used for source code.
 
 \begin{code}
 getLocalNonValBinders :: MiniFixityEnv -> HsGroup RdrName
-                      -> RnM ((TcGblEnv, TcLclEnv), NameSet, [(Name, [FieldLabel])])
+                      -> RnM (HsGroup RdrName, (TcGblEnv, TcLclEnv),
+                                 NameSet, [(Name, [FieldLabel])])
 -- Get all the top-level binders bound the group *except*
 -- for value bindings, which are treated separately
 -- Specifically we return AvailInfo for
@@ -512,11 +513,15 @@ getLocalNonValBinders :: MiniFixityEnv -> HsGroup RdrName
 --      foreign imports
 --      (in hs-boot files) value signatures
 
+-- Returns an updated group in which the implicitly generated names
+-- (for data family representation types) have been filled in, but
+-- the syntax has not otherwise been renamed.
+
 getLocalNonValBinders fixity_env
-     (HsGroup { hs_valds  = val_binds,
-                hs_tyclds = tycl_decls,
-                hs_instds = inst_decls,
-                hs_fords  = foreign_decls })
+     group@(HsGroup { hs_valds  = val_binds,
+                      hs_tyclds = tycl_decls,
+                      hs_instds = inst_decls,
+                      hs_fords  = foreign_decls })
   = do  { -- Process all type/class decls *except* family instances
         ; overload_ok <- xoptM Opt_OverloadedRecordFields
         ; (tc_avails, tc_fldss) <- fmap unzip $ mapM (new_tc overload_ok) (tyClGroupConcat tycl_decls)
@@ -527,7 +532,7 @@ getLocalNonValBinders fixity_env
 
           -- Process all family instances
           -- to bring new data constructors into scope
-        ; (nti_avails, nti_flds) <- fmap mconcat $ mapM (new_assoc overload_ok) inst_decls
+        ; (inst_decls', nti_availss, nti_fldss) <- mapAndUnzip3M (new_assoc overload_ok) inst_decls
 
           -- Finish off with value binders:
           --    foreign decls for an ordinary module
@@ -537,12 +542,15 @@ getLocalNonValBinders fixity_env
                         | otherwise = for_hs_bndrs
         ; val_avails <- mapM new_simple val_bndrs
 
-        ; let avails    = nti_avails ++ val_avails
+        ; let avails    = concat nti_availss ++ val_avails
               new_bndrs = availsToNameSet avails `unionNameSets`
                           availsToNameSet tc_avails
-              flds      = nti_flds ++ concat tc_fldss
+              flds      = concat nti_fldss ++ concat tc_fldss
         ; envs <- extendGlobalRdrEnvRn avails fixity_env
-        ; return (envs, new_bndrs, flds) } }
+
+        ; let group' = group{ hs_instds = inst_decls' }
+
+        ; return (group', envs, new_bndrs, flds) } }
   where
     for_hs_bndrs :: [Located RdrName]
     for_hs_bndrs = [nm | L _ (ForeignImport nm _ _ _) <- foreign_decls]
@@ -594,34 +602,44 @@ getLocalNonValBinders fixity_env
         find_con_decl_fld x = expectJust "getLocalNonValBinders/find_con_decl_fld" $
                                 find (\ fl -> flOccName fl == rdrNameOcc (unLoc (cd_fld_lbl x))) flds
 
-    new_assoc :: Bool -> LInstDecl RdrName -> RnM ([AvailInfo], [(Name, [FieldLabel])])
-    new_assoc _ (L _ (TyFamInstD {})) = return ([], [])
+    new_assoc :: Bool -> LInstDecl RdrName -> RnM (LInstDecl RdrName, [AvailInfo],
+                                                      [(Name, [FieldLabel])])
+    new_assoc _ decl@(L _ (TyFamInstD {})) = return (decl, [], [])
       -- type instances don't bind new names
 
-    new_assoc overload_ok (L _ (DataFamInstD { dfid_inst = d }))
-      = do { (avail, flds) <- new_di overload_ok Nothing d
-           ; return ([avail], flds) }
-    new_assoc overload_ok (L _ (ClsInstD { cid_inst = ClsInstDecl
-                                           { cid_poly_ty = inst_ty
-                                           , cid_datafam_insts = adts } }))
-      | Just (_, _, L loc cls_rdr, _) <- splitLHsInstDeclTy_maybe inst_ty
-      = do { cls_nm <- setSrcSpan loc $ lookupGlobalOccRn cls_rdr
-           ; (avails, fldss) <- fmap unzip $ mapM (new_di overload_ok (Just cls_nm) . unLoc) adts
-           ; return (avails, concat fldss) }
+    new_assoc overload_ok (L loc (DataFamInstD d))
+      = do { (d', avail, flds) <- new_di overload_ok Nothing d
+           ; return (L loc (DataFamInstD d'), [avail], flds) }
+    new_assoc overload_ok decl@(L loc (ClsInstD cid@(ClsInstDecl { cid_poly_ty = inst_ty
+                                                                 , cid_datafam_insts = adts })))
+      | Just (_, _, L loc' cls_rdr, tys) <- splitLHsInstDeclTy_maybe inst_ty
+      = do { cls_nm <- setSrcSpan loc' $ lookupGlobalOccRn cls_rdr
+           ; (adts', avails, fldss) <- mapAndUnzip3M (new_loc_di overload_ok (Just cls_nm)) adts
+           ; let decl' = L loc (ClsInstD cid{ cid_datafam_insts = adts' })
+           ; return (decl', avails, concat fldss) }
       | otherwise
-      = return ([], [])    -- Do not crash on ill-formed instances
-                           -- Eg   instance !Show Int   Trac #3811c
+      = return (decl, [], [])    -- Do not crash on ill-formed instances
+                                 -- Eg   instance !Show Int   Trac #3811c
 
     new_di :: Bool -> Maybe Name -> DataFamInstDecl RdrName
-                   -> RnM (AvailInfo, [(Name, [FieldLabel])])
+                   -> RnM (DataFamInstDecl RdrName, AvailInfo, [(Name, [FieldLabel])])
     new_di overload_ok mb_cls ti_decl
         = do { main_name <- lookupFamInstName mb_cls (dfid_tycon ti_decl)
              ; let (bndrs, flds) = hsDataFamInstBinders ti_decl
              ; sub_names <- mapM newTopSrcBinder bndrs
-             ; flds' <- mapM (new_rec_sel overload_ok (nameOccName $ unLoc main_name) . fstOf3) flds
-             ; let fld_env = mk_fld_env (dfid_defn ti_decl) sub_names flds'
-             ; return (AvailTC (unLoc main_name) sub_names (fieldLabelsToAvailFields flds'), fld_env) }
-                        -- main_name is not bound here!
+             ; rep_tc_name <- newFamInstTyConName main_name [] -- AMG TODO pats
+             ; flds' <- mapM (new_rec_sel overload_ok (nameOccName rep_tc_name) . fstOf3) flds
+             ; let ti_decl' = ti_decl{ dfid_rep_tycon = rep_tc_name }
+                   avail    = AvailTC (unLoc main_name) sub_names (fieldLabelsToAvailFields flds')
+                                  -- main_name is not bound here!
+                   fld_env  = mk_fld_env (dfid_defn ti_decl) sub_names flds'
+             ; return (ti_decl', avail, fld_env) }
+
+    new_loc_di :: Bool -> Maybe Name -> LDataFamInstDecl RdrName
+                   -> RnM (LDataFamInstDecl RdrName, AvailInfo, [(Name, [FieldLabel])])
+    new_loc_di overload_ok mb_cls (L loc d)
+        = do { (d', avails, flds) <- new_di overload_ok mb_cls d
+             ; return (L loc d', avails, flds) }
 \end{code}
 
 Note [Looking up family names in family instances]
