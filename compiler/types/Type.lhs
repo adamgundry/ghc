@@ -53,6 +53,7 @@ module Type (
         noParenPred, isClassPred, isEqPred,
         isIPPred, isIPPred_maybe, isIPTyCon, isIPClass,
         isHasClass, isUpdClass, isRecordsClass,
+        isGetResultFam, isSetResultFam, isRecordsFam,
 
         -- Deconstructing predicate types
         PredTree(..), classifyPredType,
@@ -882,6 +883,11 @@ isHasClass, isUpdClass, isRecordsClass :: Class -> Bool
 isHasClass cls = cls `hasKey` recordHasClassNameKey
 isUpdClass cls = cls `hasKey` recordUpdClassNameKey
 isRecordsClass cls = isHasClass cls || isUpdClass cls
+
+isGetResultFam, isSetResultFam, isRecordsFam :: TyCon -> Bool
+isGetResultFam tc = tc `hasKey` getResultFamNameKey
+isSetResultFam tc = tc `hasKey` setResultFamNameKey
+isRecordsFam tc   = isGetResultFam tc || isSetResultFam tc
 
 \end{code}
 

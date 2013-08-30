@@ -225,66 +225,16 @@ then we have a coercion (ie, type instance of family instance coercion)
 which implies that :R42T was declared as 'data instance T [a]'.
 
 \begin{code}
-lookupRecFldInsts :: FastString -> TyCon -> ((DFunId, DFunId, FamInst, FamInst) -> a)
-                         -> (FldInsts Name -> TcM (Maybe a)) -> TcM (Maybe a)
-lookupRecFldInsts lbl tc proj look
-  = do { gbl_env <- getGblEnv
-       ; case lookupSubBndrGREs (tcg_rdr_env gbl_env) parent lbl_rdr of
-           []        -> return Nothing
-           (gre : _) ->
-             let sel_name     = gre_name gre
-                 mb_fld_insts = lookupNameEnv (tcg_fld_inst_env gbl_env) sel_name
-             in case mb_fld_insts of
-                  Just xs -> return $ Just (proj xs)
-                  Nothing -> do { rep_tc <- tcLookupRepTyCon tc sel_name
-                                ; fis    <- lookupRecFldInstNames (mod rep_tc) lbl_occ tc_occ
-                                ; look fis } }
-  where
-    parent  = ParentIs (tyConName tc)
-    lbl_occ = mkVarOccFS lbl
-    lbl_rdr = mkRdrUnqual lbl_occ
-    tc_occ  = getOccName tc
-    mod tc  = nameModule (tyConName tc)
-
-
-lookupRecFldFamInst :: TyCon -> FastString -> TyCon -> [Type] -> TcM (Maybe FamInstMatch)
-lookupRecFldFamInst fam lbl tc tys
-  = do { mb_fam_inst <- lookupRecFldInsts lbl tc get_or_set look
-       ; return $ do { fam_inst <- mb_fam_inst
-                     ; subst <- tcMatchTys (mkVarSet (fi_tvs fam_inst)) (fi_tys fam_inst) tys
-                     ; return $ FamInstMatch fam_inst (substTyVars subst (fi_tvs fam_inst)) } }
-  where
-    is_get = fam `hasKey` getResultFamNameKey
-    get_or_set (_, _, get, set) | is_get    = get
-                                | otherwise = set
-    get_or_set_fis | is_get    = fldInstsGetResult
-                   | otherwise = fldInstsSetResult
-
-    look fis = fmap (fmap (fam_inst_for . toUnbranchedAxiom) . snd) $
-                   tryTc $ tcLookupAxiom (get_or_set_fis fis)
-
-    fam_inst_for axiom | is_get    = mkImportedFamInst getResultFamName
-                                         [Just (tyConName tc), Nothing] axiom
-                       | otherwise = mkImportedFamInst setResultFamName
-                                         [Just (tyConName tc), Nothing, Nothing] axiom
-
-
 tcLookupFamInst :: TyCon -> [Type] -> TcM (Maybe FamInstMatch)
 tcLookupFamInst tycon tys
   | not (isOpenFamilyTyCon tycon)
   = return Nothing
 
-tcLookupFamInst fam tys@[r, f]
-  | fam `hasKey` getResultFamNameKey || fam `hasKey` setResultFamNameKey
-  , Just lbl <- isStrLitTy f
-  , Just (tc, _) <- tcSplitTyConApp_maybe r
-  = lookupRecFldFamInst fam lbl tc tys
-
-tcLookupFamInst fam tys@[r, f, t]
-  | fam `hasKey` setResultFamNameKey
-  , Just lbl <- isStrLitTy f
-  , Just (tc, _) <- tcSplitTyConApp_maybe r
-  = lookupRecFldFamInst fam lbl tc tys
+tcLookupFamInst fam tys@(r:f:_)
+  | isRecordsFam fam
+  , Just lbl     <- isStrLitTy f
+  , Just (tc, args) <- tcSplitTyConApp_maybe r
+  = lookupRecFldFamInst fam lbl tc args tys
 
 tcLookupFamInst tycon tys
   = do { instEnv <- tcGetFamInstEnvs
@@ -298,6 +248,104 @@ tcLookupFamInst tycon tys
               -> return $ Just match
        }
 \end{code}
+
+
+%************************************************************************
+%*									*
+	Lookup record field instances
+%*									*
+%************************************************************************
+
+The GetResult and SetResult type families (defined in GHC.Records) are
+magical, in that rather than looking for instances in the usual way,
+we use lookupRecFldFamInst defined below. This delegates most of the
+work to lookupRecFldInsts, which is also used when looking for
+instances of the Has and Upd classes (by matchClassInst in
+TcInteract).
+
+The idea is that when we are looking for a family instance matching
+
+    GetResult (T a b c) "foo"
+
+we check if field foo belonging to type T is in scope, and if so,
+create a suitable match from the axiom created by
+makeOverloadedRecFldInsts in TcInstDcls (see Note [Instance scoping
+for OverloadedRecordFields] in TcInstDcls). The picture is slightly
+complicated when T is a data family, because then the field actually
+belongs to the representation tycon, though T is its parent for
+lexical scope purposes.
+
+Note [Duplicate field labels with data families]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Consider the following example:
+
+    module M where
+      data family F a
+      data instance F Int = MkF1 { foo :: Int }
+
+    module N where
+      import M
+      data instance F Char = MkF2 { foo :: Char }
+
+Both fields have the same lexical parent (the family tycon F)!  Thus
+it is not enough to lookup the field in the GlobalRdrEnv with
+lookupSubBndrGREs: we also need to check the selector names to find
+the one with the right representation tycon.
+
+\begin{code}
+lookupRecFldFamInst :: TyCon -> FastString -> TyCon -> [Type] -> [Type] -> TcM (Maybe FamInstMatch)
+lookupRecFldFamInst fam lbl tc args tys
+  = do { mb_insts <- lookupRecFldInsts lbl tc args
+       ; mb_fam_inst <- case mb_insts of
+           Nothing          -> return Nothing
+           Just (Left  xs)  -> return $ Just (get_or_set xs)
+           Just (Right fis) -> fmap (fmap (fam_inst_for . toUnbranchedAxiom) . snd) $
+                                   tryTc $ tcLookupAxiom (get_or_set_fis fis)
+       ; return $ do { fam_inst <- mb_fam_inst
+                     ; subst <- tcMatchTys (mkVarSet (fi_tvs fam_inst)) (fi_tys fam_inst) tys
+                     ; return $ FamInstMatch fam_inst (substTyVars subst (fi_tvs fam_inst)) } }
+  where
+    is_get = isGetResultFam fam
+    get_or_set (_, _, get, set) | is_get    = get
+                                | otherwise = set
+    get_or_set_fis | is_get    = fldInstsGetResult
+                   | otherwise = fldInstsSetResult
+
+    fam_inst_for axiom | is_get    = mkImportedFamInst getResultFamName
+                                         [Just (tyConName tc), Nothing] axiom
+                       | otherwise = mkImportedFamInst setResultFamName
+                                         [Just (tyConName tc), Nothing, Nothing] axiom
+
+lookupRecFldInsts :: FastString -> TyCon -> [Type]
+                         -> TcM (Maybe (Either (DFunId, DFunId, FamInst, FamInst) (FldInsts Name)))
+lookupRecFldInsts lbl tc args
+  = do { rep_tc <- if isDataFamilyTyCon tc
+                   then do { mb_fi <- tcLookupFamInst tc args
+                           ; return $ case mb_fi of
+                               Nothing  -> tc
+                               Just fim -> tcTyConAppTyCon (fi_rhs (fim_instance fim)) }
+                   else return tc
+       ; case find ((== lbl_occ) . flOccName) (tyConFieldLabels rep_tc) of
+           Nothing -> return Nothing -- This field doesn't belong to the datatype!
+           Just fl -> do
+               { gbl_env <- getGblEnv
+               ; let rep_tc_occ = getOccName rep_tc
+                     mod        = nameModule (tyConName rep_tc)
+                     sel_name   = flSelector fl
+                     gres       = lookupSubBndrGREs (tcg_rdr_env gbl_env) parent lbl_rdr
+                 -- See Note [Duplicate field labels with data families]
+               ; if any ((sel_name ==) . gre_name) gres
+                 then case lookupNameEnv (tcg_fld_inst_env gbl_env) sel_name of
+                        Just xs -> return $ Just (Left xs)
+                        Nothing -> fmap (Just . Right) $
+                                       lookupRecFldInstNames mod lbl_occ rep_tc_occ
+                 else return Nothing } }
+  where
+    parent  = ParentIs (tyConName tc)
+    lbl_occ = mkVarOccFS lbl
+    lbl_rdr = mkRdrUnqual lbl_occ
+\end{code}
+
 
 
 %************************************************************************

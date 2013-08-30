@@ -1798,8 +1798,12 @@ matchClassInst _ clas [ ty1, ty2 ] _
 matchClassInst inerts clas tys@[r, f, t] loc
   | isRecordsClass clas
   , Just lbl <- isStrLitTy f
-  , Just (tc, _) <- splitTyConApp_maybe r
-    = do { mb_dfun <- lookupRecFldInsts lbl tc has_or_upd look
+  , Just (tc, args) <- splitTyConApp_maybe r
+    = do { mb_insts <- lookupRecFldInsts lbl tc args
+         ; mb_dfun  <- case mb_insts of
+                         Nothing          -> return Nothing
+                         Just (Left xs)   -> return $ Just (has_or_upd xs)
+                         Just (Right fis) -> tcsLookupId_maybe (has_or_upd_fis fis)
          ; case mb_dfun of
              Nothing   -> return NoInstance
              Just dfun ->
@@ -1821,8 +1825,6 @@ matchClassInst inerts clas tys@[r, f, t] loc
 
     has_or_upd_fis | is_has    = fldInstsHas
                    | otherwise = fldInstsUpd
-
-    look fis = fmap snd $ tryTc $ tcLookupId (has_or_upd_fis fis)
 
     lookup_tv :: TvSubst -> TyVar -> DFunInstType
         -- See Note [DFunInstType: instantiating types] in InstEnv
