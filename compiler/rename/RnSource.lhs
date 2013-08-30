@@ -104,7 +104,7 @@ rnSrcDecls extra_deps group@(HsGroup { hs_valds   = val_decls,
    --     extend the record field env.
    --     This depends on the data constructors and field names being in
    --     scope from (B) above
-   inNewEnv (extendRecordFieldEnv tycl_decls inst_decls flds) $ \ _ -> do {
+   inNewEnv (extendRecordFieldEnv flds) $ \ _ -> do {
 
    -- (D) Rename the left-hand sides of the value bindings.
    --     This depends on everything from (B) being in scope,
@@ -1348,43 +1348,15 @@ For example:
 %*********************************************************
 
 Get the mapping from constructors to fields for this module.
-It's convenient to do this after the data type decls have been renamed
+This used to be complicated, but now all the work is done by
+RnNames.getLocalNonValBinders.
+
 \begin{code}
-extendRecordFieldEnv :: [TyClGroup RdrName] -> [LInstDecl RdrName] ->
-                        [FieldLabel] -> TcM TcGblEnv
-extendRecordFieldEnv tycl_decls inst_decls flds
+extendRecordFieldEnv :: [(Name, [FieldLabel])] -> TcM TcGblEnv
+extendRecordFieldEnv flds
   = do  { tcg_env <- getGblEnv
-        ; overload_ok <- xoptM Opt_OverloadedRecordFields
-        ; field_env' <- foldrM (get_con overload_ok) (tcg_field_env tcg_env) all_data_cons
+        ; let field_env' = extendNameEnvList (tcg_field_env tcg_env) flds
         ; return (tcg_env { tcg_field_env = field_env' }) }
-  where
-    -- we want to lookup:
-    --  (a) a datatype constructor
-    --  (b) a record field
-    -- knowing that they're from this module.
-    -- lookupLocatedTopBndrRn does this, because it does a lookupGreLocalRn_maybe,
-    -- which keeps only the local ones.
-    lookup x = do { x' <- lookupLocatedTopBndrRn x
-                    ; return $ unLoc x'}
-
-    all_data_cons :: [(RdrName, ConDecl RdrName)]
-    all_data_cons = [(tc, con) | (tc, HsDataDefn { dd_cons = cons }) <- all_ty_defs
-                    , L _ con <- cons ]
-    all_ty_defs = [ (tc, defn) | L _ (DataDecl { tcdLName = L _ tc, tcdDataDefn = defn }) <- tyClGroupConcat tycl_decls ]
-               ++ [ (tc, defn) | DataFamInstDecl { dfid_tycon = L _ tc, dfid_defn = defn } <- instDeclDataFamInsts inst_decls ]  -- Do not forget associated types!
-
-    get_con overload_ok (tc, ConDecl { con_name = con, con_details = RecCon flds }) env
-        = do { con'  <- lookup con
-             ; let flds' = map (lookFld overload_ok (rdrNameOcc tc)) flds
-             ; return $ extendNameEnv env con' flds' }
-    get_con _ _ env = return env
-
-    lookFld overload_ok tc x = expectJust "extendRecordFieldEnv/lookFld" (find is_sel flds)
-      where
-        lbl = rdrNameOcc $ unLoc $ cd_fld_lbl x
-        sel_occ = mkRecSelOcc lbl tc
-        is_sel fl | overload_ok = nameOccName (flSelector fl) == sel_occ
-                  | otherwise   = flOccName fl == lbl
 \end{code}
 
 %*********************************************************

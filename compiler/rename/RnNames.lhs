@@ -502,7 +502,7 @@ used for source code.
 
 \begin{code}
 getLocalNonValBinders :: MiniFixityEnv -> HsGroup RdrName
-                      -> RnM ((TcGblEnv, TcLclEnv), NameSet, [FieldLabel])
+                      -> RnM ((TcGblEnv, TcLclEnv), NameSet, [(Name, [FieldLabel])])
 -- Get all the top-level binders bound the group *except*
 -- for value bindings, which are treated separately
 -- Specifically we return AvailInfo for
@@ -556,12 +556,15 @@ getLocalNonValBinders fixity_env
     new_simple rdr_name = do{ nm <- newTopSrcBinder rdr_name
                             ; return (Avail nm) }
 
-    new_tc :: Bool -> LTyClDecl RdrName -> RnM (AvailInfo, [FieldLabel])
+    new_tc :: Bool -> LTyClDecl RdrName -> RnM (AvailInfo, [(Name, [FieldLabel])])
     new_tc overload_ok tc_decl -- NOT for type/data instances
         = do { let (bndrs, flds) = hsTyClDeclBinders (unLoc tc_decl)
              ; names@(main_name : _) <- mapM newTopSrcBinder bndrs
              ; flds' <- mapM (new_rec_sel overload_ok (nameOccName main_name) . fstOf3) flds
-             ; return (AvailTC main_name names (fieldLabelsToAvailFields flds'), flds') }
+             ; let fld_env = case unLoc tc_decl of
+                               DataDecl { tcdDataDefn = d } -> mk_fld_env d names flds'
+                               _                            -> []
+             ; return (AvailTC main_name names (fieldLabelsToAvailFields flds'), fld_env) }
 
     new_rec_sel :: Bool -> OccName -> Located RdrName -> RnM FieldLabel
     new_rec_sel overload_ok tc (L loc fld) =
@@ -576,7 +579,22 @@ getLocalNonValBinders fixity_env
         lbl           = rdrNameOcc fld
         (sel_occ, is) = mkOverloadedRecFldOccs lbl tc
 
-    new_assoc :: Bool -> LInstDecl RdrName -> RnM ([AvailInfo], [FieldLabel])
+    -- Calculate the mapping from constructor names to fields, which
+    -- will go in tcg_field_env. It's convenient to do this here where
+    -- we are working with a single datatype definition.
+    mk_fld_env :: HsDataDefn RdrName -> [Name] -> [FieldLabel] -> [(Name, [FieldLabel])]
+    mk_fld_env d names flds = concatMap find_con_flds (dd_cons d)
+      where
+        find_con_flds (L _ (ConDecl { con_name = L _ rdr, con_details = RecCon cdflds }))
+            = [(find_con_name rdr, map find_con_decl_fld cdflds)]
+        find_con_flds _ = []
+
+        find_con_name rdr = expectJust "getLocalNonValBinders/find_con_name" $
+                                find (\ n -> nameOccName n == rdrNameOcc rdr) names
+        find_con_decl_fld x = expectJust "getLocalNonValBinders/find_con_decl_fld" $
+                                find (\ fl -> flOccName fl == rdrNameOcc (unLoc (cd_fld_lbl x))) flds
+
+    new_assoc :: Bool -> LInstDecl RdrName -> RnM ([AvailInfo], [(Name, [FieldLabel])])
     new_assoc _ (L _ (TyFamInstD {})) = return ([], [])
       -- type instances don't bind new names
 
@@ -594,13 +612,15 @@ getLocalNonValBinders fixity_env
       = return ([], [])    -- Do not crash on ill-formed instances
                            -- Eg   instance !Show Int   Trac #3811c
 
-    new_di :: Bool -> Maybe Name -> DataFamInstDecl RdrName -> RnM (AvailInfo, [FieldLabel])
+    new_di :: Bool -> Maybe Name -> DataFamInstDecl RdrName
+                   -> RnM (AvailInfo, [(Name, [FieldLabel])])
     new_di overload_ok mb_cls ti_decl
         = do { main_name <- lookupFamInstName mb_cls (dfid_tycon ti_decl)
              ; let (bndrs, flds) = hsDataFamInstBinders ti_decl
              ; sub_names <- mapM newTopSrcBinder bndrs
              ; flds' <- mapM (new_rec_sel overload_ok (nameOccName $ unLoc main_name) . fstOf3) flds
-             ; return (AvailTC (unLoc main_name) sub_names (fieldLabelsToAvailFields flds'), flds') }
+             ; let fld_env = mk_fld_env (dfid_defn ti_decl) sub_names flds'
+             ; return (AvailTC (unLoc main_name) sub_names (fieldLabelsToAvailFields flds'), fld_env) }
                         -- main_name is not bound here!
 \end{code}
 
