@@ -34,6 +34,8 @@ module HsTypes (
         splitHsFunType,
         splitHsAppTys, hsTyGetAppHead_maybe, mkHsAppTys, mkHsOpTy,
 
+        getDFunHsTypeKey,
+
         -- Printing
         pprParendHsType, pprHsForAll, pprHsContext, ppr_hs_context,
     ) where
@@ -43,11 +45,12 @@ import {-# SOURCE #-} HsExpr ( HsSplice, pprSplice )
 import HsLit
 
 import NameSet( FreeVars )
-import Name( Name )
-import OccName
+import Name
 import RdrName( RdrName, rdrNameOcc )
 import DataCon( HsBang(..) )
 import Type
+import TysWiredIn
+import PrelNames
 import TyCon
 import HsDoc
 import BasicTypes
@@ -523,6 +526,40 @@ splitHsFunType (L _ (HsFunTy x y)) = (x:args, res)
   (args, res) = splitHsFunType y
 splitHsFunType (L _ (HsParTy ty))  = splitHsFunType ty
 splitHsFunType other               = ([], other)
+\end{code}
+
+
+\begin{code}
+-- Get some string from a type, to be used to construct a dictionary
+-- function name (like getDFunTyKey in TcType, but for HsTypes)
+getDFunHsTypeKey :: HsType RdrName -> String
+getDFunHsTypeKey (HsForAllTy _ _ _ t)   = getDFunHsTypeKey (unLoc t)
+getDFunHsTypeKey (HsTyVar tv)           = occNameString (rdrNameOcc tv)
+getDFunHsTypeKey (HsAppTy fun _)        = getDFunHsTypeKey (unLoc fun)
+getDFunHsTypeKey (HsFunTy {})           = occNameString (getOccName funTyCon)
+getDFunHsTypeKey (HsListTy _)           = occNameString (getOccName listTyCon)
+getDFunHsTypeKey (HsPArrTy _)           = occNameString (getOccName parrTyCon)
+getDFunHsTypeKey (HsTupleTy {})         = occNameString (getOccName unitTyCon)
+getDFunHsTypeKey (HsOpTy _ (_, op) _)   = occNameString (rdrNameOcc (unLoc op))
+getDFunHsTypeKey (HsParTy ty)           = getDFunHsTypeKey (unLoc ty)
+getDFunHsTypeKey (HsIParamTy {})        = occNameString (getOccName ipClassName)
+getDFunHsTypeKey (HsEqTy {})            = occNameString (getOccName eqTyCon)
+getDFunHsTypeKey (HsKindSig ty _)       = getDFunHsTypeKey (unLoc ty)
+getDFunHsTypeKey (HsRoleAnnot ty _)     = getDFunHsTypeKey (unLoc ty)
+getDFunHsTypeKey (HsQuasiQuoteTy {})    = "quasiQuote"
+getDFunHsTypeKey (HsSpliceTy {})        = "splice"
+getDFunHsTypeKey (HsDocTy ty _)         = getDFunHsTypeKey (unLoc ty)
+getDFunHsTypeKey (HsBangTy _ ty)        = getDFunHsTypeKey (unLoc ty)
+getDFunHsTypeKey (HsRecTy {})           = "record"
+getDFunHsTypeKey (HsCoreTy {})          = "core"
+getDFunHsTypeKey (HsExplicitListTy {})  = occNameString (getOccName listTyCon)
+getDFunHsTypeKey (HsExplicitTupleTy {}) = occNameString (getOccName unitTyCon)
+getDFunHsTypeKey (HsTyLit x)            = getDFunHsTyLitKey x
+getDFunHsTypeKey (HsWrapTy _ ty)        = getDFunHsTypeKey ty
+
+getDFunHsTyLitKey :: HsTyLit -> String
+getDFunHsTyLitKey (HsNumTy n) = show n
+getDFunHsTyLitKey (HsStrTy n) = show n
 \end{code}
 
 

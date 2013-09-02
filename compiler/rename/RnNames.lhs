@@ -627,7 +627,7 @@ getLocalNonValBinders fixity_env
         = do { main_name <- lookupFamInstName mb_cls (dfid_tycon ti_decl)
              ; let (bndrs, flds) = hsDataFamInstBinders ti_decl
              ; sub_names <- mapM newTopSrcBinder bndrs
-             ; rep_tc_name <- newFamInstTyConName main_name [] -- AMG TODO pats
+             ; rep_tc_name <- newFamInstTyConName' main_name (hswb_cts (dfid_pats ti_decl))
              ; flds' <- mapM (new_rec_sel overload_ok (nameOccName rep_tc_name) . fstOf3) flds
              ; let ti_decl' = ti_decl{ dfid_rep_tycon = rep_tc_name }
                    avail    = AvailTC (unLoc main_name) sub_names (fieldLabelsToAvailFields flds')
