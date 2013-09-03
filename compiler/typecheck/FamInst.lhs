@@ -333,6 +333,7 @@ lookupRecFldInsts lbl tc args
                      mod        = nameModule (tyConName rep_tc)
                      sel_name   = flSelector fl
                      gres       = lookupSubBndrGREs (tcg_rdr_env gbl_env) parent lbl_rdr
+               ; addUsedSelector sel_name
                  -- See Note [Duplicate field labels with data families]
                ; if any ((sel_name ==) . gre_name) gres
                  then case lookupNameEnv (tcg_fld_inst_env gbl_env) sel_name of

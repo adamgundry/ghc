@@ -1683,8 +1683,7 @@ makeOverloadedRecFldInsts tycl_decls inst_decls
 -- appropriate Has, Upd, GetResult and SetResult instances.
 makeRecFldInstsFor :: (OccName, Name, Name) -> TcM [(Name, FldInstDetails)]
 makeRecFldInstsFor (lbl, sel_name, tycon_name)
-  = do { addUsedRdrNames [mkRdrUnqual (nameOccName sel_name)]
-       ; rep_tc <- lookupRepTyCon tycon_name sel_name
+  = do { rep_tc <- lookupRepTyCon tycon_name sel_name
 
        -- Find a relevant data constructor (one that has this field)
        -- and extract information from the FieldLabel.

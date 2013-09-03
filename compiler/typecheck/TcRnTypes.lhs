@@ -238,6 +238,7 @@ data TcGblEnv
 
         tcg_dus :: DefUses,   -- ^ What is defined in this module and what is used.
         tcg_used_rdrnames :: TcRef (Set RdrName),
+        tcg_used_selectors :: TcRef NameSet,
           -- See Note [Tracking unused binding and imports]
 
         tcg_keep :: TcRef NameSet,
@@ -331,7 +332,7 @@ type RecFieldEnv = NameEnv [FieldLabel]
 
 Note [Tracking unused binding and imports]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-We gather two sorts of usage information
+We gather three sorts of usage information
  * tcg_dus (defs/uses)
       Records *defined* Names (local, top-level)
           and *used*    Names (local or imported)
@@ -350,6 +351,13 @@ We gather two sorts of usage information
       tell whether the reference was qualified or unqualified, which
       is esssential in deciding whether a particular import decl 
       is unnecessary.  This info isn't present in Names.
+
+ * tcg_used_selectors
+      Records the Names of record selectors that are used during
+      typechecking (by the OverloadedRecordFields extension). These
+      may otherwise be missed from tcg_used_rdrnames as they need
+      not actually occur in the source text: they might be needed
+      only to satisfy a Has constraint, for example.
 
 
 %************************************************************************

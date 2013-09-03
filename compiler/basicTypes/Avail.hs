@@ -8,6 +8,7 @@ module Avail (
     Avails, AvailFlds(..), AvailFields,
     AvailInfo(..),
     availsToNameSet,
+    availsToNameSetWithSelectors,
     availsToNameEnv,
     availName, availNames, availNonFldNames,
     availFlds, availOverloadedFlds,
@@ -86,6 +87,10 @@ availsToNameSet :: [AvailInfo] -> NameSet
 availsToNameSet avails = foldr add emptyNameSet avails
       where add avail set = addListToNameSet set (availNames avail)
 
+availsToNameSetWithSelectors :: [AvailInfo] -> NameSet
+availsToNameSetWithSelectors avails = foldr add emptyNameSet avails
+      where add avail set = addListToNameSet set (availNamesWithSelectors avail)
+
 availsToNameEnv :: [AvailInfo] -> NameEnv AvailInfo
 availsToNameEnv avails = foldr add emptyNameEnv avails
      where add avail env = extendNameEnvList env
@@ -97,11 +102,16 @@ availName :: AvailInfo -> Name
 availName (Avail n)       = n
 availName (AvailTC n _ _) = n
 
--- | All names made available by the availability information
+-- | All names made available by the availability information (excluding selectors)
 availNames :: AvailInfo -> [Name]
 availNames (Avail n)                         = [n]
 availNames (AvailTC _ ns (NonOverloaded fs)) = ns ++ fs
 availNames (AvailTC _ ns (Overloaded _))     = ns
+
+-- | All names made available by the availability information (including selectors)
+availNamesWithSelectors :: AvailInfo -> [Name]
+availNamesWithSelectors (Avail n)         = [n]
+availNamesWithSelectors (AvailTC _ ns fs) = ns ++ availFieldsNames fs
 
 -- | Names for non-fields made available by the availability information
 availNonFldNames :: AvailInfo -> [Name]

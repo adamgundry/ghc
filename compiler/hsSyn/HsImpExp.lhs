@@ -151,7 +151,11 @@ instance (HasOccName name, OutputableBndr name) => Outputable (IE name) where
     ppr (IEThingAll     thing)  = hcat [pprImpExp thing, text "(..)"]
     ppr (IEThingWith thing withs flds)
         = pprImpExp thing <> parens (fsep (punctuate comma
-                                        (map pprImpExp withs ++ pprAvailFields flds)))
+                                        (map pprImpExp withs ++ ppr_flds)))
+      where
+        ppr_flds = case flds of
+                     NonOverloaded xs -> map ppr xs
+                     Overloaded xs    -> map (ppr . fst) xs
     ppr (IEModuleContents mod')
         = ptext (sLit "module") <+> ppr mod'
     ppr (IEGroup n _)           = text ("<IEGroup: " ++ (show n) ++ ">")

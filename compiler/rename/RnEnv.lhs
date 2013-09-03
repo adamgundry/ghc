@@ -22,7 +22,7 @@ module RnEnv (
         lookupSubBndrGREs, lookupConstructorFields,
         lookupRecFldInstNames, lookupSelector,
         lookupSyntaxName, lookupSyntaxNames, lookupIfThenElse,
-        lookupGreRn, lookupGreRn_maybe,
+        lookupGreRn, lookupGreLocalRn, lookupGreRn_maybe,
         lookupGlobalOccInThisModule, lookupGreLocalRn_maybe, 
         getLookupOccRn, addUsedRdrNames,
 
@@ -819,6 +819,12 @@ Note [Handling of deprecations]
      - the things exported by a module export 'module M'
 
 \begin{code}
+addUsedSelector :: Name -> RnM ()
+-- Record usage of record selectors by OverloadedRecordFields
+addUsedSelector n = do { env <- getGblEnv
+                       ; updMutVar (tcg_used_selectors env)
+                                   (\s -> addOneToNameSet s n) }
+
 addUsedRdrName :: Bool -> GlobalRdrElt -> RdrName -> RnM ()
 -- Record usage of imported RdrNames
 addUsedRdrName warnIfDeprec gre rdr

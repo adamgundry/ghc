@@ -1161,7 +1161,7 @@ rnExports explicit_mod exports
                                                 Nothing -> Nothing
                                                 Just _  -> rn_exports,
                             tcg_dus = tcg_dus tcg_env `plusDU`
-                                      usesOnly (availsToNameSet final_avails) }) }
+                                      usesOnly (availsToNameSetWithSelectors final_avails) }) }
 
 exports_from_avail :: Maybe [LIE RdrName]
                          -- Nothing => no explicit export list
@@ -1425,8 +1425,9 @@ reportUnusedNames :: Maybe [LIE RdrName]    -- Export list
                   -> TcGblEnv -> RnM ()
 reportUnusedNames _export_decls gbl_env
   = do  { traceRn ((text "RUN") <+> (ppr (tcg_dus gbl_env)))
+        ; sel_uses <- readMutVar (tcg_used_selectors gbl_env)
         ; warnUnusedImportDecls gbl_env
-        ; warnUnusedTopBinds   unused_locals }
+        ; warnUnusedTopBinds $ filterOut (used_as_selector sel_uses) unused_locals }
   where
     used_names :: NameSet
     used_names = findUses (tcg_dus gbl_env) emptyNameSet
@@ -1466,6 +1467,10 @@ reportUnusedNames _export_decls gbl_env
     unused_locals = filter is_unused_local defined_but_not_used
     is_unused_local :: GlobalRdrElt -> Bool
     is_unused_local gre = isLocalGRE gre && isExternalName (gre_name gre)
+
+    -- Remove uses of record selectors recorded in the typechecker
+    used_as_selector :: NameSet -> GlobalRdrElt -> Bool
+    used_as_selector sel_uses gre = isRecFldGRE gre && gre_name gre `elemNameSet` sel_uses
 \end{code}
 
 %*********************************************************
@@ -1489,19 +1494,21 @@ type ImportDeclUsage
 warnUnusedImportDecls :: TcGblEnv -> RnM ()
 warnUnusedImportDecls gbl_env
   = do { uses <- readMutVar (tcg_used_rdrnames gbl_env)
+       ; sel_uses <- readMutVar (tcg_used_selectors gbl_env)
        ; let imports = filter explicit_import (tcg_rn_imports gbl_env)
              rdr_env = tcg_rdr_env gbl_env
 
        ; let usage :: [ImportDeclUsage]
-             usage = findImportUsage imports rdr_env (Set.elems uses)
+             usage = findImportUsage imports rdr_env (Set.elems uses) sel_uses fld_env
 
              fld_env = mkNameEnv [ (gre_name gre, (par_lbl par, par_is par))
                                      | gres <- occEnvElts rdr_env
                                      , gre <- gres
-                                     , isRecFldGRE gre
+                                     , isOverloadedRecFldGRE gre
                                      , let par = gre_par gre ]
 
        ; traceRn (vcat [ ptext (sLit "Uses:") <+> ppr (Set.elems uses)
+                       , ptext (sLit "Selector uses:") <+> ppr (nameSetToList sel_uses)
                        , ptext (sLit "Import usage") <+> ppr usage])
        ; whenWOptM Opt_WarnUnusedImports $
          mapM_ (warnUnusedImport fld_env) usage
@@ -1541,20 +1548,24 @@ type ImportMap = Map SrcLoc [AvailInfo]  -- See [The ImportMap]
 findImportUsage :: [LImportDecl Name]
                 -> GlobalRdrEnv
                 -> [RdrName]
+                -> NameSet
+                -> NameEnv (OccName, Name)
                 -> [ImportDeclUsage]
 
-findImportUsage imports rdr_env rdrs
+findImportUsage imports rdr_env rdrs sel_names fld_env
   = map unused_decl imports
   where
     import_usage :: ImportMap
-    import_usage = foldr (extendImportMap rdr_env) Map.empty rdrs
+    import_usage = foldr (extendImportMap fld_env rdr_env . Right)
+                       (foldr (extendImportMap fld_env rdr_env . Left) Map.empty rdrs)
+                       (nameSetToList sel_names)
 
     unused_decl decl@(L loc (ImportDecl { ideclHiding = imps }))
       = (decl, nubAvails used_avails, nameSetToList unused_imps)
       where
         used_avails = Map.lookup (srcSpanEnd loc) import_usage `orElse` []
                       -- srcSpanEnd: see Note [The ImportMap]
-        used_names   = availsToNameSet used_avails
+        used_names   = availsToNameSetWithSelectors used_avails
         used_parents = mkNameSet [n | AvailTC n _ _ <- used_avails]
 
         unused_imps   -- Not trivial; see eg Trac #7454
@@ -1585,14 +1596,23 @@ findImportUsage imports rdr_env rdrs
        -- imported Num(signum).  We don't want to complain that
        -- Num is not itself mentioned.  Hence the two cases in add_unused_with.
 
-extendImportMap :: GlobalRdrEnv -> RdrName -> ImportMap -> ImportMap
+extendImportMap :: NameEnv (OccName, Name) -> GlobalRdrEnv -> Either RdrName Name
+                -> ImportMap -> ImportMap
 -- For a used RdrName, find all the import decls that brought
 -- it into scope; choose one of them (bestImport), and record
 -- the RdrName in that import decl's entry in the ImportMap
-extendImportMap rdr_env rdr imp_map
-  | [gre] <- lookupGRE_RdrName rdr rdr_env
+extendImportMap fld_env rdr_env rdr_or_sel imp_map
+  | Left rdr <- rdr_or_sel
+  , [gre] <- lookupGRE_RdrName rdr rdr_env
   , Imported imps <- gre_prov gre
   = add_imp gre (bestImport imps) imp_map
+
+  | Right sel <- rdr_or_sel
+  , Just (lbl, _) <- lookupNameEnv fld_env sel
+  , [gre] <- lookupGRE_Field_Name rdr_env sel lbl
+  , Imported imps <- gre_prov gre
+  = add_imp gre (bestImport imps) imp_map
+
   | otherwise
   = imp_map
   where

@@ -79,6 +79,7 @@ initTc hsc_env hsc_src keep_rn_syntax mod do_this
  = do { errs_var     <- newIORef (emptyBag, emptyBag) ;
         tvs_var      <- newIORef emptyVarSet ;
         keep_var     <- newIORef emptyNameSet ;
+        used_sel_var <- newIORef emptyNameSet ;
         used_rdr_var <- newIORef Set.empty ;
         th_var       <- newIORef False ;
         th_splice_var<- newIORef False ;
@@ -112,6 +113,7 @@ initTc hsc_env hsc_src keep_rn_syntax mod do_this
                 tcg_th_splice_used = th_splice_var,
                 tcg_exports        = [],
                 tcg_imports        = emptyImportAvails,
+                tcg_used_selectors = used_sel_var,
                 tcg_used_rdrnames  = used_rdr_var,
                 tcg_dus            = emptyDUs,
 
