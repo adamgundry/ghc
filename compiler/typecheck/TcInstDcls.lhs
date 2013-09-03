@@ -1649,9 +1649,12 @@ updates to fields of V may change the types but not the kinds:
 
 
 \begin{code}
+-- | Contains Has and Upd class instances, and GetResult and SetResult
+-- family instances, in that order.
 type FldInstDetails = (InstInfo Name, InstInfo Name, FamInst, FamInst)
 
--- Create and typecheck instances from datatype and data instance
+
+-- | Create and typecheck instances from datatype and data instance
 -- declarations in the module being compiled.
 makeOverloadedRecFldInsts :: [[LTyClDecl Name]] -> [LInstDecl Name]
                            -> TcM (LHsBinds Id, TcGblEnv)
@@ -1662,116 +1665,129 @@ makeOverloadedRecFldInsts tycl_decls inst_decls
     (_, flds) = hsTyClDeclsBinders tycl_decls inst_decls
     flds'     = map (\ (x, y, z) -> (rdrNameOcc x, y, z)) flds
 
+
+-- | Given a (label, selector name, tycon name) triple, construct the
+-- appropriate Has, Upd, GetResult and SetResult instances.
 makeRecFldInstsFor :: (OccName, Name, Name) -> TcM [(Name, FldInstDetails)]
 makeRecFldInstsFor (lbl, sel_name, tycon_name)
-      = do { addUsedRdrNames [mkRdrUnqual (nameOccName sel_name)]
-           ; tc     <- tcLookupTyCon tycon_name
-           ; rep_tc <- tcLookupRepTyCon tc sel_name
-           ; let relevant_cons = filter (is_relevant_con lbl) (tyConDataCons rep_tc)
-                 dc            = ASSERT (notNull relevant_cons) head relevant_cons
-                 (fl, fld_ty0) = dataConFieldLabel dc lbl
-                 inst_names    = flInstances fl
-                 f             = mkStrLitTy (occNameFS lbl)
-                 (univ_tvs, ex_tvs, eq_spec0, _, _, data_ty0) = dataConFullSig dc
-                 stupid_theta0 = dataConStupidTheta dc
-           ; (subst0, tyvars) <- tcInstSkolTyVars (univ_tvs ++ ex_tvs)
-           ; let t_ty    = substTy subst0 (mkFamilyTyConApp rep_tc (mkTyVarTys univ_tvs))
-                 data_ty = substTy subst0 data_ty0
-                 fld_ty  = substTy subst0 fld_ty0
-                 eq_spec = substTys subst0 (eqSpecPreds eq_spec0)
-                 stupid_theta = substTys subst0 stupid_theta0
-                 inst_tys = substTyVars (mkTopTvSubst eq_spec0) univ_tvs -- for dataConCannotMatch
-           ; (_, mb) <- tryTc (checkValidMonoType fld_ty) -- TODO: make this pure?
-           ; if isNothing mb || not (tyVarsOfType fld_ty0 `subVarSet` tyVarsOfType data_ty0)
-             then return [] -- Universally or existentially quantified, so give up
-             else do
-             { b        <- mkTyVar <$> newSysName (mkVarOcc "b") <*> pure liftedTypeKind
-             ; has_inst <- mkHasInstInfo (fldInstsHas inst_names) sel_name lbl f tyvars eq_spec
-                               stupid_theta t_ty fld_ty b
-             ; get_fam  <- mkFamInst getResultFamName (fldInstsGetResult inst_names) [data_ty, f] fld_ty
+  = do { addUsedRdrNames [mkRdrUnqual (nameOccName sel_name)]
+       ; rep_tc <- lookupRepTyCon tycon_name sel_name
 
-             ; (subst, tyvars') <- updatingSubst lbl relevant_cons tyvars (rigidTyVarsOfType fld_ty)
-             ; let fld_ty'  = substTy subst fld_ty
-                   data_ty' = substTy subst data_ty
-               -- See Note [Calculating the hull type]
-             ; hull_ty <- hullType (tyVarsOfType data_ty') fld_ty'
-             ; upd_inst <- mkUpdInstInfo (fldInstsUpd inst_names) lbl f eq_spec
-                               (stupid_theta ++ substTys subst stupid_theta)
-                               t_ty b tyvars' fld_ty' relevant_cons inst_tys rep_tc
-             ; set_fam  <- mkFamInst setResultFamName (fldInstsSetResult inst_names)
-                               [data_ty, f, hull_ty] data_ty'
-             ; dumpDerivingInfo (hang (text "Overloaded record field instances:")
-                              2 (vcat [ppr has_inst, ppr get_fam, ppr upd_inst, ppr set_fam]))
-             ; return [(sel_name, (has_inst, upd_inst, get_fam, set_fam))] } }
+       -- Find a relevant data constructor (one that has this field)
+       -- and extract information from the FieldLabel.
+       ; let is_relevant con = any (\ fl -> flOccName fl == lbl)
+                                   (dataConFieldLabels con)
+             relevant_cons = filter is_relevant (tyConDataCons rep_tc)
+             dc            = ASSERT (notNull relevant_cons) head relevant_cons
+             (fl, fld_ty0) = dataConFieldLabel dc lbl
+             data_ty0      = dataConOrigResTy dc
+             is_existential = not (tyVarsOfType fld_ty0
+                                      `subVarSet` tyVarsOfType data_ty0)
+
+       -- If the field is universally or existentially quantified,
+       -- don't generate any instances.
+       ; (_, mb) <- tryTc (checkValidMonoType fld_ty0)
+       ; if isNothing mb || is_existential
+         then return []
+         else do
+
+           -- Freshen the type variables in the constituent types
+           { let univ_tvs     = dataConUnivTyVars dc
+           ; (subst0, tyvars) <- tcInstSkolTyVars (univ_tvs ++ dataConExTyVars dc)
+           ; let f            = mkStrLitTy (occNameFS lbl)
+                 t_ty         = substTy subst0 (mkFamilyTyConApp rep_tc
+                                                   (mkTyVarTys univ_tvs))
+                 data_ty      = substTy subst0 data_ty0
+                 fld_ty       = substTy subst0 fld_ty0
+                 eq_spec      = substTys subst0 (eqSpecPreds (dataConEqSpec dc))
+                 stupid_theta = substTys subst0 (dataConStupidTheta dc)
+           ; b <- mkTyVar <$> newSysName (mkVarOcc "b") <*> pure liftedTypeKind
+
+           ; let FldInsts has_name upd_name get_name set_name = flInstances fl
+
+           -- Generate Has instance:
+           --     instance (b ~ fld_ty, ...) => Has t_ty f b
+           ; has_inst <- mkHasInstInfo has_name sel_name lbl f tyvars
+                             (eq_spec ++ stupid_theta) t_ty fld_ty b
+
+           -- Generate GetResult instance:
+           --     type instance GetResult data_ty f = fld_ty
+           ; get_fam  <- mkFamInst get_name getResultFamName [data_ty, f] fld_ty
+
+           -- Generate Upd instance:
+           --     instance (b ~ fld_ty', ...) => Upd t_ty f b
+           -- See Note [Availability of type-changing update]
+           ; (subst, tyvars') <- updatingSubst lbl relevant_cons tyvars
+                                     (rigidTyVarsOfType fld_ty)
+           ; let fld_ty'  = substTy subst fld_ty
+                 data_ty' = substTy subst data_ty
+                 stupid_theta' = substTys subst stupid_theta
+           ; upd_inst <- mkUpdInstInfo upd_name lbl f
+                             (eq_spec ++ stupid_theta ++ stupid_theta')
+                             t_ty b tyvars' fld_ty' relevant_cons rep_tc
+
+           -- Generate SetResult instance:
+           --     type instance SetResult data_ty f hull_ty = data_ty'
+           -- See Note [Calculating the hull type]
+           ; hull_ty <- hullType (tyVarsOfType data_ty') fld_ty'
+           ; set_fam <- mkFamInst set_name setResultFamName
+                             [data_ty, f, hull_ty] data_ty'
+
+           -- ; dumpDerivingInfo (hang (text "Overloaded record field instances:")
+           --                  2 (vcat [ppr has_inst, ppr get_fam,
+           --                           ppr upd_inst, ppr set_fam]))
+
+           ; return [(sel_name, (has_inst, upd_inst, get_fam, set_fam))] } }
 
   where
 
-    is_relevant_con lbl dc = any (\ fl -> flOccName fl == lbl) (dataConFieldLabels dc)
-
-    -- Compute a substitution that replaces each tyvar with a fresh
-    -- variable, if it can be updated; also returns a list of all the
-    -- tyvars (old and new). See Note [Availability of type-changing update]
-    updatingSubst :: OccName -> [DataCon] -> [TyVar] -> TyVarSet -> TcM (TvSubst, [TyVar])
-    updatingSubst lbl relevant_cons tyvars fld_tvs
-      = do { (subst, tyvarss) <- mapAccumLM updateTyVar emptyTvSubst tyvars
-           ; return (subst, concat tyvarss) }
-      where
-        fixed_tvs    = getFixedTyVars [lbl] tyvars relevant_cons
-        changeable x = x `elemVarSet` fld_tvs && not (x `elemVarSet` fixed_tvs)
-
-        updateTyVar :: TvSubst -> TyVar -> TcM (TvSubst, [TyVar])
-        updateTyVar subst tv
-            | changeable tv = do { (subst', tv') <- tcInstSkolTyVar noSrcSpan False subst tv
-                                 ; return (subst', [tv,tv']) }
-            | otherwise     = return (subst, [tv])
-
-
-    -- Make InstInfo for Has thus:
-    --     instance forall b tyvars . b ~ fld_ty => Has t_ty f b where
+    -- | Make InstInfo for Has thus:
+    --     instance forall b tyvars . (b ~ fld_ty, theta) => Has t_ty f b where
     --         getField _ = sel_name
-    mkHasInstInfo dfun_name sel_name lbl f tyvars eq_spec stupid_theta t_ty fld_ty b
-        = do { hasClass  <- tcLookupClass recordHasClassName
-             ; let dfun = mkDictFunId dfun_name (b:tyvars) theta hasClass args
-             ; cls_inst  <- mkFreshenedClsInst dfun (b:tyvars) hasClass args
+    mkHasInstInfo dfun_name sel_name lbl f tyvars theta t_ty fld_ty b
+        = do { hasClass   <- tcLookupClass recordHasClassName
+             ; let args   = [t_ty, f, mkTyVarTy b]
+                   theta' = mkEqPred (mkTyVarTy b) fld_ty : theta
+                   dfun   = mkDictFunId dfun_name (b:tyvars) theta' hasClass args
+             ; cls_inst   <- mkFreshenedClsInst dfun (b:tyvars) hasClass args
              ; return (InstInfo cls_inst inst_bind) }
       where
-        args      = [t_ty, f, mkTyVarTy b]
-        theta     = mkEqPred (mkTyVarTy b) fld_ty : eq_spec ++ stupid_theta
-
         inst_bind = VanillaInst bind [] True
           where
-            bind  = unitBag $ noLoc ((mkTopFunBind (noLoc getFieldName) [match])
-                                     { bind_fvs = missing })
-            match = mkMatch [nlWildPat] (noLoc (HsSingleRecFld (mkVarUnqual (occNameFS lbl)) sel_name)) EmptyLocalBinds
+            bind  = unitBag $ noLoc $ (mkTopFunBind (noLoc getFieldName) [match])
+                                          { bind_fvs = placeHolderNames }
+            match = mkSimpleMatch [nlWildPat]
+                        (noLoc (HsSingleRecFld (mkRdrUnqual lbl) sel_name))
 
-    -- Make InstInfo for Upd thus:
-    --     instance forall b tyvars . b ~ fld_ty' => Upd t_ty f b where
+
+    -- | Make InstInfo for Upd thus:
+    --     instance forall b tyvars' . (b ~ fld_ty', theta) => Upd t_ty f b where
     --         setField _ (MkT fld1 ... fldn) x = MkT fld1 ... x ... fldn
     --  fld_ty' is fld_ty with fresh tyvars (if type-changing update is possible)
     --  It would be nicer to use record-update syntax, but that isn't
     --  possible because of Trac #2595.
-    mkUpdInstInfo dfun_name lbl f eq_spec stupid_theta t_ty b tyvars'' fld_ty'' relevant_cons inst_tys rep_tc
-        = do { updClass  <- tcLookupClass recordUpdClassName
-             ; let dfun = mkDictFunId dfun_name (b:tyvars'') theta updClass args
-             ; cls_inst  <- mkFreshenedClsInst dfun (b:tyvars'') updClass args
-             ; matches   <- mapM matchCon relevant_cons
+    mkUpdInstInfo dfun_name lbl f theta t_ty b tyvars' fld_ty' relevant_cons rep_tc
+        = do { updClass   <- tcLookupClass recordUpdClassName
+             ; let args   = [t_ty, f, mkTyVarTy b]
+                   theta' = mkEqPred (mkTyVarTy b) fld_ty' : theta
+                   dfun   = mkDictFunId dfun_name (b:tyvars') theta' updClass args
+             ; cls_inst   <- mkFreshenedClsInst dfun (b:tyvars') updClass args
+             ; matches    <- mapM matchCon relevant_cons
              ; return (InstInfo cls_inst (inst_bind matches)) }
       where
-        args  = [t_ty, f, mkTyVarTy b]
-        theta = mkEqPred (mkTyVarTy b) fld_ty'' : eq_spec ++ stupid_theta
-
         matchCon con
           = do { x <- newSysName (mkVarOcc "x")
                ; vars <- mapM (newSysName . flOccName) (dataConFieldLabels con)
                ; let con_name = dataConName con
-                     vars'    = map (\ v -> if nameOccName v == lbl then x else v) vars
+                     vars'    = map replace_lbl vars
+                     replace_lbl v = if nameOccName v == lbl then x else v
                ; return $ mkSimpleMatch [nlWildPat, nlConVarPat con_name vars, nlVarPat x]
                                         (nlHsVarApps con_name vars') }
 
         inst_bind matches = VanillaInst bind [] True
           where
-            bind = unitBag $ noLoc ((mkTopFunBind (noLoc setFieldName) all_matches)
-                                       { bind_fvs = missing })
+            bind = unitBag $ noLoc $ (mkTopFunBind (noLoc setFieldName) all_matches)
+                                         { bind_fvs = placeHolderNames }
             all_matches | all dealt_with cons = matches
                         | otherwise           = matches ++ [default_match]
             default_match = mkSimpleMatch [nlWildPat, nlWildPat, nlWildPat] $
@@ -1782,22 +1798,59 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
             cons = tyConDataCons rep_tc
             dealt_with con = con `elem` relevant_cons
                                  || dataConCannotMatch inst_tys con
+            inst_tys = substTyVars (mkTopTvSubst (dataConEqSpec dc))
+                                   (dataConUnivTyVars dc)
+            dc = head relevant_cons
 
-    -- See Note [Template tyvars are fresh] in InstEnv
+
+    -- | Make a class instance with freshened type variables.
+    -- See Note [Template tyvars are fresh] in InstEnv.
     mkFreshenedClsInst dfun tyvars clas tys
       = do { (subst, tyvars') <- tcInstSkolTyVars tyvars
-           ; return $ mkLocalInstance dfun (NoOverlap False) tyvars' clas (substTys subst tys) }
+           ; return $ mkLocalInstance dfun (NoOverlap False) tyvars' clas
+                          (substTys subst tys) }
 
-    -- Make a type family instance
+
+    -- | Make a type family instance
     --    type instance fam_name args = result
-    mkFamInst fam_name ax_name args result
+    mkFamInst ax_name fam_name args result
       = do { fam <- tcLookupTyCon fam_name
            ; let tyvars = varSetElems (tyVarsOfTypes (result:args))
            ; (subst, tyvars') <- tcInstSkolTyVars tyvars
-           ; let axiom  = mkSingleCoAxiom ax_name tyvars' fam (substTys subst args) (substTy subst result)
+           ; let axiom  = mkSingleCoAxiom ax_name tyvars' fam (substTys subst args)
+                                                              (substTy subst result)
            ; newFamInst SynFamilyInst axiom }
 
-    missing = error "makeRecFldInsts: missing"
+
+-- | Given a tycon name and a record selector belonging to that tycon,
+-- return the representation tycon that contains the selector.
+lookupRepTyCon :: Name -> Name -> TcM TyCon
+lookupRepTyCon tycon_name sel_name
+  = do { tc <- tcLookupTyCon tycon_name
+       ; if (isDataFamilyTyCon tc)
+         then do { sel_id <- tcLookupId sel_name
+                 ; ASSERT (isRecordSelector sel_id)
+                   return (recordSelectorTyCon sel_id) }
+         else return tc }
+
+-- | Compute a substitution that replaces each tyvar with a fresh
+-- variable, if it can be updated; also returns a list of all the
+-- tyvars (old and new). See Note [Availability of type-changing update]
+updatingSubst :: OccName -> [DataCon] -> [TyVar] -> TyVarSet ->
+                         TcM (TvSubst, [TyVar])
+updatingSubst lbl relevant_cons tyvars fld_tvs
+      = do { (subst, tyvarss) <- mapAccumLM updateTyVar emptyTvSubst tyvars
+           ; return (subst, concat tyvarss) }
+      where
+        fixed_tvs    = getFixedTyVars [lbl] tyvars relevant_cons
+        changeable x = x `elemVarSet` fld_tvs && not (x `elemVarSet` fixed_tvs)
+
+        updateTyVar :: TvSubst -> TyVar -> TcM (TvSubst, [TyVar])
+        updateTyVar subst tv
+          | changeable tv = do { (subst', tv') <- tcInstSkolTyVar noSrcSpan False subst tv
+                               ; return (subst', [tv,tv']) }
+          | otherwise     = return (subst, [tv])
+
 
 rigidTyVarsOfType :: Type -> VarSet
 -- ^ Returns free type (not kind) variables of a type, that are not
@@ -1839,6 +1892,7 @@ in which all the unused subexpressions have been replaced with fresh
 variables.
 
 \begin{code}
+-- | See Note [Calculating the hull type]
 hullType :: TyVarSet -> Type -> TcM Type
 hullType tvs t = hullEither =<< hull tvs t
   where
@@ -1871,31 +1925,30 @@ hullType tvs t = hullEither =<< hull tvs t
     hullEither :: Either Kind Type -> TcM Type
     hullEither (Left k)  = mkTyVarTy <$> (mkTyVar <$> newSysName (mkVarOcc "x") <*> pure k)
     hullEither (Right t) = return t
+\end{code}
 
 
+\begin{code}
+-- | Typecheck the generated Has, Upd, GetResult and SetResult
+-- instances. This adds the dfuns and axioms to the global
+-- environment, but does not add user-visible instances.
 tcFldInsts :: [(Name, FldInstDetails)] -> TcM (LHsBinds Id, TcGblEnv)
 tcFldInsts fld_insts
-    = updGblEnv (\ env -> env { tcg_fld_inst_env = extendNameEnvList (tcg_fld_inst_env env) fld_insts' }) $
-          addPrivateFamInsts fam_insts $
-              do { binds <- tcInstDecls2 [] infos
+    = updGblEnv (extendFldInstEnv inst_names) $
+          tcExtendGlobalEnvImplicit things $
+              do { binds <- tcInstDecls2 [] inst_infos
                  ; env   <- getGblEnv
                  ; return (binds, env) }
   where
-    fld_insts' = map (fmap ispecs) fld_insts
+    inst_names = map (fmap ispecs) fld_insts
     ispecs (has, upd, get, set) = (is_dfun $ iSpec has, is_dfun $ iSpec upd, get, set)
-    infos = concatMap (\ (_, (has, upd, _, _)) -> [has, upd]) fld_insts
-    fam_insts = concatMap (\ (_, (_, _, get, set)) -> [get, set]) fld_insts
 
-addPrivateFamInsts :: [FamInst] -> TcM a -> TcM a
-addPrivateFamInsts fam_insts thing_inside
-  = tcExtendGlobalEnv things $
-    do { traceTc "addPrivateFamInsts" (pprFamInsts fam_insts)
-       ; tcg_env <- tcAddImplicits things
-       ; setGblEnv tcg_env thing_inside }
-  where
-    axioms = map (toBranchedAxiom . famInstAxiom) fam_insts
-    tycons = famInstsRepTyCons fam_insts
-    things = map ATyCon tycons ++ map ACoAxiom axioms
+    extendFldInstEnv xs env
+        = env { tcg_fld_inst_env = extendNameEnvList (tcg_fld_inst_env env) xs }
+
+    inst_infos = concatMap (\ (_, (has, upd, _, _)) -> [has, upd]) fld_insts
+    fam_insts  = concatMap (\ (_, (_, _, get, set)) -> [get, set]) fld_insts
+    things     = map (ACoAxiom . toBranchedAxiom . famInstAxiom) fam_insts
 \end{code}
 
 

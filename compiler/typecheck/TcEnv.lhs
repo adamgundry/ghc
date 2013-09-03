@@ -19,7 +19,6 @@ module TcEnv(
         tcLookupTyCon, tcLookupClass, tcLookupDataCon,
         tcLookupLocatedGlobalId, tcLookupLocatedTyCon,
         tcLookupLocatedClass, tcLookupInstance, tcLookupAxiom,
-        tcLookupRepTyCon,
 
         -- Local environment
         tcExtendKindEnv, tcExtendTcTyThingEnv,
@@ -212,15 +211,6 @@ tcLookupInstance cls tys
     tcGetInstEnvs = do { eps <- getEps; env <- getGblEnv;
                        ; return (eps_inst_env eps, tcg_inst_env env) 
                        }
-
--- Lookup the representation tycon, if this is a data family, using
--- the name of a record selector
-tcLookupRepTyCon :: TyCon -> Name -> TcM TyCon
-tcLookupRepTyCon tc sel_name
-  | isDataFamilyTyCon tc = do { sel_id <- tcLookupId sel_name
-                              ; ASSERT (isRecordSelector sel_id)
-                                return (recordSelectorTyCon sel_id) }
-  | otherwise            = return tc
 \end{code}
 
 \begin{code}
