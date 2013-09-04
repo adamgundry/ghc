@@ -119,7 +119,7 @@ rnExpr (HsVar v)
                   ; if overloaded
                     then do { when (isQual v && length xs > 1) $
                                   addErrTc $ qualifiedOverloadedRecordField v
-                            ; return (HsOverloadedRecFld fld, emptyFVs) }
+                            ; return (HsOverloadedRecFld fld, mkFVs (map snd xs)) }
                     else case xs of
                          [(_, name)] -> return (HsSingleRecFld v name, unitFV name)
                          _           -> error "rnExpr/HsVar" } } }
