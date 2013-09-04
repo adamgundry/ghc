@@ -965,11 +965,15 @@ type ImportedModsVal = (ModuleName, Bool, SrcSpan, IsSafeImport)
 
 -- | Maps a record selector name *in this module* to the DFunIds for
 -- the Has and Upd classes, and the FamInsts for the GetResult and
--- SetResult type families.
-type RecFldInstEnv = NameEnv (DFunId, DFunId, FamInst, FamInst)
+-- SetResult type families. Nothing indicates that the field type is
+-- universally or existentially quantified, so it has no instances
+-- (see Note [Bogus instances] in TcInstDcls).
+type RecFldInstEnv = NameEnv (Maybe (DFunId, DFunId, FamInst, FamInst))
 
 fldInstEnvFamInsts :: RecFldInstEnv -> [FamInst]
-fldInstEnvFamInsts = foldNameEnv (\ (_, _, get, set) fis -> get : set : fis) []
+fldInstEnvFamInsts = foldNameEnv help []
+  where help (Just (_, _, get, set)) fis = get : set : fis
+        help Nothing fis                 = fis
 
 
 -- | A ModGuts is carried through the compiler, accumulating stuff as it goes

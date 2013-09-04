@@ -42,6 +42,7 @@ import TcTyDecls  ( emptyRoleAnnots )
 import TcExpr
 import MkCore     ( nO_METHOD_BINDING_ERROR_ID, pAT_ERROR_ID )
 import Type
+import TysWiredIn
 import TypeRep
 import TcEvidence
 import TyCon
@@ -66,6 +67,7 @@ import FastString
 import HscTypes ( isHsBoot )
 import Id
 import MkId
+import IdInfo
 import Name
 import NameSet
 import NameEnv
@@ -1664,8 +1666,11 @@ updates to fields of V may change the types but not the kinds:
 
 \begin{code}
 -- | Contains Has and Upd class instances, and GetResult and SetResult
--- family instances, in that order.
-type FldInstDetails = (InstInfo Name, InstInfo Name, FamInst, FamInst)
+-- family instances, in that order. Left indicates that they are bogus
+-- (because the field is higher-rank or existential); Right gives the
+-- real things.
+type FldInstDetails = Either (Name, Name, Name, Name)
+                             (InstInfo Name, InstInfo Name, FamInst, FamInst)
 
 
 -- | Create and typecheck instances from datatype and data instance
@@ -1673,7 +1678,7 @@ type FldInstDetails = (InstInfo Name, InstInfo Name, FamInst, FamInst)
 makeOverloadedRecFldInsts :: [[LTyClDecl Name]] -> [LInstDecl Name]
                            -> TcM (LHsBinds Id, TcGblEnv, [InstInfo Name])
 makeOverloadedRecFldInsts tycl_decls inst_decls
-    = do { fld_insts <- concatMapM makeRecFldInstsFor flds'
+    = do { fld_insts <- mapM makeRecFldInstsFor flds'
          ; tcFldInsts fld_insts }
   where
     (_, flds) = hsTyClDeclsBinders tycl_decls inst_decls
@@ -1682,7 +1687,7 @@ makeOverloadedRecFldInsts tycl_decls inst_decls
 
 -- | Given a (label, selector name, tycon name) triple, construct the
 -- appropriate Has, Upd, GetResult and SetResult instances.
-makeRecFldInstsFor :: (OccName, Name, Name) -> TcM [(Name, FldInstDetails)]
+makeRecFldInstsFor :: (OccName, Name, Name) -> TcM (Name, FldInstDetails)
 makeRecFldInstsFor (lbl, sel_name, tycon_name)
   = do { rep_tc <- lookupRepTyCon tycon_name sel_name
 
@@ -1696,12 +1701,13 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
              data_ty0      = dataConOrigResTy dc
              is_existential = not (tyVarsOfType fld_ty0
                                       `subVarSet` tyVarsOfType data_ty0)
+             FldInsts has_name upd_name get_name set_name = flInstances fl
 
        -- If the field is universally or existentially quantified,
        -- don't generate any instances.
        ; (_, mb) <- tryTc (checkValidMonoType fld_ty0)
        ; if isNothing mb || is_existential
-         then return []
+         then return (sel_name, Left (has_name, upd_name, get_name, set_name))
          else do
 
            -- Freshen the type variables in the constituent types
@@ -1715,8 +1721,6 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
                  eq_spec      = substTys subst0 (eqSpecPreds (dataConEqSpec dc))
                  stupid_theta = substTys subst0 (dataConStupidTheta dc)
            ; b <- mkTyVar <$> newSysName (mkVarOcc "b") <*> pure liftedTypeKind
-
-           ; let FldInsts has_name upd_name get_name set_name = flInstances fl
 
            -- Generate Has instance:
            --     instance (b ~ fld_ty, ...) => Has t_ty f b
@@ -1750,7 +1754,7 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
            --                  2 (vcat [ppr has_inst, ppr get_fam,
            --                           ppr upd_inst, ppr set_fam]))
 
-           ; return [(sel_name, (has_inst, upd_inst, get_fam, set_fam))] } }
+           ; return (sel_name, Right (has_inst, upd_inst, get_fam, set_fam)) } }
 
   where
 
@@ -1941,36 +1945,68 @@ hullType tvs t = hullEither =<< hull tvs t
 \end{code}
 
 
+Note [Bogus instances]
+~~~~~~~~~~~~~~~~~~~~~~
+When a field's type is universally or existentially quantified, we
+cannot generate instances for it.  Just like naughty record selectors
+(see Note [Naughty record selectors] in TcTyClsDcls), we build bogus
+Ids in place of such instances, so that we can detect this when
+looking for them. This means we have to be a little careful when
+looking up the instances: the bogus Ids are just vanilla bindings of
+(), not DFunIds or CoAxioms.
+
 \begin{code}
 -- | Typecheck the generated Has, Upd, GetResult and SetResult
 -- instances. This adds the dfuns and axioms to the global
 -- environment, but does not add user-visible instances.
 tcFldInsts :: [(Name, FldInstDetails)] -> TcM (LHsBinds Id, TcGblEnv, [InstInfo Name])
 tcFldInsts fld_insts
-    = updGblEnv (extendFldInstEnv inst_names) $
+    = updGblEnv (extendFldInstEnv $ map toInst fld_insts) $
         tcExtendGlobalEnvImplicit things $
             -- We need to typecheck the instances and solve the
             -- constraints with the extension enabled, so that the
             -- superclasses of Has and Upd will be solved.
             setXOptM Opt_OverloadedRecordFields $
               do { (binds, lie) <- captureConstraints $ tcInstDecls2 [] inst_infos
-                 ; ev_binds <- simplifyTop lie
-                 ; env <- getGblEnv
+                 ; ev_binds     <- simplifyTop lie
+
+                 -- See Note [Bogus instances]
+                 ; let (bogus_sigs, bogus_binds) = mapAndUnzip mkBogusId bogus_insts
+                 ; env <- tcRecSelBinds $ ValBindsOut bogus_binds bogus_sigs
+
                    -- Don't count the generated instances as uses of the field
                  ; updMutVar (tcg_used_selectors env)
                              (\s -> delListFromNameSet s (map fst fld_insts))
+
                  ; ASSERT2( isEmptyBag ev_binds , ppr ev_binds)
                    return (binds, env, inst_infos) }
   where
-    inst_names = map (fmap ispecs) fld_insts
-    ispecs (has, upd, get, set) = (is_dfun $ iSpec has, is_dfun $ iSpec upd, get, set)
+    toInst (n, Right (has, upd, get, set))
+                       = (n, Just (is_dfun $ iSpec has, is_dfun $ iSpec upd, get, set))
+    toInst (n, Left _) = (n, Nothing)
 
     extendFldInstEnv xs env
         = env { tcg_fld_inst_env = extendNameEnvList (tcg_fld_inst_env env) xs }
 
-    inst_infos = concatMap (\ (_, (has, upd, _, _)) -> [has, upd]) fld_insts
-    fam_insts  = concatMap (\ (_, (_, _, get, set)) -> [get, set]) fld_insts
+    has_upd (_, Right (has, upd, _, _)) = [has, upd]
+    has_upd _                           = []
+
+    get_set (_, Right (_, _, get, set)) = [get, set]
+    get_set _                           = []
+
+    inst_infos = concatMap has_upd fld_insts
+    fam_insts  = concatMap get_set fld_insts
     things     = map (ACoAxiom . toBranchedAxiom . famInstAxiom) fam_insts
+
+    bogus (_, Left (has, upd, get, set)) = [has, upd, get, set]
+    bogus _            = []
+    bogus_insts = concatMap bogus fld_insts
+
+    mkBogusId :: Name -> (LSig Name, (RecFlag, LHsBinds Name))
+    mkBogusId n = (noLoc (IdSig bogus_id), (NonRecursive, unitBag (noLoc bind)))
+      where
+        bogus_id = mkExportedLocalVar VanillaId n unitTy vanillaIdInfo
+        bind     = mkTopFunBind (noLoc n) [mkSimpleMatch [] (mkLHsTupleExpr [])]
 \end{code}
 
 

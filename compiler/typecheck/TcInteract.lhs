@@ -1803,7 +1803,11 @@ matchClassInst inerts clas tys@[r, f, t] loc
          ; mb_dfun  <- case mb_insts of
                          Nothing          -> return Nothing
                          Just (Left xs)   -> return $ Just (has_or_upd xs)
-                         Just (Right fis) -> tcsLookupId_maybe (has_or_upd_fis fis)
+                         Just (Right fis) -> do { dfun <- tcsLookupId (has_or_upd_fis fis)
+                                                  -- See Note [Bogus instances] in TcInstDcls
+                                                ; if isDFunId dfun
+                                                     then return (Just dfun)
+                                                     else return Nothing }
          ; case mb_dfun of
              Nothing   -> return NoInstance
              Just dfun ->

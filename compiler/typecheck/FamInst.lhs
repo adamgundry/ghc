@@ -299,8 +299,10 @@ lookupRecFldFamInst fam lbl tc args tys
        ; mb_fam_inst <- case mb_insts of
            Nothing          -> return Nothing
            Just (Left  xs)  -> return $ Just (get_or_set xs)
-           Just (Right fis) -> fmap (fmap (fam_inst_for . toUnbranchedAxiom) . snd) $
-                                   tryTc $ tcLookupAxiom (get_or_set_fis fis)
+           Just (Right fis) -> do { thing <- tcLookupGlobal (get_or_set_fis fis)
+                                  ; case thing of  -- See Note [Bogus instances] in TcInstDcls
+                                      ACoAxiom ax -> return $ Just (fam_inst_for ax)
+                                      _           -> return Nothing }
        ; return $ do { fam_inst <- mb_fam_inst
                      ; subst <- tcMatchTys (mkVarSet (fi_tvs fam_inst)) (fi_tys fam_inst) tys
                      ; return $ FamInstMatch fam_inst (substTyVars subst (fi_tvs fam_inst)) } }
@@ -311,10 +313,11 @@ lookupRecFldFamInst fam lbl tc args tys
     get_or_set_fis | is_get    = fldInstsGetResult
                    | otherwise = fldInstsSetResult
 
-    fam_inst_for axiom | is_get    = mkImportedFamInst getResultFamName
-                                         [Just (tyConName tc), Nothing] axiom
-                       | otherwise = mkImportedFamInst setResultFamName
-                                         [Just (tyConName tc), Nothing, Nothing] axiom
+    fam_inst_for axiom
+      | is_get    = mkImportedFamInst getResultFamName
+                        [Just (tyConName tc), Nothing] (toUnbranchedAxiom axiom)
+      | otherwise = mkImportedFamInst setResultFamName
+                        [Just (tyConName tc), Nothing, Nothing] (toUnbranchedAxiom axiom)
 
 lookupRecFldInsts :: FastString -> TyCon -> [Type]
                          -> TcM (Maybe (Either (DFunId, DFunId, FamInst, FamInst) (FldInsts Name)))
@@ -342,7 +345,8 @@ lookupRecFldInsts lbl tc args
                  -- See Note [Duplicate field labels with data families]
                ; if any ((sel_name ==) . gre_name) gres
                  then case lookupNameEnv (tcg_fld_inst_env gbl_env) sel_name of
-                        Just xs -> return $ Just (Left xs)
+                        Just (Just xs) -> return $ Just (Left xs)
+                        Just Nothing   -> return Nothing
                         Nothing -> fmap (Just . Right) $
                                        lookupRecFldInstNames mod lbl_occ rep_tc_occ
                  else return Nothing } } }
