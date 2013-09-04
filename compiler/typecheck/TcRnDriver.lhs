@@ -568,6 +568,12 @@ tcRnHsBootDecls decls
              <- tcTyClsInstDecls emptyModDetails tycl_decls inst_decls deriv_decls
         ; setGblEnv tcg_env     $ do {
 
+                -- Create overloaded record field instances
+        ; traceTc "Tc3a (boot)" empty
+        ; (_binds, tcg_env, fld_inst_infos)
+              <- makeOverloadedRecFldInsts tycl_decls inst_decls
+        ; setGblEnv tcg_env       $ do {
+
                 -- Typecheck value declarations
         ; traceTc "Tc5" empty
         ; val_ids <- tcHsBootSigs val_binds
@@ -583,11 +589,11 @@ tcRnHsBootDecls decls
         ; let { type_env0 = tcg_type_env gbl_env
               ; type_env1 = extendTypeEnvWithIds type_env0 val_ids
               ; type_env2 = extendTypeEnvWithIds type_env1 dfun_ids
-              ; dfun_ids = map iDFunId inst_infos
+              ; dfun_ids = map iDFunId (inst_infos ++ fld_inst_infos)
               }
 
         ; setGlobalTypeEnv gbl_env type_env2
-   }}
+   }}}
    ; traceTc "boot" (ppr lie); return gbl_env }
 
 badBootDecl :: String -> Located decl -> TcM ()
@@ -1149,8 +1155,9 @@ tcTopSrcDecls boot_details
         tcAmpWarn ;
 
                 -- Create overloaded record field instances
-        traceTc "Tc3.5" empty ;
-        (fld_inst_binds, tcg_env) <- makeOverloadedRecFldInsts tycl_decls inst_decls ;
+        traceTc "Tc3a" empty ;
+        (fld_inst_binds, tcg_env, _)
+            <- makeOverloadedRecFldInsts tycl_decls inst_decls ;
         setGblEnv tcg_env       $ do {
 
                 -- Foreign import declarations next.

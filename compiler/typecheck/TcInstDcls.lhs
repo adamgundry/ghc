@@ -1671,7 +1671,7 @@ type FldInstDetails = (InstInfo Name, InstInfo Name, FamInst, FamInst)
 -- | Create and typecheck instances from datatype and data instance
 -- declarations in the module being compiled.
 makeOverloadedRecFldInsts :: [[LTyClDecl Name]] -> [LInstDecl Name]
-                           -> TcM (LHsBinds Id, TcGblEnv)
+                           -> TcM (LHsBinds Id, TcGblEnv, [InstInfo Name])
 makeOverloadedRecFldInsts tycl_decls inst_decls
     = do { fld_insts <- concatMapM makeRecFldInstsFor flds'
          ; tcFldInsts fld_insts }
@@ -1945,7 +1945,7 @@ hullType tvs t = hullEither =<< hull tvs t
 -- | Typecheck the generated Has, Upd, GetResult and SetResult
 -- instances. This adds the dfuns and axioms to the global
 -- environment, but does not add user-visible instances.
-tcFldInsts :: [(Name, FldInstDetails)] -> TcM (LHsBinds Id, TcGblEnv)
+tcFldInsts :: [(Name, FldInstDetails)] -> TcM (LHsBinds Id, TcGblEnv, [InstInfo Name])
 tcFldInsts fld_insts
     = updGblEnv (extendFldInstEnv inst_names) $
         tcExtendGlobalEnvImplicit things $
@@ -1956,12 +1956,11 @@ tcFldInsts fld_insts
               do { (binds, lie) <- captureConstraints $ tcInstDecls2 [] inst_infos
                  ; ev_binds <- simplifyTop lie
                  ; env <- getGblEnv
-                 ; uses <- readMutVar (tcg_used_selectors env)
                    -- Don't count the generated instances as uses of the field
                  ; updMutVar (tcg_used_selectors env)
                              (\s -> delListFromNameSet s (map fst fld_insts))
                  ; ASSERT2( isEmptyBag ev_binds , ppr ev_binds)
-                   return (binds, env) }
+                   return (binds, env, inst_infos) }
   where
     inst_names = map (fmap ispecs) fld_insts
     ispecs (has, upd, get, set) = (is_dfun $ iSpec has, is_dfun $ iSpec upd, get, set)

@@ -129,6 +129,7 @@ mkBootModDetailsTc hsc_env
         TcGblEnv{ tcg_exports   = exports,
                   tcg_type_env  = type_env, -- just for the Ids
                   tcg_tcs       = tcs,
+                  tcg_fld_inst_env = fld_insts,
                   tcg_insts     = insts,
                   tcg_fam_insts = fam_insts
                 }
@@ -137,8 +138,9 @@ mkBootModDetailsTc hsc_env
 
         ; let { insts'     = map (tidyClsInstDFun globaliseAndTidyId) insts
               ; dfun_ids   = map instanceDFunId insts'
+              ; fam_insts' = fam_insts ++ fldInstEnvFamInsts fld_insts
               ; type_env1  = mkBootTypeEnv (availsToNameSet exports)
-                                (typeEnvIds type_env) tcs fam_insts
+                                (typeEnvIds type_env) tcs fam_insts'
               ; type_env'  = extendTypeEnvWithIds type_env1 dfun_ids
               }
         ; return (ModDetails { md_types     = type_env'
