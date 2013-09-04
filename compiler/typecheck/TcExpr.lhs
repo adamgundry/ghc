@@ -978,6 +978,11 @@ tcInferFun (L loc (HsVar name))
                -- Don't wrap a context around a plain Id
        ; return (L loc fun, ty) }
 
+tcInferFun (L loc (HsSingleRecFld lbl name))
+  = do { (fun, ty) <- setSrcSpan loc (tcInferRecSelId lbl name)
+               -- Don't wrap a context around a plain Id
+       ; return (L loc fun, ty) }
+
 tcInferFun fun
   = do { (fun, fun_ty) <- tcInfer (tcMonoExpr fun)
 
