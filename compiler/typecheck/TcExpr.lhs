@@ -760,8 +760,9 @@ tcExpr (HsOverloadedRecFld fld) res_ty
        ; p        <- newFlexiTyVarTy (mkArrowKind liftedTypeKind
                                          (mkArrowKind liftedTypeKind liftedTypeKind))
        ; let f = mkStrLitTy $ occNameFS fld
-       ; has_var  <- emitWanted RecordProjOrigin (mkClassPred hasClass [r, f, t])
-       ; acs_var  <- emitWanted RecordProjOrigin (mkClassPred accessorClass [p, f])
+             origin = OccurrenceOfRecSel (mkRdrUnqual fld)
+       ; has_var  <- emitWanted origin (mkClassPred hasClass [r, f, t])
+       ; acs_var  <- emitWanted origin (mkClassPred accessorClass [p, f])
        ; field <- tcLookupId fieldName
        ; loc      <- getSrcSpanM
        ; let proxy     = anyTypeOfKind (mkArrowKind typeSymbolKind liftedTypeKind)
