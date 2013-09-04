@@ -18,8 +18,10 @@ module TcErrors(
 
 import TcRnTypes
 import TcRnMonad
+import FamInst
 import TcMType
 import TcType
+import TcEnv
 import TypeRep
 import Type
 import Kind ( isKind )
@@ -1151,31 +1153,45 @@ mk_dict_err ctxt (ct, (matches, unifiers, safe_haskell))
           = do { overloaded <- xoptM Opt_OverloadedRecordFields
                ; if not overloaded
                  then return suggest_overloaded
-                 else case (tyConAppTyCon_maybe r, isStrLitTy f) of
-                        (Just tc, Just lbl) ->
-                            case find ((== lbl) . occNameFS . flOccName) (tyConFieldLabels tc) of
-                              Nothing -> return $ missing_field lbl tc
-                              Just _  -> do { sel <- lookupSelector (mkVarOccFS lbl) (tyConName tc)
-                                            ; case sel of
-                                                Nothing -> return $ not_in_scope lbl tc
-                                                Just _  -> return $ unsuitable_field_type lbl tc }
+                 else case (tcSplitTyConApp_maybe r, isStrLitTy f) of
+                        (Just (tc, args), Just lbl) ->
+                            do { rep_tc <- lookupRepTyCon tc args
+                               ; let lbl_occ = mkVarOccFS lbl
+                                     nice_ty | rep_tc == tc = mkTyConApp tc []
+                                             | otherwise    = r
+                               ; case find ((== lbl_occ) . flOccName) (tyConFieldLabels rep_tc) of
+                                   Nothing -> return $ missing_field lbl nice_ty
+                                   Just fl ->
+                                       do { let sel_name = flSelector fl
+                                          ; env <- fmap tcg_rdr_env getGblEnv
+                                          ; if not (selectorInScope env lbl_occ (tyConName tc) sel_name)
+                                            then return $ not_in_scope lbl nice_ty
+                                            else do { sel_id <- tcLookupId sel_name
+                                                    ; return $ unsuitable_field_type lbl nice_ty
+                                                                 (isNaughtyRecordSelector sel_id) } } }
                         _ -> return empty }
       | otherwise = return empty
       where
         [r, f, _] = tys
         suggest_overloaded = ptext $ sLit "Perhaps you should enable -XOverloadedRecordFields?"
-        unsuitable_field_type lbl tc
-          = hang (ptext (sLit "The field") <+> quotes (ppr lbl)
-                     <+> ptext (sLit "of") <+> quotes (ppr (tyConName tc))
-                     <+> ptext (sLit "cannot be overloaded,"))
-               2 (ptext (sLit "as its type is universally or existentially quantified"))
-        missing_field lbl tc
-          = ptext (sLit "The type") <+> quotes (ppr (tyConName tc))
+
+        missing_field lbl ty
+          = ptext (sLit "The type") <+> quotes (ppr ty)
             <+> ptext (sLit "does not have a field") <+> quotes (ppr lbl)
-        not_in_scope lbl tc
+
+        not_in_scope lbl ty
           = ptext (sLit "The field") <+> quotes (ppr lbl)
-                <+> ptext (sLit "of") <+> quotes (ppr (tyConName tc))
+                <+> ptext (sLit "of") <+> quotes (ppr ty)
                 <+> ptext (sLit "is not in scope")
+
+        unsuitable_field_type lbl ty is_existential
+          = hang (ptext (sLit "The field") <+> quotes (ppr lbl)
+                     <+> ptext (sLit "of") <+> quotes (ppr ty)
+                     <+> ptext (sLit "cannot be overloaded,"))
+               2 (ptext (sLit "as its type is") <+> quantifier is_existential
+                                                <+> ptext (sLit "quantified"))
+        quantifier True  = ptext (sLit "existentially")
+        quantifier False = ptext (sLit "universally")
 
 show_fixes :: [SDoc] -> SDoc
 show_fixes []     = empty

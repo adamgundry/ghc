@@ -11,7 +11,7 @@ The @FamInst@ type: family instance heads
 
 module FamInst ( 
         checkFamInstConsistency, tcExtendLocalFamInstEnv,
-        tcLookupFamInst, lookupRecFldInsts,
+        tcLookupFamInst, lookupRecFldInsts, lookupRepTyCon,
         tcGetFamInstEnvs,
         newFamInst,
         TcBuiltInSynFamily(..), trivialBuiltInFamily
@@ -327,12 +327,7 @@ lookupRecFldInsts lbl tc args
          then return Nothing -- Don't magically solve constraints when
                              -- the extension is disabled
          else do {
-       ; rep_tc <- if isDataFamilyTyCon tc
-                   then do { mb_fi <- tcLookupFamInst tc args
-                           ; return $ case mb_fi of
-                               Nothing  -> tc
-                               Just fim -> tcTyConAppTyCon (fi_rhs (fim_instance fim)) }
-                   else return tc
+       ; rep_tc <- lookupRepTyCon tc args
        ; case find ((== lbl_occ) . flOccName) (tyConFieldLabels rep_tc) of
            Nothing -> return Nothing -- This field doesn't belong to the datatype!
            Just fl -> do
@@ -340,10 +335,9 @@ lookupRecFldInsts lbl tc args
                ; let rep_tc_occ = getOccName rep_tc
                      mod        = nameModule (tyConName rep_tc)
                      sel_name   = flSelector fl
-                     gres       = lookupSubBndrGREs (tcg_rdr_env gbl_env) parent lbl_rdr
                ; addUsedSelector sel_name
                  -- See Note [Duplicate field labels with data families]
-               ; if any ((sel_name ==) . gre_name) gres
+               ; if selectorInScope (tcg_rdr_env gbl_env) lbl_occ (tyConName tc) sel_name
                  then case lookupNameEnv (tcg_fld_inst_env gbl_env) sel_name of
                         Just (Just xs) -> return $ Just (Left xs)
                         Just Nothing   -> return Nothing
@@ -351,9 +345,21 @@ lookupRecFldInsts lbl tc args
                                        lookupRecFldInstNames mod lbl_occ rep_tc_occ
                  else return Nothing } } }
   where
-    parent  = ParentIs (tyConName tc)
     lbl_occ = mkVarOccFS lbl
     lbl_rdr = mkRdrUnqual lbl_occ
+
+
+lookupRepTyCon :: TyCon -> [Type] -> TcM TyCon
+-- Lookup the representation tycon given a family tycon and its
+-- arguments; returns the original tycon if it is not a data family or
+-- it doesn't have a matching instance.
+lookupRepTyCon tc args
+  | isDataFamilyTyCon tc
+      = do { mb_fi <- tcLookupFamInst tc args
+           ; return $ case mb_fi of
+                        Nothing  -> tc
+                        Just fim -> tcTyConAppTyCon (fi_rhs (fim_instance fim)) }
+  | otherwise = return tc
 \end{code}
 
 

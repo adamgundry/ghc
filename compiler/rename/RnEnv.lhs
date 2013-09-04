@@ -20,7 +20,7 @@ module RnEnv (
         lookupInstDeclBndr, lookupSubBndrOcc, lookupFamInstName,
         greRdrName,
         lookupSubBndrGREs, lookupConstructorFields,
-        lookupRecFldInstNames, lookupSelector,
+        lookupRecFldInstNames, selectorInScope,
         lookupSyntaxName, lookupSyntaxNames, lookupIfThenElse,
         lookupGreRn, lookupGreLocalRn, lookupGreRn_maybe,
         lookupGlobalOccInThisModule, lookupGreLocalRn_maybe, 
@@ -336,12 +336,14 @@ lookupRecFldInstNames mod lbl tc = traverse (lookupOrig mod) fis
   where
     (_, fis) = mkOverloadedRecFldOccs lbl tc
 
-lookupSelector :: OccName -> Name -> RnM (Maybe Name)
-lookupSelector lbl tc
-  = do { env <- getGblEnv
-       ; case lookupSubBndrGREs (tcg_rdr_env env) (ParentIs tc) (mkRdrUnqual lbl) of
-           []      -> return Nothing
-           (gre:_) -> return $ Just (gre_name gre) }
+selectorInScope :: GlobalRdrEnv -> OccName -> Name -> Name -> Bool
+-- Determine whether this selector is in scope, given its label and
+-- parent (family) tycon. A single family can have the same label more
+-- than once, so we need the selector name to uniquely identify a
+-- field. See Note [Duplicate field labels with data families] in FamInst.
+selectorInScope env lbl tc sel_name = any ((sel_name ==) . gre_name) gres
+  where
+    gres = lookupSubBndrGREs env (ParentIs tc) (mkRdrUnqual lbl)
 
 -----------------------------------------------
 -- Used for record construction and pattern matching

@@ -1689,7 +1689,7 @@ makeOverloadedRecFldInsts tycl_decls inst_decls
 -- appropriate Has, Upd, GetResult and SetResult instances.
 makeRecFldInstsFor :: (OccName, Name, Name) -> TcM (Name, FldInstDetails)
 makeRecFldInstsFor (lbl, sel_name, tycon_name)
-  = do { rep_tc <- lookupRepTyCon tycon_name sel_name
+  = do { rep_tc <- lookupRepTyConOfSelector tycon_name sel_name
 
        -- Find a relevant data constructor (one that has this field)
        -- and extract information from the FieldLabel.
@@ -1841,8 +1841,8 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
 
 -- | Given a tycon name and a record selector belonging to that tycon,
 -- return the representation tycon that contains the selector.
-lookupRepTyCon :: Name -> Name -> TcM TyCon
-lookupRepTyCon tycon_name sel_name
+lookupRepTyConOfSelector :: Name -> Name -> TcM TyCon
+lookupRepTyConOfSelector tycon_name sel_name
   = do { tc <- tcLookupTyCon tycon_name
        ; if (isDataFamilyTyCon tc)
          then do { sel_id <- tcLookupId sel_name
