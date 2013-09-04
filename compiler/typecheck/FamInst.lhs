@@ -319,7 +319,12 @@ lookupRecFldFamInst fam lbl tc args tys
 lookupRecFldInsts :: FastString -> TyCon -> [Type]
                          -> TcM (Maybe (Either (DFunId, DFunId, FamInst, FamInst) (FldInsts Name)))
 lookupRecFldInsts lbl tc args
-  = do { rep_tc <- if isDataFamilyTyCon tc
+  = do { overload_ok <- xoptM Opt_OverloadedRecordFields
+       ; if not overload_ok
+         then return Nothing -- Don't magically solve constraints when
+                             -- the extension is disabled
+         else do {
+       ; rep_tc <- if isDataFamilyTyCon tc
                    then do { mb_fi <- tcLookupFamInst tc args
                            ; return $ case mb_fi of
                                Nothing  -> tc
@@ -340,7 +345,7 @@ lookupRecFldInsts lbl tc args
                         Just xs -> return $ Just (Left xs)
                         Nothing -> fmap (Just . Right) $
                                        lookupRecFldInstNames mod lbl_occ rep_tc_occ
-                 else return Nothing } }
+                 else return Nothing } } }
   where
     parent  = ParentIs (tyConName tc)
     lbl_occ = mkVarOccFS lbl
