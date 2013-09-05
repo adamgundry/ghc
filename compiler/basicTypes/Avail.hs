@@ -11,6 +11,7 @@ module Avail (
     availsToNameSetWithSelectors,
     availsToNameEnv,
     availName, availNames, availNonFldNames,
+    availNamesWithSelectors,
     availFlds, availOverloadedFlds,
     stableAvailCmp, stableAvailFieldsCmp,
     nullAvailFields,
