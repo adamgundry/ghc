@@ -33,7 +33,6 @@ import Name
 import NameSet
 import NameEnv
 import Avail
-import TyCon
 import DataCon
 import Outputable
 import Bag
@@ -47,9 +46,9 @@ import Digraph          ( SCC, flattenSCC, stronglyConnCompFromEdgedVertices )
 import Util             ( mapSnd )
 
 import Control.Monad
-import Data.List( find, partition, sortBy )
+import Data.List( partition, sortBy )
 import Data.Traversable (traverse)
-import Maybes( expectJust, orElse, mapMaybe )
+import Maybes( orElse, mapMaybe )
 \end{code}
 
 @rnSourceDecl@ `renames' declarations.

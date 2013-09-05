@@ -55,6 +55,7 @@ import SrcLoc
 import Util
 import Bag
 import Outputable
+import Literal
 import FastString
 
 import Control.Monad

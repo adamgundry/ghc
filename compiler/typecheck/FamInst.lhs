@@ -40,7 +40,6 @@ import Maybes
 import TcMType
 import TcType
 import TcEnv
-import Id
 import Name
 import NameEnv
 import RdrName
@@ -48,7 +47,6 @@ import RnEnv
 import Var
 import VarSet
 import PrelNames
-import ErrUtils
 import Control.Monad
 import Data.List
 import Data.Map (Map)
@@ -226,7 +224,7 @@ which implies that :R42T was declared as 'data instance T [a]'.
 
 \begin{code}
 tcLookupFamInst :: TyCon -> [Type] -> TcM (Maybe FamInstMatch)
-tcLookupFamInst tycon tys
+tcLookupFamInst tycon _
   | not (isOpenFamilyTyCon tycon)
   = return Nothing
 
@@ -346,7 +344,6 @@ lookupRecFldInsts lbl tc args
                  else return Nothing } } }
   where
     lbl_occ = mkVarOccFS lbl
-    lbl_rdr = mkRdrUnqual lbl_occ
 
 
 lookupRepTyCon :: TyCon -> [Type] -> TcM TyCon

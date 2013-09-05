@@ -70,7 +70,6 @@ import Outputable
 import Unique
 import Util
 import StaticFlags( opt_PprStyle_Debug )
-import BasicTypes
 
 import Data.Data
 \end{code}

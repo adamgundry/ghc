@@ -23,19 +23,14 @@ import FamInstEnv
 import FamInst(TcBuiltInSynFamily(..))
 import InstEnv( lookupInstEnv, instanceDFunId )
 
-import RnEnv
-import RdrName
-import TcEnv
 import DataCon
 import InstEnv
-import Id
-import TcRnMonad ( tryTc )
 
 import Var
 import TcType
 import PrelNames (singIClassName, ipClassNameKey )
 import TysWiredIn ( coercibleClass )
-import Id( idType )
+import Id
 import Class
 import TyCon
 import DataCon
@@ -68,7 +63,6 @@ import UniqFM
 import FastString ( sLit ) 
 import DynFlags
 import Util
-import Data.List
 \end{code}
 **********************************************************************
 *                                                                    * 
@@ -1795,7 +1789,7 @@ matchClassInst _ clas [ ty1, ty2 ] _
       traceTcS "matchClassInst returned" $ ppr ev
       return ev
 
-matchClassInst inerts clas tys@[r, f, t] loc
+matchClassInst _ clas tys@[r, f, _] loc
   | isRecordsClass clas
   , Just lbl <- isStrLitTy f
   , Just (tc, args) <- splitTyConApp_maybe r
@@ -1820,8 +1814,6 @@ matchClassInst inerts clas tys@[r, f, t] loc
                       Nothing -> return NoInstance }
   where
     pred = mkClassPred clas tys
-    mod tc = nameModule (tyConName tc)
-    doc tc = ptext (sLit "field of") <+> ppr tc
     is_has = isHasClass clas
 
     has_or_upd (has, upd, _, _) | is_has    = has

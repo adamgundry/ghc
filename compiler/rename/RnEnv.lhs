@@ -949,7 +949,7 @@ lookupQualifiedName_overloaded rdr_name
                           fl == occ ] of
                        [] -> do { traceRn (text "lookupQualified overloaded" <+> ppr rdr_name)
                                 ; return Nothing }
-                       xs@((p, fl, sel):ys)
+                       xs@((p, _, sel):ys)
                           -> do { when (not (null ys)) $
                                       addNameClashErrRn rdr_name (map (toFakeGRE mod) xs)
                                 ; return (Just (Right (occ, [(p, sel)]))) } }

@@ -47,7 +47,6 @@ import FamInstEnv
 import Name
 import NameEnv
 import Avail
-import TyCon
 import Module
 import Maybes
 import ErrUtils

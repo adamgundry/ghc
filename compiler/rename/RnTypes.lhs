@@ -40,7 +40,6 @@ import TysPrim          ( funTyConName )
 import Name
 import SrcLoc
 import NameSet
-import TyCon
 import DataCon
 
 import Util

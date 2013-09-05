@@ -33,7 +33,6 @@ import DataCon
 import TcEvidence
 import TysWiredIn       ( coercibleClass )
 import RnEnv
-import RdrName
 import Name
 import RdrName          ( lookupGRE_Name )
 import Id 

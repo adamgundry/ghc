@@ -64,7 +64,6 @@ import TysWiredIn          ( nilDataCon )
 import DataCon
 import Control.Monad       ( when, liftM, ap )
 import Data.Ratio
-import TyCon
 \end{code}
 
 

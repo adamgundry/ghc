@@ -22,7 +22,6 @@ import {-# SOURCE #-} Match	( match )
 import HsSyn
 import DsBinds
 import DataCon
-import TyCon
 import TcType
 import DsMonad
 import DsUtils

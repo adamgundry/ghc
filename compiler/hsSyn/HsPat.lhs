@@ -49,7 +49,6 @@ import FastString
 import Maybes
 -- libraries:
 import Data.Data hiding (TyCon)
-import Data.Maybe
 \end{code}
 
 

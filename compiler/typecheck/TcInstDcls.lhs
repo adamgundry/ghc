@@ -56,8 +56,6 @@ import Pair
 import CoreUnfold ( mkDFunUnfolding )
 import CoreSyn    ( Expr(Var, Type), CoreExpr, mkTyApps, mkVarApps )
 import PrelNames
-import RnEnv      ( addUsedRdrNames, lookupRecFldInstNames )
-import IfaceEnv
 
 import Bag
 import BasicTypes
@@ -72,13 +70,11 @@ import Name
 import NameSet
 import NameEnv
 import RdrName
-import Module
 import Outputable
 import SrcLoc
 import Util
 import BooleanFormula ( isUnsatisfied, pprBooleanFormulaNice )
 
-import Control.Applicative ((<$>), (<*>))
 import Control.Monad
 import Maybes     ( orElse, isNothing, isJust, whenIsJust )
 import qualified Data.ByteString as BS

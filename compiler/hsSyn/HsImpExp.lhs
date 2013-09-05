@@ -12,7 +12,7 @@ module HsImpExp where
 
 import Module           ( ModuleName )
 import HsDoc            ( HsDocString )
-import OccName          ( OccName, HasOccName(..), isTcOcc, isSymOcc )
+import OccName          ( HasOccName(..), isTcOcc, isSymOcc )
 import Avail
 
 import Outputable

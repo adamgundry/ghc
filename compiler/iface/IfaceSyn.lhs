@@ -44,7 +44,7 @@ import Class
 import TyCon
 import DataCon
 import NameSet
-import CoAxiom ( BranchIndex, Role )
+import CoAxiom ( BranchIndex )
 import Name
 import CostCentre
 import Literal

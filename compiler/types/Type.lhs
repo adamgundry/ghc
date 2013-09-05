@@ -167,7 +167,6 @@ import PrelNames
 import CoAxiom
 
 -- others
-import Unique           ( Unique, hasKey )
 import BasicTypes       ( Arity, RepArity )
 import Util
 import Outputable

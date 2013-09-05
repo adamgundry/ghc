@@ -27,7 +27,6 @@ import Name
 import NameEnv
 import NameSet
 import Avail
-import Type
 import DataCon
 import HscTypes
 import RdrName
@@ -612,7 +611,7 @@ getLocalNonValBinders fixity_env
            ; return (L loc (DataFamInstD d'), [avail], flds) }
     new_assoc overload_ok decl@(L loc (ClsInstD cid@(ClsInstDecl { cid_poly_ty = inst_ty
                                                                  , cid_datafam_insts = adts })))
-      | Just (_, _, L loc' cls_rdr, tys) <- splitLHsInstDeclTy_maybe inst_ty
+      | Just (_, _, L loc' cls_rdr, _) <- splitLHsInstDeclTy_maybe inst_ty
       = do { cls_nm <- setSrcSpan loc' $ lookupGlobalOccRn cls_rdr
            ; (adts', avails, fldss) <- mapAndUnzip3M (new_loc_di overload_ok (Just cls_nm)) adts
            ; let decl' = L loc (ClsInstD cid{ cid_datafam_insts = adts' })
@@ -941,7 +940,7 @@ filterAvail keep ie rest =
 
 filterAvailFields :: (Name -> Bool) -> AvailFields -> AvailFields
 filterAvailFields keep (NonOverloaded xs) = NonOverloaded (filter keep xs)
-filterAvailFields keep (Overloaded xs)    = Overloaded xs
+filterAvailFields _    (Overloaded xs)    = Overloaded xs
 
 -- | make a 'GlobalRdrEnv' where all the elements point to the same
 -- Provenance (useful for "hiding" imports, or imports with
@@ -960,8 +959,6 @@ gresFromAvail prov_fn prov_fld avail
        ; return (xs ++ ys) }
 
   where
-    mod = nameModule (availName avail)
-
     greFromNonFld n = GRE { gre_name = n, gre_par = parent n, gre_prov = prov_fn n}
 
     greFromNonOverloadedFld n
