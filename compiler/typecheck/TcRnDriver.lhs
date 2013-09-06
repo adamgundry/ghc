@@ -373,7 +373,7 @@ tcRnExtCore hsc_env (HsExtCore this_mod decls src_binds)
                                 mg_tcs       = tcg_tcs tcg_env,
                                 mg_insts     = tcg_insts tcg_env,
                                 mg_fam_insts = tcg_fam_insts tcg_env,
-                                mg_fld_inst_env = tcg_fld_inst_env tcg_env,
+                                mg_axioms    = tcg_axioms tcg_env,
                                 mg_inst_env  = tcg_inst_env tcg_env,
                                 mg_fam_inst_env = tcg_fam_inst_env tcg_env,
                                 mg_rules        = [],
@@ -1424,7 +1424,7 @@ setInteractiveContext hsc_env icxt thing_inside
         -- This mimics the more selective call to hptInstances in tcRnImports
         (home_insts, home_fam_insts) = hptInstances hsc_env (\_ -> True)
         (ic_insts, ic_finsts) = ic_instances icxt
-        ic_fld_insts = ic_fld_inst_env icxt
+        ic_axs = ic_axioms icxt
 
         -- Note [GHCi temporary Ids]
         -- Ideally we would just make a type_env from ic_tythings
@@ -1474,7 +1474,6 @@ setInteractiveContext hsc_env icxt thing_inside
                                                (map getOccName visible_tmp_ids)
                                  -- Note [delete shadowed tcg_rdr_env entries]
         , tcg_type_env     = type_env
-        , tcg_fld_inst_env = tcg_fld_inst_env env `plusNameEnv` ic_fld_insts
         , tcg_insts        = ic_insts
         , tcg_inst_env     = extendInstEnvList
                               (extendInstEnvList (tcg_inst_env env) ic_insts)
@@ -1485,6 +1484,7 @@ setInteractiveContext hsc_env icxt thing_inside
                               (extendFamInstEnvList (tcg_fam_inst_env env)
                                                     ic_finsts)
                               home_fam_insts
+        , tcg_axioms       = ic_axs
         , tcg_field_env    = mkNameEnv con_fields
              -- setting tcg_field_env is necessary to make RecordWildCards work
              -- (test: ghci049)

@@ -1001,7 +1001,8 @@ data ModGuts
                                          -- (includes TyCons for classes)
         mg_insts     :: ![ClsInst],      -- ^ Class instances declared in this module
         mg_fam_insts :: ![FamInst],      -- ^ Family instances declared in this module
-        mg_fld_inst_env :: !RecFldInstEnv, -- ^ Overloaded record field instances
+        mg_axioms    :: ![CoAxiom Branched], -- ^ Axioms without family instances
+                                             -- See Note [Instance scoping for OverloadedRecordFields] in TcInstDcls
         mg_rules     :: ![CoreRule],     -- ^ Before the core pipeline starts, contains
                                          -- See Note [Overall plumbing for rules] in Rules.lhs
         mg_binds     :: !CoreProgram,    -- ^ Bindings for this module
@@ -1138,9 +1139,10 @@ data InteractiveContext
              -- time we update the context, we just take the results
              -- from the instance code that already does that.
 
-         ic_fld_inst_env :: RecFldInstEnv,
-             -- ^ Overloaded record field instances created during
-             -- this session.
+         ic_axioms     :: [CoAxiom Branched],
+             -- ^ Axioms created during this session without a type family
+             -- (see Note [Instance scoping for OverloadedRecordFields]
+             -- in TcInstDcls).
 
          ic_fix_env :: FixityEnv,
             -- ^ Fixities declared in let statements
@@ -1193,7 +1195,7 @@ emptyInteractiveContext dflags
                          ic_tythings   = [],
                          ic_sys_vars   = [],
                          ic_instances  = ([],[]),
-                         ic_fld_inst_env = emptyNameEnv,
+                         ic_axioms     = [],
                          ic_fix_env    = emptyNameEnv,
                          -- System.IO.print by default
                          ic_int_print  = printName,

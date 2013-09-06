@@ -129,21 +129,21 @@ mkBootModDetailsTc hsc_env
         TcGblEnv{ tcg_exports   = exports,
                   tcg_type_env  = type_env, -- just for the Ids
                   tcg_tcs       = tcs,
-                  tcg_fld_inst_env = fld_insts,
                   tcg_insts     = insts,
-                  tcg_fam_insts = fam_insts
+                  tcg_fam_insts = fam_insts,
+                  tcg_axioms    = axioms
                 }
   = do  { let dflags = hsc_dflags hsc_env
         ; showPass dflags CoreTidy
 
         ; let { insts'     = map (tidyClsInstDFun globaliseAndTidyId) insts
               ; dfun_ids   = map instanceDFunId insts'
-              ; fam_insts' = fam_insts ++ fldInstEnvFamInsts fld_insts
               ; type_env1  = mkBootTypeEnv (availsToNameSet exports)
-                                (typeEnvIds type_env) tcs fam_insts'
-              ; type_env'  = extendTypeEnvWithIds type_env1 dfun_ids
+                                (typeEnvIds type_env) tcs fam_insts
+              ; type_env2  = extendTypeEnvList type_env1 (map ACoAxiom axioms)
+              ; type_env3  = extendTypeEnvWithIds type_env2 dfun_ids
               }
-        ; return (ModDetails { md_types     = type_env'
+        ; return (ModDetails { md_types     = type_env3
                              , md_insts     = insts'
                              , md_fam_insts = fam_insts
                              , md_rules     = []
@@ -297,7 +297,7 @@ tidyProgram hsc_env  (ModGuts { mg_module    = mod
                               , mg_tcs       = tcs
                               , mg_insts     = insts
                               , mg_fam_insts = fam_insts
-                              , mg_fld_inst_env = fld_insts
+                              , mg_axioms    = axioms
                               , mg_binds     = binds
                               , mg_rules     = imp_rules
                               , mg_vect_info = vect_info
@@ -314,7 +314,8 @@ tidyProgram hsc_env  (ModGuts { mg_module    = mod
               }
         ; showPass dflags CoreTidy
 
-        ; let { type_env = typeEnvFromEntities [] tcs (fam_insts ++ fldInstEnvFamInsts fld_insts)
+        ; let { type_env = typeEnvFromEntities [] tcs fam_insts
+                               `extendTypeEnvList` map ACoAxiom axioms
 
               ; implicit_binds
                   = concatMap getClassImplicitBinds (typeEnvClasses type_env) ++

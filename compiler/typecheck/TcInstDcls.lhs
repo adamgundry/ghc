@@ -1566,25 +1566,18 @@ Note carefullly:
 
 Note [Instance scoping for OverloadedRecordFields]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-The instances in scope for a given module correspond exactly to the
-fields in scope in that module. To achieve this, instances are not
-exported using the normal mechanism (extending tcg_insts and
+For the OverloadedRecordFields classes and type families, the
+instances in scope for a given module correspond exactly to the fields
+in scope in that module. To achieve this, instances are not exported
+using the normal mechanism (extending tcg_insts and
 tcg_fam_insts). Instead, only the dfun ids and axioms are exported
-(via tcg_binds for dfuns, and tcg_fld_inst_env for axioms). Special
-code in the constraint solver handles Has and Upd constraints, and the
-GetResult and SetResult type families, looking up the relevant
-instances.
+(via tcg_binds for dfuns, and tcg_axioms for axioms). Special code in
+the constraint solver looks up the relevant instances.
 
-The tcg_fld_inst_env field of TcGblEnv (and likewise the
-mg_fld_inst_env field of ModGuts) stores a map from selector names to
-their DFunIds and FamInsts, for selectors defined in the current
-module. This is needed for two reasons:
-
- * While checking the instances, to solve superclass constraints
-   (since the instances are not yet in scope).
-
- * In tidyProgram, so that the CoAxioms can be kept in the tidied
-   module, as otherwise only the contents of mg_fam_insts are kept.
+The difference between tcg_fam_insts and tcg_axioms is that the former
+will export the family instance as well as the underlying axiom,
+whereas the latter will export only the underlying axiom. Similar
+distinctions arise in ModGuts and the InteractiveContext.
 
 
 Note [Availability of type-changing update]
@@ -1957,7 +1950,7 @@ looking up the instances: the bogus Ids are just vanilla bindings of
 -- environment, but does not add user-visible instances.
 tcFldInsts :: [(Name, FldInstDetails)] -> TcM (LHsBinds Id, TcGblEnv, [InstInfo Name])
 tcFldInsts fld_insts
-    = updGblEnv (extendFldInstEnv $ map toInst fld_insts) $
+    = updGblEnv (\env -> env { tcg_axioms = axioms ++ tcg_axioms env }) $
         tcExtendGlobalEnvImplicit things $
             -- We need to typecheck the instances and solve the
             -- constraints with the extension enabled, so that the
@@ -1977,13 +1970,6 @@ tcFldInsts fld_insts
                  ; ASSERT2( isEmptyBag ev_binds , ppr ev_binds)
                    return (binds, env, inst_infos) }
   where
-    toInst (n, Right (has, upd, get, set))
-                       = (n, Just (is_dfun $ iSpec has, is_dfun $ iSpec upd, get, set))
-    toInst (n, Left _) = (n, Nothing)
-
-    extendFldInstEnv xs env
-        = env { tcg_fld_inst_env = extendNameEnvList (tcg_fld_inst_env env) xs }
-
     has_upd (_, Right (has, upd, _, _)) = [has, upd]
     has_upd _                           = []
 
@@ -1992,7 +1978,9 @@ tcFldInsts fld_insts
 
     inst_infos = concatMap has_upd fld_insts
     fam_insts  = concatMap get_set fld_insts
-    things     = map (ACoAxiom . toBranchedAxiom . famInstAxiom) fam_insts
+    axioms     = map (toBranchedAxiom . famInstAxiom) fam_insts
+    things     = map ACoAxiom axioms
+                     ++ map (AnId . is_dfun . iSpec) inst_infos
 
     bogus (_, Left (has, upd, get, set)) = [has, upd, get, set]
     bogus _            = []

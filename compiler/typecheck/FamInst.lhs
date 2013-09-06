@@ -336,11 +336,7 @@ lookupRecFldInsts lbl tc args
                ; addUsedSelector sel_name
                  -- See Note [Duplicate field labels with data families]
                ; if selectorInScope (tcg_rdr_env gbl_env) lbl_occ (tyConName tc) sel_name
-                 then case lookupNameEnv (tcg_fld_inst_env gbl_env) sel_name of
-                        Just (Just xs) -> return $ Just (Left xs)
-                        Just Nothing   -> return Nothing
-                        Nothing -> fmap (Just . Right) $
-                                       lookupRecFldInstNames mod lbl_occ rep_tc_occ
+                 then return (Just (Right (flInstances fl)))
                  else return Nothing } } }
   where
     lbl_occ = mkVarOccFS lbl
