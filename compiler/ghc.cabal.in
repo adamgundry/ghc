@@ -407,6 +407,7 @@ Library
         FastFunctions
         FastMutInt
         FastString
+        FastStringEnv
         FastTypes
         Fingerprint
         FiniteMap

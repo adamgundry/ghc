@@ -59,7 +59,6 @@ import NameSet
 import NameEnv
 import Avail
 import Module
-import UniqFM
 import DataCon          ( FieldLabel, dataConFieldLabels, dataConTyCon )
 import TyCon            ( TyCon, isTupleTyCon, tyConArity )
 import PrelNames        ( mkUnboundName, isUnboundName, rOOT_MAIN, forall_tv_RDR )
@@ -72,6 +71,7 @@ import Maybes
 import ListSetOps       ( removeDups )
 import DynFlags
 import FastString
+import FastStringEnv
 import Control.Monad
 import Data.List
 import qualified Data.Set as Set
@@ -1168,20 +1168,6 @@ The extended lookup is also used in other places, like resolution of
 deprecation declarations, and lookup of names in GHCi.
 
 \begin{code}
---------------------------------
-type FastStringEnv a = UniqFM a         -- Keyed by FastString
-
-
-emptyFsEnv  :: FastStringEnv a
-lookupFsEnv :: FastStringEnv a -> FastString -> Maybe a
-extendFsEnv :: FastStringEnv a -> FastString -> a -> FastStringEnv a
-mkFsEnv     :: [(FastString,a)] -> FastStringEnv a
-
-emptyFsEnv  = emptyUFM
-lookupFsEnv = lookupUFM
-extendFsEnv = addToUFM
-mkFsEnv     = listToUFM
-
 --------------------------------
 type MiniFixityEnv = FastStringEnv (Located Fixity)
         -- Mini fixity env for the names we're about
