@@ -13,7 +13,7 @@ TcInstDecls: Typechecking instance declarations
 --     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
-module TcInstDcls ( tcInstDecls1, tcInstDecls2, makeOverloadedRecFldInsts, FldInstDetails ) where
+module TcInstDcls ( tcInstDecls1, tcInstDecls2, makeOverloadedRecFldInsts ) where
 
 #include "HsVersions.h"
 
@@ -1655,11 +1655,11 @@ updates to fields of V may change the types but not the kinds:
 
 \begin{code}
 -- | Contains Has and Upd class instances, and GetResult and SetResult
--- family instances, in that order. Left indicates that they are bogus
--- (because the field is higher-rank or existential); Right gives the
--- real things.
+-- axioms, in that order. Left means that they are bogus (because the
+-- field is higher-rank or existential); Right gives the real things.
 type FldInstDetails = Either (Name, Name, Name, Name)
-                             (InstInfo Name, InstInfo Name, FamInst, FamInst)
+                             (InstInfo Name, InstInfo Name,
+                                 CoAxiom Unbranched, CoAxiom Unbranched)
 
 
 -- | Create and typecheck instances from datatype and data instance
@@ -1716,7 +1716,7 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
 
            -- Generate GetResult instance:
            --     type instance GetResult data_ty f = fld_ty
-           ; get_fam  <- mkFamInst get_name getResultFamName [data_ty, f] fld_ty
+           ; get_ax <- mkAxiom get_name getResultFamName [data_ty, f] fld_ty
 
            -- Generate Upd instance:
            --     instance (b ~ fld_ty', ...) => Upd t_ty f b
@@ -1734,14 +1734,14 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
            --     type instance SetResult data_ty f hull_ty = data_ty'
            -- See Note [Calculating the hull type]
            ; hull_ty <- hullType (tyVarsOfType data_ty') fld_ty'
-           ; set_fam <- mkFamInst set_name setResultFamName
-                             [data_ty, f, hull_ty] data_ty'
+           ; set_ax  <- mkAxiom set_name setResultFamName
+                            [data_ty, f, hull_ty] data_ty'
 
            -- ; dumpDerivingInfo (hang (text "Overloaded record field instances:")
-           --                  2 (vcat [ppr has_inst, ppr get_fam,
-           --                           ppr upd_inst, ppr set_fam]))
+           --                  2 (vcat [ppr has_inst, ppr get_ax,
+           --                           ppr upd_inst, ppr set_ax]))
 
-           ; return (sel_name, Right (has_inst, upd_inst, get_fam, set_fam)) } }
+           ; return (sel_name, Right (has_inst, upd_inst, get_ax, set_ax)) } }
 
   where
 
@@ -1815,15 +1815,14 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
                           (substTys subst tys) }
 
 
-    -- | Make a type family instance
+    -- | Make an axiom corresponding to the type family instance
     --    type instance fam_name args = result
-    mkFamInst ax_name fam_name args result
+    mkAxiom ax_name fam_name args result
       = do { fam <- tcLookupTyCon fam_name
            ; let tyvars = varSetElems (tyVarsOfTypes (result:args))
            ; (subst, tyvars') <- tcInstSkolTyVars tyvars
-           ; let axiom  = mkSingleCoAxiom ax_name tyvars' fam (substTys subst args)
-                                                              (substTy subst result)
-           ; newFamInst SynFamilyInst axiom }
+           ; return $ mkSingleCoAxiom ax_name tyvars' fam (substTys subst args)
+                                                          (substTy subst result) }
 
 
 -- | Given a tycon name and a record selector belonging to that tycon,
@@ -1975,8 +1974,7 @@ tcFldInsts fld_insts
     get_set _                           = []
 
     inst_infos = concatMap has_upd fld_insts
-    fam_insts  = concatMap get_set fld_insts
-    axioms     = map (toBranchedAxiom . famInstAxiom) fam_insts
+    axioms     = concatMap (map toBranchedAxiom . get_set) fld_insts
     things     = map ACoAxiom axioms
                      ++ map (AnId . is_dfun . iSpec) inst_infos
 
