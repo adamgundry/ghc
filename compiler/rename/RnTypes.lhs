@@ -40,7 +40,7 @@ import TysPrim          ( funTyConName )
 import Name
 import SrcLoc
 import NameSet
-import DataCon
+import TyCon
 
 import Util
 import BasicTypes       ( compareFixity, funTyFixity, negateFixity,
@@ -526,8 +526,8 @@ rnConDeclFields con doc fields = mapFvRn (rnField con doc) fields
 rnField :: Name -> HsDocContext -> ConDeclField RdrName -> RnM (ConDeclField Name, FreeVars)
 rnField con doc (ConDeclField name _ ty haddock_doc)
   = do { flds <- lookupConstructorFields con
-       ; let lbl = rdrNameOcc $ unLoc name
-       ; let fl = expectJust "rnField" $ find ((== lbl) . flOccName) flds
+       ; let lbl = occNameFS $ rdrNameOcc $ unLoc name
+       ; let fl = expectJust "rnField" $ find ((== lbl) . flLabel) flds
        ; (new_ty, fvs) <- rnLHsType doc ty
        ; new_haddock_doc <- rnMbLHsDoc haddock_doc
        ; return (ConDeclField name (flSelector fl) new_ty new_haddock_doc, fvs) }

@@ -27,7 +27,7 @@ import Name
 import NameEnv
 import NameSet
 import Avail
-import DataCon
+import TyCon
 import HscTypes
 import RdrName
 import Outputable
@@ -571,19 +571,21 @@ getLocalNonValBinders fixity_env
              ; let fld_env = case unLoc tc_decl of
                                DataDecl { tcdDataDefn = d } -> mk_fld_env d names flds'
                                _                            -> []
-             ; return (AvailTC main_name names (fieldLabelsToAvailFields flds'), fld_env) }
+                   avail_flds = fieldLabelsToAvailFields' overload_ok flds'
+             ; return (AvailTC main_name names avail_flds, fld_env) }
 
     new_rec_sel :: Bool -> OccName -> Located RdrName -> RnM FieldLabel
     new_rec_sel overload_ok tc (L loc fld) =
       do { sel_name <- newTopSrcBinder $ L loc $ mkRdrUnqual $
-                           if overload_ok then sel_occ else lbl
+                           if overload_ok then sel_occ else lbl_occ
          ; mod      <- getModule
          ; is'      <- traverse (\ occ -> newGlobalBinder mod occ loc) is
-         ; return $ FieldLabel { flOccName = lbl
+         ; return $ FieldLabel { flLabel = lbl
                                , flSelector = sel_name
                                , flInstances = is' } }
       where
-        lbl           = rdrNameOcc fld
+        lbl_occ       = rdrNameOcc fld
+        lbl           = occNameFS lbl_occ
         (sel_occ, is) = mkOverloadedRecFldOccs lbl tc
 
     -- Calculate the mapping from constructor names to fields, which
@@ -599,7 +601,8 @@ getLocalNonValBinders fixity_env
         find_con_name rdr = expectJust "getLocalNonValBinders/find_con_name" $
                                 find (\ n -> nameOccName n == rdrNameOcc rdr) names
         find_con_decl_fld x = expectJust "getLocalNonValBinders/find_con_decl_fld" $
-                                find (\ fl -> flOccName fl == rdrNameOcc (unLoc (cd_fld_lbl x))) flds
+                                find (\ fl -> flLabel fl == lbl) flds
+          where lbl = occNameFS (rdrNameOcc (unLoc (cd_fld_lbl x)))
 
     new_assoc :: Bool -> LInstDecl RdrName -> RnM (LInstDecl RdrName, [AvailInfo],
                                                       [(Name, [FieldLabel])])
@@ -629,7 +632,8 @@ getLocalNonValBinders fixity_env
              ; rep_tc_name <- newFamInstTyConName' main_name (hswb_cts (dfid_pats ti_decl))
              ; flds' <- mapM (new_rec_sel overload_ok (nameOccName rep_tc_name) . fstOf3) flds
              ; let ti_decl' = ti_decl{ dfid_rep_tycon = rep_tc_name }
-                   avail    = AvailTC (unLoc main_name) sub_names (fieldLabelsToAvailFields flds')
+                   avail    = AvailTC (unLoc main_name) sub_names
+                                  (fieldLabelsToAvailFields' overload_ok flds')
                                   -- main_name is not bound here!
                    fld_env  = mk_fld_env (dfid_defn ti_decl) sub_names flds'
              ; return (ti_decl', avail, fld_env) }
@@ -882,11 +886,11 @@ catIELookupM ms = [ a | Succeeded a <- ms ]
 greExportAvail :: GlobalRdrElt -> AvailInfo
 greExportAvail gre
   = case gre_par gre of
-      ParentIs p                -> AvailTC p [me] (NonOverloaded [])
-      FldParent p f | nameOccName me == f -> AvailTC p [] (NonOverloaded [me])
-                    | otherwise           -> AvailTC p [] (Overloaded [(f, me)])
-      NoParent   | isTyConName me -> AvailTC me [me] (NonOverloaded [])
-                 | otherwise      -> Avail   me
+      ParentIs p                                -> AvailTC p [me] (NonOverloaded [])
+      FldParent p f | isOverloadedRecFldGRE gre -> AvailTC p [] (Overloaded [(f,me)])
+                    | otherwise                 -> AvailTC p [] (NonOverloaded [me])
+      NoParent      | isTyConName me            -> AvailTC me [me] (NonOverloaded [])
+                    | otherwise                 -> Avail   me
   where
     me = gre_name gre
 
@@ -949,7 +953,7 @@ gresFromAvails :: Provenance -> [AvailInfo] -> TcRnIf a b [GlobalRdrElt]
 gresFromAvails prov avails
   = concatMapM (gresFromAvail (const prov) (const prov)) avails
 
-gresFromAvail :: (Name -> Provenance) -> (OccName -> Provenance) ->
+gresFromAvail :: (Name -> Provenance) -> (FieldLabelString -> Provenance) ->
                      AvailInfo -> TcRnIf a b [GlobalRdrElt]
 gresFromAvail prov_fn prov_fld avail
   = do { xs <- case availFlds avail of
@@ -963,8 +967,8 @@ gresFromAvail prov_fn prov_fld avail
 
     greFromNonOverloadedFld n
       = GRE { gre_name = n
-            , gre_par  = FldParent (availName avail) (nameOccName n)
-            , gre_prov = prov_fld (nameOccName n) }
+            , gre_par  = FldParent (availName avail) (occNameFS (nameOccName n))
+            , gre_prov = prov_fld (occNameFS (nameOccName n)) }
 
     greFromOverloadedFld (lbl, sel)
       = return (GRE { gre_name = sel
@@ -998,23 +1002,26 @@ gresFromIE decl_spec (L loc ie, avail)
           item_spec = ImpSome { is_explicit = is_explicit_fld, is_iloc = loc }
 
 
-data ChildName = NonFldChild Name | FldChild Name | OverloadedFldChild (OccName, Name)
+data ChildName = NonFldChild Name | FldChild Name | OverloadedFldChild (FieldLabelString, Name)
 
 childOccName :: ChildName -> OccName
 childOccName (NonFldChild n)               = nameOccName n
 childOccName (FldChild n)                  = nameOccName n
-childOccName (OverloadedFldChild (occ, _)) = occ
+childOccName (OverloadedFldChild (occ, _)) = mkVarOccFS occ
 
 
 mkChildEnv :: [GlobalRdrElt] -> NameEnv [ChildName]
 mkChildEnv gres = foldr add emptyNameEnv gres
   where
-    add (GRE { gre_name = n, gre_par = ParentIs p }) env
-      = extendNameEnv_Acc (:) singleton env p (NonFldChild n)
-    add (GRE { gre_name = n, gre_par = FldParent p f}) env
-      | nameOccName n == f = extendNameEnv_Acc (:) singleton env p (FldChild n)
-      | otherwise          = extendNameEnv_Acc (:) singleton env p (OverloadedFldChild (f, n))
-    add _ env = env
+    add gre env = case greChild gre of
+        Just c  -> extendNameEnv_Acc (:) singleton env (par_is (gre_par gre)) c
+        Nothing -> env
+    greChild gre = case gre_par gre of
+        FldParent _ lbl | isOverloadedRecFldGRE gre -> Just (OverloadedFldChild (lbl, n))
+                        | otherwise                 -> Just (FldChild n)
+        ParentIs _                                  -> Just (NonFldChild n)
+        NoParent -> Nothing
+      where n = gre_name gre
 
 findChildren :: NameEnv [ChildName] -> Name -> [ChildName]
 findChildren env n = lookupNameEnv env n `orElse` []
@@ -1321,7 +1328,7 @@ isDoc _ = False
 
 availFieldsRdrNames :: AvailFlds RdrName -> [RdrName]
 availFieldsRdrNames (NonOverloaded xs) = xs
-availFieldsRdrNames (Overloaded xs)    = map (mkRdrUnqual . fst) xs
+availFieldsRdrNames (Overloaded xs)    = map (mkRdrUnqual . mkVarOccFS . fst) xs
 
 -------------------------------
 isModuleExported :: Bool -> ModuleName -> GlobalRdrElt -> Bool
@@ -1546,7 +1553,7 @@ findImportUsage :: [LImportDecl Name]
                 -> GlobalRdrEnv
                 -> [RdrName]
                 -> NameSet
-                -> NameEnv (OccName, Name)
+                -> NameEnv (FieldLabelString, Name)
                 -> [ImportDeclUsage]
 
 findImportUsage imports rdr_env rdrs sel_names fld_env
@@ -1593,7 +1600,7 @@ findImportUsage imports rdr_env rdrs sel_names fld_env
        -- imported Num(signum).  We don't want to complain that
        -- Num is not itself mentioned.  Hence the two cases in add_unused_with.
 
-extendImportMap :: NameEnv (OccName, Name) -> GlobalRdrEnv -> Either RdrName Name
+extendImportMap :: NameEnv (FieldLabelString, Name) -> GlobalRdrEnv -> Either RdrName Name
                 -> ImportMap -> ImportMap
 -- For a used RdrName, find all the import decls that brought
 -- it into scope; choose one of them (bestImport), and record
@@ -1639,7 +1646,7 @@ extendImportMap fld_env rdr_env rdr_or_sel imp_map
 \end{code}
 
 \begin{code}
-warnUnusedImport :: NameEnv (OccName, Name) -> ImportDeclUsage -> RnM ()
+warnUnusedImport :: NameEnv (FieldLabelString, Name) -> ImportDeclUsage -> RnM ()
 warnUnusedImport fld_env (L loc decl, used, unused)
   | Just (False,[]) <- ideclHiding decl
                 = return ()            -- Do not warn for 'import M()'
@@ -1729,11 +1736,11 @@ printMinimalImports imports_w_usage
                       NonOverloaded ys -> map IEVar (ns ++ ys)
                       Overloaded    _  -> [IEThingWith n (filter (/= n) ns) fs]
         where
-          fld_occs = availFieldsOccs fs
+          fld_lbls = availFieldsLabels fs
 
           all_used (avail_occs, avail_flds)
               = all (`elem` ns) avail_occs
-                    && all (`elem` fld_occs) (availFieldsOccs avail_flds)
+                    && all (`elem` fld_lbls) (availFieldsLabels avail_flds)
 \end{code}
 
 Note [Partial export]

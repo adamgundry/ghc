@@ -1671,20 +1671,18 @@ makeOverloadedRecFldInsts tycl_decls inst_decls
          ; tcFldInsts fld_insts }
   where
     (_, flds) = hsTyClDeclsBinders tycl_decls inst_decls
-    flds'     = map (\ (x, y, z) -> (rdrNameOcc x, y, z)) flds
+    flds'     = map (\ (x, y, z) -> (occNameFS (rdrNameOcc x), y, z)) flds
 
 
 -- | Given a (label, selector name, tycon name) triple, construct the
 -- appropriate Has, Upd, GetResult and SetResult instances.
-makeRecFldInstsFor :: (OccName, Name, Name) -> TcM (Name, FldInstDetails)
+makeRecFldInstsFor :: (FieldLabelString, Name, Name) -> TcM (Name, FldInstDetails)
 makeRecFldInstsFor (lbl, sel_name, tycon_name)
   = do { rep_tc <- lookupRepTyConOfSelector tycon_name sel_name
 
        -- Find a relevant data constructor (one that has this field)
        -- and extract information from the FieldLabel.
-       ; let is_relevant con = any (\ fl -> flOccName fl == lbl)
-                                   (dataConFieldLabels con)
-             relevant_cons = filter is_relevant (tyConDataCons rep_tc)
+       ; let relevant_cons = tyConDataConsWithFields rep_tc [lbl]
              dc            = ASSERT (notNull relevant_cons) head relevant_cons
              (fl, fld_ty0) = dataConFieldLabel dc lbl
              data_ty0      = dataConOrigResTy dc
@@ -1702,7 +1700,7 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
            -- Freshen the type variables in the constituent types
            { let univ_tvs     = dataConUnivTyVars dc
            ; (subst0, tyvars) <- tcInstSkolTyVars (univ_tvs ++ dataConExTyVars dc)
-           ; let f            = mkStrLitTy (occNameFS lbl)
+           ; let f            = mkStrLitTy lbl
                  t_ty         = substTy subst0 (mkFamilyTyConApp rep_tc
                                                    (mkTyVarTys univ_tvs))
                  data_ty      = substTy subst0 data_ty0
@@ -1763,7 +1761,7 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
             bind  = unitBag $ noLoc $ (mkTopFunBind (noLoc getFieldName) [match])
                                           { bind_fvs = placeHolderNames }
             match = mkSimpleMatch [nlWildPat]
-                        (noLoc (HsSingleRecFld (mkRdrUnqual lbl) sel_name))
+                        (noLoc (HsSingleRecFld (mkVarUnqual lbl) sel_name))
 
 
     -- | Make InstInfo for Upd thus:
@@ -1783,10 +1781,10 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
       where
         matchCon con
           = do { x <- newSysName (mkVarOcc "x")
-               ; vars <- mapM (newSysName . flOccName) (dataConFieldLabels con)
+               ; vars <- mapM (newSysName . mkVarOccFS . flLabel) (dataConFieldLabels con)
                ; let con_name = dataConName con
                      vars'    = map replace_lbl vars
-                     replace_lbl v = if nameOccName v == lbl then x else v
+                     replace_lbl v = if occNameFS (nameOccName v) == lbl then x else v
                ; return $ mkSimpleMatch [nlWildPat, nlConVarPat con_name vars, nlVarPat x]
                                         (nlHsVarApps con_name vars') }
 
@@ -1800,7 +1798,7 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
                                 nlHsApp (nlHsVar (getName pAT_ERROR_ID))
                                         (nlHsLit (HsStringPrim msg))
             msg = unsafeMkByteString "setField|overloaded record update: "
-                      `BS.append` fastStringToByteString (occNameFS lbl)
+                      `BS.append` fastStringToByteString lbl
             cons = tyConDataCons rep_tc
             dealt_with con = con `elem` relevant_cons
                                  || dataConCannotMatch inst_tys con
@@ -1842,7 +1840,7 @@ lookupRepTyConOfSelector tycon_name sel_name
 -- | Compute a substitution that replaces each tyvar with a fresh
 -- variable, if it can be updated; also returns a list of all the
 -- tyvars (old and new). See Note [Availability of type-changing update]
-updatingSubst :: OccName -> [DataCon] -> [TyVar] -> TyVarSet ->
+updatingSubst :: FieldLabelString -> [DataCon] -> [TyVar] -> TyVarSet ->
                          TcM (TvSubst, [TyVar])
 updatingSubst lbl relevant_cons tyvars fld_tvs
       = do { (subst, tyvarss) <- mapAccumLM updateTyVar emptyTvSubst tyvars

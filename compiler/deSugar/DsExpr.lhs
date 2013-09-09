@@ -420,10 +420,10 @@ dsExpr (RecordCon (L _ data_con_id) con_expr rbinds) = do
         -- hence TcType.tcSplitFunTys
 
         mk_arg (arg_ty, fl)
-          = case findField (rec_flds rbinds) (flOccName fl) of
+          = case findField (rec_flds rbinds) (flLabel fl) of
               (rhs:rhss) -> ASSERT( null rhss )
                             dsLExpr rhs
-              []         -> mkErrorAppDs rEC_CON_ERROR_ID arg_ty (ppr (flOccName fl))
+              []         -> mkErrorAppDs rEC_CON_ERROR_ID arg_ty (ppr (flLabel fl))
         unlabelled_bottom arg_ty = mkErrorAppDs rEC_CON_ERROR_ID arg_ty empty
 
         labels = dataConFieldLabels (idDataCon data_con_id)
@@ -610,9 +610,9 @@ dsExpr (HsOverloadedRecFld {}) = panic "dsExpr: HsOverloadedRecFld"
 dsExpr (HsSingleRecFld     {}) = panic "dsExpr: HsOverloadedRecFld"
 
 
-findField :: [HsRecField Id arg] -> OccName -> [arg]
+findField :: [HsRecField Id arg] -> FieldLabelString -> [arg]
 findField rbinds lbl
-  = [hsRecFieldArg x | x <- rbinds, rdrNameOcc (unLoc (hsRecFieldLbl x)) == lbl]
+  = [hsRecFieldArg x | x <- rbinds, occNameFS (rdrNameOcc (unLoc (hsRecFieldLbl x))) == lbl]
 \end{code}
 
 %--------------------------------------------------------------------

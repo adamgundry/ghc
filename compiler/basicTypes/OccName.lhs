@@ -704,13 +704,13 @@ Record selector OccNames are built from the underlying field name and
 the name of the type constructor, to support overloaded record fields.
 
 \begin{code}
-mkRecSelOcc :: OccName -> OccName -> OccName
+mkRecSelOcc :: FastString -> OccName -> OccName
 mkRecSelOcc lbl tc = fst $ mkOverloadedRecFldOccs lbl tc
 
-mkOverloadedRecFldOccs :: OccName -> OccName -> (OccName, FldInsts OccName)
+mkOverloadedRecFldOccs :: FastString -> OccName -> (OccName, FldInsts OccName)
 mkOverloadedRecFldOccs lbl tc = (sel_occ, is)
   where
-    str     = ":" ++ occNameString lbl ++ ":" ++ occNameString tc
+    str     = ":" ++ unpackFS lbl ++ ":" ++ occNameString tc
     has_str = "Has"
     upd_str = "Upd"
     get_str = "GetResult"

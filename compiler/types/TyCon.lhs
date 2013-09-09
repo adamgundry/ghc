@@ -15,6 +15,12 @@ module TyCon(
         TyConParent(..), isNoParent,
         SynTyConRhs(..), Role(..),
 
+        -- ** Field labels
+        FieldLbl(..), FieldLabel, FldInsts(..), FieldLabelString,
+        isOverloadedFieldLabel, fieldLabelsToAvailFields,
+        fieldLabelsToAvailFields',
+        tyConFieldLabels, tyConFieldLabelEnv, tyConDataConsWithFields,
+
         -- ** Constructing TyCons
         mkAlgTyCon,
         mkClassTyCon,
@@ -95,7 +101,7 @@ module TyCon(
 #include "HsVersions.h"
 
 import {-# SOURCE #-} TypeRep ( Kind, Type, PredType )
-import {-# SOURCE #-} DataCon ( DataCon, isVanillaDataCon )
+import {-# SOURCE #-} DataCon ( DataCon, isVanillaDataCon, dataConFieldLabels )
 import {-# SOURCE #-} FamInst ( TcBuiltInSynFamily )
 
 import Var
@@ -106,15 +112,23 @@ import ForeignCall
 import Name
 import NameSet
 import CoAxiom
+import Avail
 import PrelNames
 import Maybes
 import Outputable
 import FastString
+import FastStringEnv
 import Constants
 import Util
+import Binary
 
+import Control.Applicative ( (<$>), (<*>) )
 import qualified Data.Data as Data
+import Data.Function
+import Data.List ( nubBy )
 import Data.Typeable (Typeable)
+import Data.Foldable ( Foldable(..) )
+import Data.Traversable
 \end{code}
 
 -----------------------------------------------
@@ -371,6 +385,9 @@ data TyCon
 
         algTcRhs :: AlgTyConRhs,  -- ^ Contains information about the
                                   -- data constructors of the algebraic type
+
+        algTcFields :: FieldLabelEnv, -- ^ Maps a label to information
+                                      -- about the field
 
         algTcRec :: RecFlag,      -- ^ Tells us whether the data type is part
                                   -- of a mutually-recursive group or not
@@ -883,6 +900,89 @@ primElemRepSizeB FloatElemRep  = 4
 primElemRepSizeB DoubleElemRep = 8
 \end{code}
 
+
+%************************************************************************
+%*                                                                      *
+\subsection{Field labels}
+%*                                                                      *
+%************************************************************************
+
+\begin{code}
+type FieldLabelEnv = FastStringEnv FieldLabel
+type FieldLabel    = FieldLbl Name
+
+-- | Fields in an algebraic record type
+data FieldLbl a = FieldLabel {
+      flLabel     :: FieldLabelString, -- ^ Label of the field
+      flSelector  :: a,                -- ^ Record selector function
+      flInstances :: FldInsts a        -- ^ Instances for overloading
+    }
+  deriving (Eq, Ord)
+
+instance Functor FieldLbl where
+    fmap = fmapDefault
+
+instance Foldable FieldLbl where
+    foldMap = foldMapDefault
+
+instance Traversable FieldLbl where
+    traverse f (FieldLabel occ sel mb_is)
+        = FieldLabel occ <$> f sel <*> traverse f mb_is
+
+instance Outputable a => Outputable (FieldLbl a) where
+    ppr (FieldLabel occ sel _) = ppr occ <> braces (ppr sel)
+
+instance Binary a => Binary (FieldLbl a) where
+    put_ bh (FieldLabel aa ab ac) = do
+        put_ bh aa
+        put_ bh ab
+        put_ bh ac
+
+    get bh = do
+        aa <- get bh
+        ab <- get bh
+        ac <- get bh
+        return (FieldLabel aa ab ac)
+
+
+isOverloadedFieldLabel :: FieldLabel -> Bool
+isOverloadedFieldLabel fl = flLabel fl /= occNameFS (nameOccName (flSelector fl))
+
+fieldLabelsToAvailFields :: [FieldLabel] -> AvailFields
+fieldLabelsToAvailFields [] = NonOverloaded []
+fieldLabelsToAvailFields fls@(fl:_) = fieldLabelsToAvailFields' overloaded fls
+  where overloaded = isOverloadedFieldLabel fl
+
+fieldLabelsToAvailFields' :: Bool -> [FieldLabel] -> AvailFields
+fieldLabelsToAvailFields' overloaded fls
+    | overloaded = Overloaded (map (\ fl -> (flLabel fl, flSelector fl)) fls)
+    | otherwise  = NonOverloaded (map flSelector fls)
+
+-- | The labels for the fields of this particular 'TyCon'
+tyConFieldLabels :: TyCon -> [FieldLabel]
+tyConFieldLabels tc = fsEnvElts $ tyConFieldLabelEnv tc
+
+-- | The labels for the fields of this particular 'TyCon'
+tyConFieldLabelEnv :: TyCon -> FieldLabelEnv
+tyConFieldLabelEnv tc
+  | isAlgTyCon tc = algTcFields tc
+  | otherwise     = emptyFsEnv
+
+-- | The DataCons from this TyCon that have *all* the given fields
+tyConDataConsWithFields :: TyCon -> [FieldLabelString] -> [DataCon]
+tyConDataConsWithFields tc lbls = filter has_flds (tyConDataCons tc)
+  where has_flds dc = all (has_fld dc) lbls
+        has_fld dc lbl = any (\ fl -> flLabel fl == lbl) (dataConFieldLabels dc)
+
+fieldsOfAlgTcRhs :: AlgTyConRhs -> FieldLabelEnv
+fieldsOfAlgTcRhs rhs = mkFsEnv [ (flLabel fl, fl)
+                               | fl <- dataConsFields (visibleDataCons rhs) ]
+  where
+    dataConsFields dcs = nubBy ((==) `on` flLabel)
+                               (concatMap dataConFieldLabels dcs)
+\end{code}
+
+
 %************************************************************************
 %*                                                                      *
 \subsection{TyCon Construction}
@@ -937,6 +1037,7 @@ mkAlgTyCon name kind tyvars roles cType stupid rhs parent is_rec gadt_syn prom_t
         tyConCType       = cType,
         algTcStupidTheta = stupid,
         algTcRhs         = rhs,
+        algTcFields      = fieldsOfAlgTcRhs rhs,
         algTcParent      = ASSERT2( okParent name parent, ppr name $$ ppr parent ) parent,
         algTcRec         = is_rec,
         algTcGadtSyntax  = gadt_syn,

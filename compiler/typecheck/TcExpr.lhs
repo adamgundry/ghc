@@ -657,8 +657,7 @@ tcExpr (RecordUpd record_expr rbnds _ _ _) res_ty
               data_cons   = tyConDataCons tycon                 -- it's not a field label
                 -- NB: for a data type family, the tycon is the instance tycon
 
-              relevant_cons   = filter is_relevant data_cons
-              is_relevant con = all (`elem` map flOccName (dataConFieldLabels con)) upd_fld_occs
+              relevant_cons   = tyConDataConsWithFields tycon upd_fld_occs
                 -- A constructor is only relevant to this process if
                 -- it contains *all* the fields that are being updated
                 -- Other ones will cause a runtime error if they occur
@@ -666,7 +665,7 @@ tcExpr (RecordUpd record_expr rbnds _ _ _) res_ty
                 -- Take apart a representative constructor
               con1 = ASSERT( not (null relevant_cons) ) head relevant_cons
               (con1_tvs, _, _, _, con1_arg_tys, _) = dataConFullSig con1
-              con1_flds = map flOccName $ dataConFieldLabels con1
+              con1_flds = map flLabel $ dataConFieldLabels con1
               con1_res_ty = mkFamilyTyConApp tycon (mkTyVarTys con1_tvs)
 
         -- Step 2
@@ -1407,7 +1406,7 @@ naughtiness in both branches.  c.f. TcTyClsBindings.mkAuxBinds.
 %************************************************************************
 
 \begin{code}
-getFixedTyVars :: [OccName] -> [TyVar] -> [DataCon] -> TyVarSet
+getFixedTyVars :: [FieldLabelString] -> [TyVar] -> [DataCon] -> TyVarSet
 -- These tyvars must not change across the updates
 getFixedTyVars upd_fld_occs tvs1 cons
       = mkVarSet [tv1 | con <- cons
@@ -1422,7 +1421,7 @@ getFixedTyVars upd_fld_occs tvs1 cons
                                     -- See Note [Implict type sharing]
 
                             fixed_tys = [ty | (fl, ty) <- zip flds arg_tys
-                                            , not (flOccName fl `elem` upd_fld_occs)]
+                                            , not (flLabel fl `elem` upd_fld_occs)]
                       , (tv1,tv) <- tvs1 `zip` tvs      -- Discards existentials in tvs
                       , tv `elemVarSet` fixed_tvs ]
 \end{code}
@@ -1492,7 +1491,7 @@ disambiguateRecordBinds record_expr rbnds res_ty
 
     -- Calculate the list of possible parent tycons, by taking the
     -- intersection of the possibilities for each field.
-    possibleParents :: [(OccName, Either Name [(Name, Name)])] -> RnM [Name]
+    possibleParents :: [(FieldLabelString, Either Name [(Name, Name)])] -> RnM [Name]
     possibleParents xs = fmap (foldr1 intersect) (mapM (parentsFor . snd) xs)
 
     -- Unambiguous fields have a single possible parent: their actual
@@ -1564,7 +1563,7 @@ tcRecordBinds data_con arg_tys (HsRecFields rbinds dd)
   = do  { mb_binds <- mapM do_bind rbinds
         ; return (HsRecFields (catMaybes mb_binds) dd) }
   where
-    flds_w_tys = zipEqual "tcRecordBinds" (map flOccName $ dataConFieldLabels data_con) arg_tys
+    flds_w_tys = zipEqual "tcRecordBinds" (map flLabel $ dataConFieldLabels data_con) arg_tys
     do_bind fld@(HsRecField { hsRecFieldLbl = L loc lbl, hsRecFieldSel = Left sel_name, hsRecFieldArg = rhs })
       | Just field_ty <- assocMaybe flds_w_tys field_lbl
       = addErrCtxt (fieldCtxt field_lbl)        $
@@ -1581,7 +1580,7 @@ tcRecordBinds data_con arg_tys (HsRecFields rbinds dd)
       = do { addErrTc (badFieldCon data_con field_lbl)
            ; return Nothing }
       where
-        field_lbl = rdrNameOcc lbl
+        field_lbl = occNameFS $ rdrNameOcc lbl
     do_bind _ = panic "tcRecordBinds/do_bind: field with no selector"
 
 checkMissingFields :: DataCon -> HsRecordBinds Name -> TcM ()
@@ -1604,12 +1603,12 @@ checkMissingFields data_con rbinds
 
   where
     missing_s_fields
-        = [ flOccName fl | (fl, str) <- field_info,
+        = [ flLabel fl | (fl, str) <- field_info,
                  isBanged str,
                  not (fl `elemField` field_names_used)
           ]
     missing_ns_fields
-        = [ flOccName fl | (fl, str) <- field_info,
+        = [ flLabel fl | (fl, str) <- field_info,
                  not (isBanged str),
                  not (fl `elemField` field_names_used)
           ]
@@ -1637,7 +1636,7 @@ exprCtxt :: LHsExpr Name -> SDoc
 exprCtxt expr
   = hang (ptext (sLit "In the expression:")) 2 (ppr expr)
 
-fieldCtxt :: OccName -> SDoc
+fieldCtxt :: FieldLabelString -> SDoc
 fieldCtxt field_name
   = ptext (sLit "In the") <+> quotes (ppr field_name) <+> ptext (sLit "field of a record")
 
@@ -1678,7 +1677,7 @@ funResCtxt has_args fun fun_res_ty env_ty tidy_env
           Just (tc, _) -> isAlgTyCon tc
           Nothing      -> False
 
-badFieldTypes :: [(OccName,TcType)] -> SDoc
+badFieldTypes :: [(FieldLabelString,TcType)] -> SDoc
 badFieldTypes prs
   = hang (ptext (sLit "Record update for insufficiently polymorphic field")
                          <> plural prs <> colon)
@@ -1704,7 +1703,7 @@ badFieldsUpd rbinds data_cons
 
             -- Each field, together with a list indicating which constructors
             -- have all the fields so far.
-            growingSets :: [(OccName, [Bool])]
+            growingSets :: [(FieldLabelString, [Bool])]
             growingSets = scanl1 combine membership
             combine (_, setMem) (field, fldMem)
               = (field, zipWith (&&) setMem fldMem)
@@ -1717,13 +1716,13 @@ badFieldsUpd rbinds data_cons
     (members, nonMembers) = partition (or . snd) membership
 
     -- For each field, which constructors contain the field?
-    membership :: [(OccName, [Bool])]
+    membership :: [(FieldLabelString, [Bool])]
     membership = sortMembership $
         map (\fld -> (fld, map (Set.member fld) fieldLabelSets)) $
-          map (getOccName . snd) $ hsRecFieldsUnambiguous rbinds
+          map (occNameFS . getOccName . snd) $ hsRecFieldsUnambiguous rbinds
 
-    fieldLabelSets :: [Set.Set OccName]
-    fieldLabelSets = map (Set.fromList . map flOccName . dataConFieldLabels) data_cons
+    fieldLabelSets :: [Set.Set FieldLabelString]
+    fieldLabelSets = map (Set.fromList . map flLabel . dataConFieldLabels) data_cons
 
     -- Sort in order of increasing number of True, so that a smaller
     -- conflicting set can be found.
@@ -1769,7 +1768,7 @@ notSelector :: Name -> SDoc
 notSelector field
   = hsep [quotes (ppr field), ptext (sLit "is not a record selector")]
 
-missingStrictFields :: DataCon -> [OccName] -> SDoc
+missingStrictFields :: DataCon -> [FieldLabelString] -> SDoc
 missingStrictFields con fields
   = header <> rest
   where
@@ -1780,7 +1779,7 @@ missingStrictFields con fields
     header = ptext (sLit "Constructor") <+> quotes (ppr con) <+>
              ptext (sLit "does not have the required strict field(s)")
 
-missingFields :: DataCon -> [OccName] -> SDoc
+missingFields :: DataCon -> [FieldLabelString] -> SDoc
 missingFields con fields
   = ptext (sLit "Fields of") <+> quotes (ppr con) <+> ptext (sLit "not initialised:")
         <+> pprWithCommas ppr fields

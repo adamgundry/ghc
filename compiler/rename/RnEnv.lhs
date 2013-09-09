@@ -20,7 +20,7 @@ module RnEnv (
         lookupInstDeclBndr, lookupSubBndrOcc, lookupFamInstName,
         greRdrName,
         lookupSubBndrGREs, lookupConstructorFields,
-        lookupRecFldInstNames, selectorInScope,
+        selectorInScope,
         lookupSyntaxName, lookupSyntaxNames, lookupIfThenElse,
         lookupGreRn, lookupGreLocalRn, lookupGreRn_maybe,
         lookupGlobalOccInThisModule, lookupGreLocalRn_maybe, 
@@ -331,19 +331,14 @@ lookupConstructorFields con_name
              ; return (dataConFieldLabels con) } }
 
 -----------------------------------------------
-lookupRecFldInstNames :: Module -> OccName -> OccName -> TcM (FldInsts Name)
-lookupRecFldInstNames mod lbl tc = traverse (lookupOrig mod) fis
-  where
-    (_, fis) = mkOverloadedRecFldOccs lbl tc
-
-selectorInScope :: GlobalRdrEnv -> OccName -> Name -> Name -> Bool
+selectorInScope :: GlobalRdrEnv -> FieldLabelString -> Name -> Name -> Bool
 -- Determine whether this selector is in scope, given its label and
 -- parent (family) tycon. A single family can have the same label more
 -- than once, so we need the selector name to uniquely identify a
 -- field. See Note [Duplicate field labels with data families] in FamInst.
 selectorInScope env lbl tc sel_name = any ((sel_name ==) . gre_name) gres
   where
-    gres = lookupSubBndrGREs env (ParentIs tc) (mkRdrUnqual lbl)
+    gres = lookupSubBndrGREs env (ParentIs tc) (mkVarUnqual lbl)
 
 -----------------------------------------------
 -- Used for record construction and pattern matching
@@ -946,7 +941,7 @@ lookupQualifiedName_overloaded rdr_name
               _ -> case [ (availName avail, fl, sel)
                         | avail <- mi_exports iface,
                           (fl, sel) <- availOverloadedFlds avail,
-                          fl == occ ] of
+                          fl == occNameFS occ ] of
                        [] -> do { traceRn (text "lookupQualified overloaded" <+> ppr rdr_name)
                                 ; return Nothing }
                        xs@((p, _, sel):ys)

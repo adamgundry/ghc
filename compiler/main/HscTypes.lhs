@@ -61,9 +61,6 @@ module HscTypes (
         -- * Fixity
         FixityEnv, FixItem(..), lookupFixity, emptyFixityEnv,
 
-        -- * Overloaded record field instances
-        RecFldInstEnv, fldInstEnvFamInsts,
-
         -- * TyThings and type environments
         TyThing(..),  tyThingAvailInfo, tyThingGREs,
         tyThingTyCon, tyThingDataCon,
@@ -963,19 +960,6 @@ type ImportedMods = ModuleEnv [ImportedModsVal]
 type ImportedModsVal = (ModuleName, Bool, SrcSpan, IsSafeImport)
 
 
--- | Maps a record selector name *in this module* to the DFunIds for
--- the Has and Upd classes, and the FamInsts for the GetResult and
--- SetResult type families. Nothing indicates that the field type is
--- universally or existentially quantified, so it has no instances
--- (see Note [Bogus instances] in TcInstDcls).
-type RecFldInstEnv = NameEnv (Maybe (DFunId, DFunId, FamInst, FamInst))
-
-fldInstEnvFamInsts :: RecFldInstEnv -> [FamInst]
-fldInstEnvFamInsts = foldNameEnv help []
-  where help (Just (_, _, get, set)) fis = get : set : fis
-        help Nothing fis                 = fis
-
-
 -- | A ModGuts is carried through the compiler, accumulating stuff as it goes
 -- There is only one ModGuts at any time, the one for the module
 -- being compiled right now.  Once it is compiled, a 'ModIface' and
@@ -1521,9 +1505,9 @@ tyThingAvailInfo (ATyCon t)
                              (NonOverloaded [])
              where n = getName c
         Nothing -> AvailTC n (n : map getName dcs) (fieldLabelsToAvailFields flds)
-             where n = getName t
-                   dcs = tyConDataCons t
-                   flds = concatMap dataConFieldLabels dcs
+             where n    = getName t
+                   dcs  = tyConDataCons t
+                   flds = tyConFieldLabels t
 tyThingAvailInfo t
    = Avail (getName t)
 
@@ -1545,7 +1529,7 @@ tyThingGREs (ATyCon t)
   where
     localGRE n par = GRE { gre_name = n, gre_par = par, gre_prov = LocalDef }
     subGRE n x     = localGRE (getName x) (ParentIs n)
-    fldGRE n fl    = localGRE (flSelector fl) (FldParent n (flOccName fl))
+    fldGRE n fl    = localGRE (flSelector fl) (FldParent n (flLabel fl))
 
 tyThingGREs t = [GRE { gre_name = getName t, gre_par = NoParent, gre_prov = LocalDef }]
 \end{code}

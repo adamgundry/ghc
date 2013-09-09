@@ -243,7 +243,7 @@ pprDataConDecl pefas ss gadt_style dataCon
 
     maybe_show_label (fl, bty)
 	| showSub ss (flSelector fl)
-                    = Just (ppr_bndr_occ (flOccName fl) <+> dcolon <+> pprBangTy bty)
+                    = Just (ppr_bndr_occ (mkVarOccFS (flLabel fl)) <+> dcolon <+> pprBangTy bty)
 	| otherwise = Nothing
 
     ppr_fields [ty1, ty2]

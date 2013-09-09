@@ -5,7 +5,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 
 module Avail (
-    Avails, AvailFlds(..), AvailFields,
+    Avails, AvailFlds(..), AvailFields, FieldLabelString,
     AvailInfo(..),
     availsToNameSet,
     availsToNameSetWithSelectors,
@@ -15,7 +15,7 @@ module Avail (
     availFlds, availOverloadedFlds,
     stableAvailCmp, stableAvailFieldsCmp,
     nullAvailFields,
-    availFieldsOccs,
+    availFieldsLabels,
     availFieldsNames,
     isOverloaded,
     pprAvailFields
@@ -28,6 +28,7 @@ import NameSet
 import Binary
 import Outputable
 import Util
+import FastString
 
 import Data.Function
 import Data.Data
@@ -59,10 +60,11 @@ data AvailInfo = Avail Name      -- ^ An ordinary identifier in scope
 type Avails = [AvailInfo]
 
 -- | Record fields in an 'AvailInfo'
-data AvailFlds name = NonOverloaded [name] | Overloaded [(OccName, name)]
+data AvailFlds name = NonOverloaded [name] | Overloaded [(FieldLabelString, name)]
   deriving (Eq, Data, Typeable)
 
 type AvailFields = AvailFlds Name
+type FieldLabelString = FastString
 
 
 -- | Compare lexicographically
@@ -125,7 +127,7 @@ availFlds (AvailTC _ _ fs) = fs
 availFlds _                = NonOverloaded []
 
 -- | Fields made available by the availability information
-availOverloadedFlds :: AvailInfo -> [(OccName, Name)]
+availOverloadedFlds :: AvailInfo -> [(FieldLabelString, Name)]
 availOverloadedFlds (AvailTC _ _ (Overloaded fs)) = fs
 availOverloadedFlds _                             = []
 
@@ -136,9 +138,9 @@ nullAvailFields :: AvailFields -> Bool
 nullAvailFields (NonOverloaded xs) = null xs
 nullAvailFields (Overloaded xs)    = null xs
 
-availFieldsOccs :: AvailFields -> [OccName]
-availFieldsOccs (NonOverloaded xs) = map nameOccName xs
-availFieldsOccs (Overloaded xs)    = map fst xs
+availFieldsLabels :: AvailFields -> [FieldLabelString]
+availFieldsLabels (NonOverloaded xs) = map (occNameFS . nameOccName) xs
+availFieldsLabels (Overloaded xs)    = map fst xs
 
 availFieldsNames :: AvailFlds name -> [name]
 availFieldsNames (NonOverloaded xs) = xs

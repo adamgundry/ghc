@@ -23,7 +23,6 @@ import FamInstEnv
 import FamInst(TcBuiltInSynFamily(..))
 import InstEnv( lookupInstEnv, instanceDFunId )
 
-import DataCon
 import InstEnv
 
 import Var

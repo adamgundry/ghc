@@ -1155,15 +1155,14 @@ mk_dict_err ctxt (ct, (matches, unifiers, safe_haskell))
                  else case (tcSplitTyConApp_maybe r, isStrLitTy f) of
                         (Just (tc, args), Just lbl) ->
                             do { rep_tc <- lookupRepTyCon tc args
-                               ; let lbl_occ = mkVarOccFS lbl
-                                     nice_ty | rep_tc == tc = mkTyConApp tc []
+                               ; let nice_ty | rep_tc == tc = mkTyConApp tc []
                                              | otherwise    = r
-                               ; case find ((== lbl_occ) . flOccName) (tyConFieldLabels rep_tc) of
+                               ; case lookupFsEnv (tyConFieldLabelEnv rep_tc) lbl of
                                    Nothing -> return $ missing_field lbl nice_ty
                                    Just fl ->
                                        do { let sel_name = flSelector fl
                                           ; env <- fmap tcg_rdr_env getGblEnv
-                                          ; if not (selectorInScope env lbl_occ (tyConName tc) sel_name)
+                                          ; if not (selectorInScope env lbl (tyConName tc) sel_name)
                                             then return $ not_in_scope lbl nice_ty
                                             else do { sel_id <- tcLookupId sel_name
                                                     ; return $ unsuitable_field_type lbl nice_ty

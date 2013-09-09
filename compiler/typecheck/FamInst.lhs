@@ -326,20 +326,16 @@ lookupRecFldInsts lbl tc args
                              -- the extension is disabled
          else do {
        ; rep_tc <- lookupRepTyCon tc args
-       ; case find ((== lbl_occ) . flOccName) (tyConFieldLabels rep_tc) of
+       ; case lookupFsEnv (tyConFieldLabelEnv rep_tc) lbl of
            Nothing -> return Nothing -- This field doesn't belong to the datatype!
            Just fl -> do
                { gbl_env <- getGblEnv
-               ; let rep_tc_occ = getOccName rep_tc
-                     mod        = nameModule (tyConName rep_tc)
-                     sel_name   = flSelector fl
-               ; addUsedSelector sel_name
+               ; let sel_name   = flSelector fl
                  -- See Note [Duplicate field labels with data families]
-               ; if selectorInScope (tcg_rdr_env gbl_env) lbl_occ (tyConName tc) sel_name
-                 then return (Just (Right (flInstances fl)))
+               ; if selectorInScope (tcg_rdr_env gbl_env) lbl (tyConName tc) sel_name
+                 then do { addUsedSelector sel_name
+                         ; return (Just (Right (flInstances fl))) }
                  else return Nothing } } }
-  where
-    lbl_occ = mkVarOccFS lbl
 
 
 lookupRepTyCon :: TyCon -> [Type] -> TcM TyCon

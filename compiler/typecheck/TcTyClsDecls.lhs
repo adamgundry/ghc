@@ -67,6 +67,7 @@ import ListSetOps
 import Digraph
 import DynFlags
 import FastString
+import FastStringEnv
 import Unique           ( mkBuiltinUnique )
 import BasicTypes
 
@@ -1484,7 +1485,7 @@ checkValidTyCon tc role_annots
         (tvs1, _, _, res1) = dataConSig con1
         ts1 = mkVarSet tvs1
         fty1 = dataConFieldType con1 lbl
-        lbl = flOccName label
+        lbl = flLabel label
 
         checkOne (_, con2)    -- Do it bothways to ensure they are structurally identical
             = do { checkFieldCompat lbl con1 con2 ts1 res1 res2 fty1 fty2
@@ -1585,7 +1586,7 @@ checkValidClosedCoAxiom (CoAxiom { co_ax_branches = branches, co_ax_tc = tc })
               addErrTc $ inaccessibleCoAxBranch tc cur_branch
             ; return (cur_branch : prev_branches) }
 
-checkFieldCompat :: OccName -> DataCon -> DataCon -> TyVarSet
+checkFieldCompat :: FieldLabelString -> DataCon -> DataCon -> TyVarSet
                  -> Type -> Type -> Type -> Type -> TcM ()
 checkFieldCompat fld con1 con2 tvs1 res1 res2 fty1 fty2
   = do  { checkTc (isJust mb_subst1) (resultTypeMisMatch fld con1 con2)
@@ -1790,17 +1791,17 @@ mkRecSelBinds :: [TyThing] -> TcM (HsValBinds Name)
 --    This makes life easier, because the later type checking will add
 --    all necessary type abstractions and applications
 mkRecSelBinds tycons
-  = do { let rec_sels = map mkRecSelBind [ (tc,fld)
+  = do { let rec_sels = map mkRecSelBind [ (tc, fl)
                                          | ATyCon tc <- tycons
-                                         , fld <- tyConFieldLabels tc ]
+                                         , fl <- tyConFieldLabels tc ]
        ; let (sigs, binds) = unzip rec_sels
        ; return $ ValBindsOut [(NonRecursive, b) | b <- binds] sigs }
 
 mkRecSelBind :: (TyCon, FieldLabel) -> (LSig Name, LHsBinds Name)
-mkRecSelBind (tycon, fld) = (L loc (IdSig sel_id), unitBag (L loc sel_bind))
+mkRecSelBind (tycon, fl) = (L loc (IdSig sel_id), unitBag (L loc sel_bind))
   where
-    lbl      = flOccName fld
-    sel_name = flSelector fld
+    lbl      = flLabel fl
+    sel_name = flSelector fl
     loc      = getSrcSpan sel_name
     sel_id   = Var.mkExportedLocalVar rec_details sel_name
                                     sel_ty vanillaIdInfo
@@ -1808,8 +1809,7 @@ mkRecSelBind (tycon, fld) = (L loc (IdSig sel_id), unitBag (L loc sel_bind))
 
     -- Find a representative constructor, con1
     all_cons     = tyConDataCons tycon
-    cons_w_field = [ con | con <- all_cons
-                   , lbl `elem` map flOccName (dataConFieldLabels con) ]
+    cons_w_field = tyConDataConsWithFields tycon [lbl]
     con1 = ASSERT( not (null cons_w_field) ) head cons_w_field
 
     -- Selector type; Note [Polymorphic selectors]
@@ -1834,7 +1834,7 @@ mkRecSelBind (tycon, fld) = (L loc (IdSig sel_id), unitBag (L loc sel_bind))
                                  (L loc (HsVar field_var))
     mk_sel_pat con = ConPatIn (L loc (getName con)) (RecCon rec_fields)
     rec_fields = HsRecFields { rec_flds = [rec_field], rec_dotdot = Nothing }
-    rec_field  = HsRecField { hsRecFieldLbl = L loc (mkRdrUnqual lbl)
+    rec_field  = HsRecField { hsRecFieldLbl = L loc (mkVarUnqual lbl)
                             , hsRecFieldSel = Left sel_name
                             , hsRecFieldArg = L loc (VarPat field_var)
                             , hsRecPun = False }
@@ -1862,7 +1862,7 @@ mkRecSelBind (tycon, fld) = (L loc (IdSig sel_id), unitBag (L loc sel_bind))
     inst_tys = substTyVars (mkTopTvSubst (dataConEqSpec con1)) (dataConUnivTyVars con1)
 
     unit_rhs = mkLHsTupleExpr []
-    msg_lit = HsStringPrim $ unsafeMkByteString $ occNameString lbl
+    msg_lit = HsStringPrim (fastStringToByteString lbl)
 \end{code}
 
 Note [Polymorphic selectors]
@@ -1992,13 +1992,13 @@ tcAddClosedTypeFamilyDeclCtxt tc
     ctxt = ptext (sLit "In the equations for closed type family") <+>
            quotes (ppr tc)
 
-resultTypeMisMatch :: OccName -> DataCon -> DataCon -> SDoc
+resultTypeMisMatch :: FieldLabelString -> DataCon -> DataCon -> SDoc
 resultTypeMisMatch field_name con1 con2
   = vcat [sep [ptext (sLit "Constructors") <+> ppr con1 <+> ptext (sLit "and") <+> ppr con2,
                 ptext (sLit "have a common field") <+> quotes (ppr field_name) <> comma],
           nest 2 $ ptext (sLit "but have different result types")]
 
-fieldTypeMisMatch :: OccName -> DataCon -> DataCon -> SDoc
+fieldTypeMisMatch :: FieldLabelString -> DataCon -> DataCon -> SDoc
 fieldTypeMisMatch field_name con1 con2
   = sep [ptext (sLit "Constructors") <+> ppr con1 <+> ptext (sLit "and") <+> ppr con2,
          ptext (sLit "give different types for field"), quotes (ppr field_name)]

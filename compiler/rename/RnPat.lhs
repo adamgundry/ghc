@@ -565,7 +565,7 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
            ; checkErr dd_flag (needFlagDotDot ctxt)
            ; (rdr_env, lcl_env) <- getRdrEnvs
            ; con_fields <- lookupConstructorFields con
-           ; let present_flds = map rdrNameOcc $ getFieldLbls flds
+           ; let present_flds = map (occNameFS . rdrNameOcc) $ getFieldLbls flds
                  parent_tc = find_tycon rdr_env con
 
                    -- For constructor uses (but not patterns)
@@ -581,11 +581,11 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
                                         FldParent { par_is = p } -> p /= parent_tc
                                         NoParent                 -> True ]
                    where
-                     rdr = mkRdrUnqual lbl
+                     rdr = mkVarUnqual lbl
 
                  dot_dot_gres = [ (lbl, head gres)
                                 | fl <- con_fields
-                                , let lbl = flOccName fl
+                                , let lbl = flLabel fl
                                 , let sel = flSelector fl
                                 , not (lbl `elem` present_flds)
                                 , let gres = lookupGRE_Field_Name rdr_env sel lbl
@@ -602,7 +602,7 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
                         , hsRecPun      = False }
                     | (lbl, gre) <- dot_dot_gres
                     , let fld     = gre_name gre
-                          arg_rdr = mkRdrUnqual lbl ] }
+                          arg_rdr = mkVarUnqual lbl ] }
 
     check_disambiguation :: Bool -> Maybe Name -> RnM Parent
     -- When disambiguation is on, 

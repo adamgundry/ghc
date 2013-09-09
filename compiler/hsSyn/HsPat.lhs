@@ -220,13 +220,13 @@ data HsRecField id arg = HsRecField {
 hsRecFieldSelMissing :: Either id [(id, id)]
 hsRecFieldSelMissing = error "hsRecFieldSelMissing"
 
-hsRecFields :: HsRecFields id arg -> [(OccName, Either id [(id, id)])]
+hsRecFields :: HsRecFields id arg -> [(FieldLabelString, Either id [(id, id)])]
 hsRecFields rbinds = map toFld (rec_flds rbinds)
   where
-    toFld x = ( rdrNameOcc . unLoc . hsRecFieldLbl $ x
+    toFld x = ( occNameFS . rdrNameOcc . unLoc . hsRecFieldLbl $ x
               , hsRecFieldSel x)
 
-hsRecFieldsUnambiguous :: HsRecFields id arg -> [(OccName, id)]
+hsRecFieldsUnambiguous :: HsRecFields id arg -> [(FieldLabelString, id)]
 hsRecFieldsUnambiguous = map outOfLeftField . hsRecFields
   where outOfLeftField (l, Left x)  = (l, x)
         outOfLeftField (_, Right _) = error "hsRecFieldsUnambigous"

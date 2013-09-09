@@ -402,7 +402,7 @@ data GlobalRdrElt
 --   notation in export lists.  See Note [Parents]
 data Parent = NoParent
             | ParentIs  { par_is :: Name }
-            | FldParent { par_is :: Name, par_lbl :: OccName }
+            | FldParent { par_is :: Name, par_lbl :: FastString }
             deriving (Eq)
 
 {- Note [Parents]
@@ -467,7 +467,7 @@ hasParentIs n (ParentIs n')
 #endif
 hasParentIs n _  = ParentIs n
 
-hasFldParent :: Name -> OccName -> Parent -> Parent
+hasFldParent :: Name -> FastString -> Parent -> Parent
 #ifdef DEBUG
 hasFldParent n f (FldParent n' f')
   | n /= n' || f /= f'    -- Parents should agree
@@ -503,7 +503,7 @@ extendGlobalRdrEnv :: GlobalRdrEnv -> GlobalRdrElt -> GlobalRdrEnv
 extendGlobalRdrEnv env gre = extendOccEnv_Acc (:) singleton env (greOccName gre) gre
 
 greOccName :: GlobalRdrElt -> OccName
-greOccName (GRE{gre_par = FldParent{par_lbl = lbl}}) = lbl
+greOccName (GRE{gre_par = FldParent{par_lbl = lbl}}) = mkVarOccFS lbl
 greOccName gre                                       = nameOccName (gre_name gre)
 
 lookupGRE_RdrName :: RdrName -> GlobalRdrEnv -> [GlobalRdrElt]
@@ -517,11 +517,11 @@ lookupGRE_Name env name
   = [ gre | gre <- lookupGlobalRdrEnv env (nameOccName name),
             gre_name gre == name ]
 
-lookupGRE_Field_Name :: GlobalRdrEnv -> Name -> OccName -> [GlobalRdrElt]
+lookupGRE_Field_Name :: GlobalRdrEnv -> Name -> FastString -> [GlobalRdrElt]
 -- Used when looking up record fields, where the selector name and
 -- field label are different: the GlobalRdrEnv is keyed on the label
 lookupGRE_Field_Name env sel_name lbl
-  = [ gre | gre <- lookupGlobalRdrEnv env lbl,
+  = [ gre | gre <- lookupGlobalRdrEnv env (mkVarOccFS lbl),
             gre_name gre == sel_name ]
 
 
@@ -596,7 +596,7 @@ isRecFldGRE _                             = False
 
 isOverloadedRecFldGRE :: GlobalRdrElt -> Bool
 isOverloadedRecFldGRE (GRE {gre_name = n, gre_par = FldParent{par_lbl = f}})
-                        = nameOccName n /= f
+                        = occNameFS (nameOccName n) /= f
 isOverloadedRecFldGRE _ = False
 
 unQualOK :: GlobalRdrElt -> Bool

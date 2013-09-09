@@ -843,14 +843,14 @@ tcConArgs data_con arg_tys (RecCon (HsRecFields rpats dd)) penv thing_inside
     tc_field :: Checker (HsRecField Name (LPat Name)) (HsRecField TcId (LPat TcId))
     tc_field (HsRecField (L loc lbl) (Left sel_name) pat pun) penv thing_inside
       = do { sel_id <- tcLookupId sel_name
-           ; pat_ty <- setSrcSpan loc $ find_field_ty (rdrNameOcc lbl)
+           ; pat_ty <- setSrcSpan loc $ find_field_ty (occNameFS (rdrNameOcc lbl))
 	   ; (pat', res) <- tcConArg (pat, pat_ty) penv thing_inside
 	   ; return (HsRecField (L loc lbl) (Left sel_id) pat' pun, res) }
     tc_field _ _ _ = panic "tcConArgs/tc_field missing field selector name"
 
-    find_field_ty :: OccName -> TcM TcType
+    find_field_ty :: FieldLabelString -> TcM TcType
     find_field_ty lbl
-	= case [ty | (fl, ty) <- field_tys, flOccName fl == lbl] of
+	= case [ty | (fl, ty) <- field_tys, flLabel fl == lbl] of
 
 		-- No matching field; chances are this field label comes from some
 		-- other record type (or maybe none).  As well as reporting an
@@ -1027,7 +1027,7 @@ existentialLetPat
 	  text "I can't handle pattern bindings for existential or GADT data constructors.",
 	  text "Instead, use a case-expression, or do-notation, to unpack the constructor."]
 
-badFieldCon :: DataCon -> OccName -> SDoc
+badFieldCon :: DataCon -> FieldLabelString -> SDoc
 badFieldCon con field
   = hsep [ptext (sLit "Constructor") <+> quotes (ppr con),
 	  ptext (sLit "does not have field"), quotes (ppr field)]

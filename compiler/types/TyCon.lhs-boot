@@ -5,6 +5,8 @@ import Name (Name)
 import Unique (Unique)
 
 data TyCon
+data FieldLbl a
+type FieldLabel = FieldLbl Name
 
 tyConName           :: TyCon -> Name
 tyConUnique         :: TyCon -> Unique
