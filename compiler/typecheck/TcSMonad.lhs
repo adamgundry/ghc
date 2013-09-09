@@ -60,8 +60,7 @@ module TcSMonad (
     getTopEnv, getGblEnv, getTcEvBinds, getUntouchables,
     getTcEvBindsMap, getTcSTyBinds, getTcSTyBindsMap,
 
-    lookupRecFldInsts, tcsLookupId,
-
+    lookupFldInstDFun,
 
     lookupFlatEqn, newFlattenSkolem,            -- Flatten skolems 
 
@@ -1299,13 +1298,10 @@ getGblEnv = wrapTcS $ TcM.getGblEnv
 addUsedRdrNamesTcS :: [RdrName] -> TcS ()
 addUsedRdrNamesTcS names = wrapTcS  $ addUsedRdrNames names
 
-lookupRecFldInsts :: FastString -> TyCon -> [Type]
-                         -> TcS (Maybe (Either (DFunId, DFunId, FamInst, FamInst)
-                                               (FldInsts Name)))
-lookupRecFldInsts lbl tc args = wrapTcS $ FamInst.lookupRecFldInsts lbl tc args
-
-tcsLookupId :: Name -> TcS Id
-tcsLookupId n = wrapTcS $ lookupId n
+lookupFldInstDFun :: FieldLabelString -> TyCon -> [Type] -> (FldInsts Name -> Name)
+                   -> TcS (Maybe DFunId)
+lookupFldInstDFun lbl tc args which
+  = wrapTcS $ FamInst.lookupFldInstDFun lbl tc args which
 
 -- Various smaller utilities [TODO, maybe will be absorbed in the instance matcher]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

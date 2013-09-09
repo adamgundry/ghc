@@ -1788,44 +1788,9 @@ matchClassInst _ clas [ ty1, ty2 ] _
       traceTcS "matchClassInst returned" $ ppr ev
       return ev
 
-matchClassInst _ clas tys@[r, f, _] loc
+matchClassInst _ clas tys loc
   | isRecordsClass clas
-  , Just lbl <- isStrLitTy f
-  , Just (tc, args) <- splitTyConApp_maybe r
-    = do { mb_insts <- lookupRecFldInsts lbl tc args
-         ; mb_dfun  <- case mb_insts of
-                         Nothing          -> return Nothing
-                         Just (Left xs)   -> return $ Just (has_or_upd xs)
-                         Just (Right fis) -> do { dfun <- tcsLookupId (has_or_upd_fis fis)
-                                                  -- See Note [Bogus instances] in TcInstDcls
-                                                ; if isDFunId dfun
-                                                     then return (Just dfun)
-                                                     else return Nothing }
-         ; case mb_dfun of
-             Nothing   -> return NoInstance
-             Just dfun ->
-                 let cls_inst = mkImportedInstance (className clas)
-                                    [Just (tyConName tc), Nothing, Nothing]
-                                    dfun (NoOverlap False)
-                 in case tcMatchTys (mkVarSet (is_tvs cls_inst)) (is_tys cls_inst) tys of
-                      Just subst -> let mb_inst_tys = map (lookup_tv subst) (is_tvs cls_inst)
-                                    in match_one dfun mb_inst_tys pred loc
-                      Nothing -> return NoInstance }
-  where
-    pred = mkClassPred clas tys
-    is_has = isHasClass clas
-
-    has_or_upd (has, upd, _, _) | is_has    = has
-                                | otherwise = upd
-
-    has_or_upd_fis | is_has    = fldInstsHas
-                   | otherwise = fldInstsUpd
-
-    lookup_tv :: TvSubst -> TyVar -> DFunInstType
-        -- See Note [DFunInstType: instantiating types] in InstEnv
-    lookup_tv subst tv = case lookupTyVar subst tv of
-                                Just ty -> Just ty
-                                Nothing -> Nothing
+  = matchRecordsClassInst clas tys loc
 
 matchClassInst inerts clas tys loc
    = do { dflags <- getDynFlags
@@ -2057,3 +2022,33 @@ overlapping checks. There we are interested in validating the following principl
 
 But for the Given Overlap check our goal is just related to completeness of 
 constraint solving. 
+
+
+\begin{code}
+matchRecordsClassInst :: Class -> [Type] -> CtLoc -> TcS LookupInstResult
+matchRecordsClassInst clas tys@[r, f, _] loc
+  | Just lbl <- isStrLitTy f
+  , Just (tc, args) <- splitTyConApp_maybe r
+    = do { mb_dfun  <- lookupFldInstDFun lbl tc args has_or_upd
+         ; case mb_dfun of
+             Nothing   -> return NoInstance
+             Just dfun ->
+                 -- We've got the right DFun, now we just need to line
+                 -- up the types correctly. For example, we might have
+                 --     dfun_72 :: forall a b c . c ~ [a] => Has (T a b) "f" c
+                 -- and want to match
+                 --     Has (T x y) "f" z
+                 -- so we split up the DFun's type and use tcMatchTys to
+                 -- generate the substitution [x |-> a, y |-> b, z |-> c].
+                 let (tvs, _, _, tmpl_tys) = tcSplitDFunTy (idType dfun)
+                 in case tcMatchTys (mkVarSet tvs) tmpl_tys tys of
+                      Just subst -> let mb_inst_tys = map (lookupTyVar subst) tvs
+                                        pred        = mkClassPred clas tys
+                                    in match_one dfun mb_inst_tys pred loc
+                      Nothing -> return NoInstance }
+  where
+    has_or_upd | isHasClass clas = fldInstsHas
+               | otherwise       = fldInstsUpd
+
+matchRecordsClassInst _ _ _ = return NoInstance
+\end{code}

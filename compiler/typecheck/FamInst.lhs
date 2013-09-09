@@ -11,7 +11,7 @@ The @FamInst@ type: family instance heads
 
 module FamInst ( 
         checkFamInstConsistency, tcExtendLocalFamInstEnv,
-        tcLookupFamInst, lookupRecFldInsts, lookupRepTyCon,
+        tcLookupFamInst, lookupFldInstDFun, lookupRepTyCon,
         tcGetFamInstEnvs,
         newFamInst,
         TcBuiltInSynFamily(..), trivialBuiltInFamily
@@ -46,6 +46,7 @@ import RdrName
 import RnEnv
 import Var
 import VarSet
+import Id
 import PrelNames
 import Control.Monad
 import Data.List
@@ -228,11 +229,9 @@ tcLookupFamInst tycon _
   | not (isOpenFamilyTyCon tycon)
   = return Nothing
 
-tcLookupFamInst fam tys@(r:f:_)
+tcLookupFamInst fam tys
   | isRecordsFam fam
-  , Just lbl     <- isStrLitTy f
-  , Just (tc, args) <- tcSplitTyConApp_maybe r
-  = lookupRecFldFamInst fam lbl tc args tys
+  = tcLookupRecordsFamInst fam tys
 
 tcLookupFamInst tycon tys
   = do { instEnv <- tcGetFamInstEnvs
@@ -291,34 +290,54 @@ lookupSubBndrGREs: we also need to check the selector names to find
 the one with the right representation tycon.
 
 \begin{code}
-lookupRecFldFamInst :: TyCon -> FastString -> TyCon -> [Type] -> [Type] -> TcM (Maybe FamInstMatch)
-lookupRecFldFamInst fam lbl tc args tys
-  = do { mb_insts <- lookupRecFldInsts lbl tc args
-       ; mb_fam_inst <- case mb_insts of
-           Nothing          -> return Nothing
-           Just (Left  xs)  -> return $ Just (get_or_set xs)
-           Just (Right fis) -> do { thing <- tcLookupGlobal (get_or_set_fis fis)
-                                  ; case thing of  -- See Note [Bogus instances] in TcInstDcls
-                                      ACoAxiom ax -> return $ Just (fam_inst_for ax)
-                                      _           -> return Nothing }
-       ; return $ do { fam_inst <- mb_fam_inst
+tcLookupRecordsFamInst :: TyCon -> [Type] -> TcM (Maybe FamInstMatch)
+tcLookupRecordsFamInst fam tys@(r:f:_)
+  | Just lbl     <- isStrLitTy f
+  , Just (tc, args) <- tcSplitTyConApp_maybe r
+
+  = do { mb_ax <- lookupFldInstAxiom lbl tc args get_or_set
+       ; return $ do { ax <- mb_ax
+                     ; let fam_inst = fam_inst_for tc ax
                      ; subst <- tcMatchTys (mkVarSet (fi_tvs fam_inst)) (fi_tys fam_inst) tys
                      ; return $ FamInstMatch fam_inst (substTyVars subst (fi_tvs fam_inst)) } }
+
   where
     is_get = isGetResultFam fam
-    get_or_set (_, _, get, set) | is_get    = get
-                                | otherwise = set
-    get_or_set_fis | is_get    = fldInstsGetResult
-                   | otherwise = fldInstsSetResult
+    get_or_set | is_get    = fldInstsGetResult
+               | otherwise = fldInstsSetResult
 
-    fam_inst_for axiom
+    fam_inst_for tc axiom
       | is_get    = mkImportedFamInst getResultFamName
                         [Just (tyConName tc), Nothing] (toUnbranchedAxiom axiom)
       | otherwise = mkImportedFamInst setResultFamName
                         [Just (tyConName tc), Nothing, Nothing] (toUnbranchedAxiom axiom)
 
-lookupRecFldInsts :: FastString -> TyCon -> [Type]
-                         -> TcM (Maybe (Either (DFunId, DFunId, FamInst, FamInst) (FldInsts Name)))
+tcLookupRecordsFamInst _ _ = return Nothing
+
+
+lookupFldInstAxiom :: FieldLabelString -> TyCon -> [Type] -> (FldInsts Name -> Name)
+                   -> TcM (Maybe (CoAxiom Branched))
+lookupFldInstAxiom lbl tc args which
+  = do { mb_fis <- lookupRecFldInsts lbl tc args
+       ; case mb_fis of
+           Nothing  -> return Nothing
+           Just fis -> do { thing <- tcLookupGlobal (which fis)
+                          ; case thing of  -- See Note [Bogus instances] in TcInstDcls
+                              ACoAxiom ax -> return $ Just ax
+                              _           -> return Nothing } }
+
+lookupFldInstDFun :: FieldLabelString -> TyCon -> [Type] -> (FldInsts Name -> Name)
+                   -> TcM (Maybe DFunId)
+lookupFldInstDFun lbl tc args which
+  = do { mb_fis <- lookupRecFldInsts lbl tc args
+       ; case mb_fis of
+           Nothing  -> return Nothing
+           Just fis -> do { dfun <- tcLookupId (which fis)
+                          ; if isDFunId dfun -- See Note [Bogus instances] in TcInstDcls
+                            then return (Just dfun)
+                            else return Nothing } }
+
+lookupRecFldInsts :: FieldLabelString -> TyCon -> [Type] -> TcM (Maybe (FldInsts Name))
 lookupRecFldInsts lbl tc args
   = do { overload_ok <- xoptM Opt_OverloadedRecordFields
        ; if not overload_ok
@@ -334,7 +353,7 @@ lookupRecFldInsts lbl tc args
                  -- See Note [Duplicate field labels with data families]
                ; if selectorInScope (tcg_rdr_env gbl_env) lbl (tyConName tc) sel_name
                  then do { addUsedSelector sel_name
-                         ; return (Just (Right (flInstances fl))) }
+                         ; return (Just (flInstances fl)) }
                  else return Nothing } } }
 
 
