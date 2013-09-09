@@ -29,7 +29,6 @@ import Unify            ( tcMatchTys )
 import Inst
 import InstEnv
 import TyCon
-import DataCon
 import TcEvidence
 import TysWiredIn       ( coercibleClass )
 import RnEnv
@@ -48,7 +47,7 @@ import FastString
 import Outputable
 import SrcLoc
 import DynFlags
-import Data.List        ( partition, mapAccumL, zip4, find )
+import Data.List        ( partition, mapAccumL, zip4 )
 \end{code}
 
 %************************************************************************
@@ -1160,13 +1159,12 @@ mk_dict_err ctxt (ct, (matches, unifiers, safe_haskell))
                                ; case lookupFsEnv (tyConFieldLabelEnv rep_tc) lbl of
                                    Nothing -> return $ missing_field lbl nice_ty
                                    Just fl ->
-                                       do { let sel_name = flSelector fl
-                                          ; env <- fmap tcg_rdr_env getGblEnv
-                                          ; if not (selectorInScope env lbl (tyConName tc) sel_name)
-                                            then return $ not_in_scope lbl nice_ty
-                                            else do { sel_id <- tcLookupId sel_name
+                                       do { gbl_env <- getGblEnv
+                                          ; if fieldLabelInScope (tcg_rdr_env gbl_env) tc fl
+                                            then do { sel_id <- tcLookupId (flSelector fl)
                                                     ; return $ unsuitable_field_type lbl nice_ty
-                                                                 (isNaughtyRecordSelector sel_id) } } }
+                                                                 (isNaughtyRecordSelector sel_id) }
+                                            else return $ not_in_scope lbl nice_ty } }
                         _ -> return empty }
       | otherwise = return empty
       where

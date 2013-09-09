@@ -2029,7 +2029,8 @@ matchRecordsClassInst :: Class -> [Type] -> CtLoc -> TcS LookupInstResult
 matchRecordsClassInst clas tys@[r, f, _] loc
   | Just lbl <- isStrLitTy f
   , Just (tc, args) <- splitTyConApp_maybe r
-    = do { mb_dfun  <- lookupFldInstDFun lbl tc args has_or_upd
+    = do { rep_tc <- lookupRepTyCon tc args
+         ; mb_dfun  <- lookupFldInstDFun lbl tc rep_tc (isHasClass clas)
          ; case mb_dfun of
              Nothing   -> return NoInstance
              Just dfun ->
@@ -2046,9 +2047,6 @@ matchRecordsClassInst clas tys@[r, f, _] loc
                                         pred        = mkClassPred clas tys
                                     in match_one dfun mb_inst_tys pred loc
                       Nothing -> return NoInstance }
-  where
-    has_or_upd | isHasClass clas = fldInstsHas
-               | otherwise       = fldInstsUpd
 
 matchRecordsClassInst _ _ _ = return NoInstance
 \end{code}

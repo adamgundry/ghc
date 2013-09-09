@@ -60,7 +60,7 @@ module TcSMonad (
     getTopEnv, getGblEnv, getTcEvBinds, getUntouchables,
     getTcEvBindsMap, getTcSTyBinds, getTcSTyBindsMap,
 
-    lookupFldInstDFun,
+    lookupFldInstDFun, lookupRepTyCon,
 
     lookupFlatEqn, newFlattenSkolem,            -- Flatten skolems 
 
@@ -113,6 +113,7 @@ import qualified TcRnMonad as TcM
 import qualified TcMType as TcM
 import qualified TcEnv as TcM 
        ( checkWellStaged, topIdLvl, tcGetDefaultTys )
+import qualified RnEnv
 import Kind
 import TcType
 import DynFlags
@@ -1298,10 +1299,13 @@ getGblEnv = wrapTcS $ TcM.getGblEnv
 addUsedRdrNamesTcS :: [RdrName] -> TcS ()
 addUsedRdrNamesTcS names = wrapTcS  $ addUsedRdrNames names
 
-lookupFldInstDFun :: FieldLabelString -> TyCon -> [Type] -> (FldInsts Name -> Name)
-                   -> TcS (Maybe DFunId)
-lookupFldInstDFun lbl tc args which
-  = wrapTcS $ FamInst.lookupFldInstDFun lbl tc args which
+lookupFldInstDFun :: FieldLabelString -> TyCon -> TyCon
+                  -> Bool -> TcS (Maybe DFunId)
+lookupFldInstDFun lbl tc rep_tc which
+  = wrapTcS $ RnEnv.lookupFldInstDFun lbl tc rep_tc which
+
+lookupRepTyCon :: TyCon -> [Type] -> TcS TyCon
+lookupRepTyCon tc args = wrapTcS $ FamInst.lookupRepTyCon tc args
 
 -- Various smaller utilities [TODO, maybe will be absorbed in the instance matcher]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

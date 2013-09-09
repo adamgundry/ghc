@@ -20,7 +20,7 @@ module RnEnv (
         lookupInstDeclBndr, lookupSubBndrOcc, lookupFamInstName,
         greRdrName,
         lookupSubBndrGREs, lookupConstructorFields,
-        selectorInScope,
+        lookupFldInstAxiom, lookupFldInstDFun, fieldLabelInScope,
         lookupSyntaxName, lookupSyntaxNames, lookupIfThenElse,
         lookupGreRn, lookupGreLocalRn, lookupGreRn_maybe,
         lookupGlobalOccInThisModule, lookupGreLocalRn_maybe, 
@@ -52,15 +52,18 @@ import IfaceEnv
 import HsSyn
 import RdrName
 import HscTypes
-import TcEnv            ( tcLookupDataCon, isBrackStage )
+import TcEnv
 import TcRnMonad
+import Id
+import Var
 import Name
 import NameSet
 import NameEnv
 import Avail
 import Module
-import DataCon          ( FieldLabel, dataConFieldLabels, dataConTyCon )
-import TyCon            ( TyCon, isTupleTyCon, tyConArity )
+import DataCon
+import TyCon
+import CoAxiom
 import PrelNames        ( mkUnboundName, isUnboundName, rOOT_MAIN, forall_tv_RDR )
 import ErrUtils         ( MsgDoc )
 import BasicTypes
@@ -75,7 +78,6 @@ import FastStringEnv
 import Control.Monad
 import Data.List
 import qualified Data.Set as Set
-import Data.Traversable ( traverse )
 import Constants        ( mAX_TUPLE_SIZE )
 \end{code}
 
@@ -329,16 +331,6 @@ lookupConstructorFields con_name
           else
           do { con <- tcLookupDataCon con_name
              ; return (dataConFieldLabels con) } }
-
------------------------------------------------
-selectorInScope :: GlobalRdrEnv -> FieldLabelString -> Name -> Name -> Bool
--- Determine whether this selector is in scope, given its label and
--- parent (family) tycon. A single family can have the same label more
--- than once, so we need the selector name to uniquely identify a
--- field. See Note [Duplicate field labels with data families] in FamInst.
-selectorInScope env lbl tc sel_name = any ((sel_name ==) . gre_name) gres
-  where
-    gres = lookupSubBndrGREs env (ParentIs tc) (mkVarUnqual lbl)
 
 -----------------------------------------------
 -- Used for record construction and pattern matching
@@ -792,6 +784,107 @@ lookupGreRn_help rdr_name lookup
             gres  -> do { addNameClashErrRn rdr_name gres
                         ; return (Just (head gres)) } }
 \end{code}
+
+
+%*********************************************************
+%*                                                      *
+	  Looking up record field instances
+%*                                                      *
+%*********************************************************
+
+The Has and Upd typeclasses, and the GetResult and SetResult type
+families, (all defined in GHC.Records) are magical, in that rather
+than looking for instances in the usual way, we refer to the fields
+that are in scope. When looking for a match for
+
+    Has (T a b) "foo" t
+    GetResult (T a b) "foo"
+    etc.
+
+we check that the field foo belonging to type T is in scope, and look
+up the dfun created by makeOverloadedRecFldInsts in TcInstDcls (see
+Note [Instance scoping for OverloadedRecordFields] in TcInstDcls).
+
+The lookupFldInstAxiom and lookupFldInstDFun functions each call
+lookupRecFldInsts to perform most of the checks and find the
+appropriate name.
+
+
+Note [Duplicate field labels with data families]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Consider the following example:
+
+    module M where
+      data family F a
+      data instance F Int = MkF1 { foo :: Int }
+
+    module N where
+      import M
+      data instance F Char = MkF2 { foo :: Char }
+
+Both fields have the same lexical parent (the family tycon F)!  Thus
+it is not enough to lookup the field in the GlobalRdrEnv with
+lookupSubBndrGREs: we also need to check the selector names to find
+the one with the right representation tycon.
+
+\begin{code}
+lookupRecFldInsts :: FieldLabelString -> TyCon -> TyCon
+                  -> TcM (Maybe (FldInsts Name))
+-- Lookup the names of the OverloadedRecordFields dfuns/axioms from a
+-- field label, parent tycon and representation tycon
+lookupRecFldInsts lbl tc rep_tc
+  = do { overload_ok <- xoptM Opt_OverloadedRecordFields
+       ; if not overload_ok   -- Don't magically solve constraints when
+         then return Nothing  -- the extension is disabled
+         else case lookupFsEnv (tyConFieldLabelEnv rep_tc) lbl of
+             Nothing -> return Nothing -- This field doesn't belong to the datatype!
+             Just fl -> do { gbl_env <- getGblEnv
+                           ; if fieldLabelInScope (tcg_rdr_env gbl_env) tc fl
+                             then do { addUsedSelector (flSelector fl)
+                                     ; return (Just (flInstances fl)) }
+                             else return Nothing } }
+
+lookupFldInstAxiom :: FieldLabelString -> TyCon -> TyCon
+                   -> Bool -> TcM (Maybe (CoAxiom Branched))
+-- Lookup a GetResult or SetResult axiom from a field label, parent
+-- tycon and representation tycon
+lookupFldInstAxiom lbl tc rep_tc want_get
+  = do { mb_fis <- lookupRecFldInsts lbl tc rep_tc
+       ; case mb_fis of
+           Nothing  -> return Nothing
+           Just fis -> do { thing <- tcLookupGlobal (get_or_set fis)
+                          ; case thing of  -- See Note [Bogus instances] in TcInstDcls
+                              ACoAxiom ax -> return $ Just ax
+                              _           -> return Nothing } }
+  where
+    get_or_set | want_get  = fldInstsGetResult
+               | otherwise = fldInstsSetResult
+
+lookupFldInstDFun :: FieldLabelString -> TyCon -> TyCon
+                  -> Bool -> TcM (Maybe DFunId)
+-- Lookup a Has or Upd DFunId from a field label, parent tycon and
+-- representation tycon
+lookupFldInstDFun lbl tc rep_tc want_has
+  = do { mb_fis <- lookupRecFldInsts lbl tc rep_tc
+       ; case mb_fis of
+           Nothing  -> return Nothing
+           Just fis -> do { dfun <- tcLookupId (has_or_upd fis)
+                          ; if isDFunId dfun -- See Note [Bogus instances] in TcInstDcls
+                            then return (Just dfun)
+                            else return Nothing } }
+  where
+    has_or_upd | want_has  = fldInstsHas
+               | otherwise = fldInstsUpd
+
+fieldLabelInScope :: GlobalRdrEnv -> TyCon -> FieldLabel -> Bool
+-- Determine whether a FieldLabel in scope, given its parent (family)
+-- tycon. See Note [Duplicate field labels with data families].
+fieldLabelInScope env tc fl = any ((flSelector fl ==) . gre_name) gres
+  where
+    gres = lookupSubBndrGREs env (ParentIs (tyConName tc))
+                                 (mkVarUnqual (flLabel fl))
+\end{code}
+
 
 %*********************************************************
 %*                                                      *

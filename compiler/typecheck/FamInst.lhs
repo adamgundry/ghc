@@ -11,7 +11,7 @@ The @FamInst@ type: family instance heads
 
 module FamInst ( 
         checkFamInstConsistency, tcExtendLocalFamInstEnv,
-        tcLookupFamInst, lookupFldInstDFun, lookupRepTyCon,
+        tcLookupFamInst, lookupRepTyCon,
         tcGetFamInstEnvs,
         newFamInst,
         TcBuiltInSynFamily(..), trivialBuiltInFamily
@@ -24,11 +24,9 @@ import InstEnv( roughMatchTcs )
 import Coercion( pprCoAxBranchHdr )
 import LoadIface
 import Type
-import TypeRep
 import TcRnMonad
 import Unify
 import TyCon
-import DataCon
 import CoAxiom
 import DynFlags
 import Module
@@ -39,17 +37,11 @@ import Util
 import Maybes
 import TcMType
 import TcType
-import TcEnv
 import Name
-import NameEnv
-import RdrName
 import RnEnv
-import Var
 import VarSet
-import Id
 import PrelNames
 import Control.Monad
-import Data.List
 import Data.Map (Map)
 import qualified Data.Map as Map
 import TcEvidence(TcCoercion)
@@ -244,118 +236,30 @@ tcLookupFamInst tycon tys
 	   (match:_) 
               -> return $ Just match
        }
-\end{code}
 
 
-%************************************************************************
-%*									*
-	Lookup record field instances
-%*									*
-%************************************************************************
-
-The GetResult and SetResult type families (defined in GHC.Records) are
-magical, in that rather than looking for instances in the usual way,
-we use lookupRecFldFamInst defined below. This delegates most of the
-work to lookupRecFldInsts, which is also used when looking for
-instances of the Has and Upd classes (by matchClassInst in
-TcInteract).
-
-The idea is that when we are looking for a family instance matching
-
-    GetResult (T a b c) "foo"
-
-we check if field foo belonging to type T is in scope, and if so,
-create a suitable match from the axiom created by
-makeOverloadedRecFldInsts in TcInstDcls (see Note [Instance scoping
-for OverloadedRecordFields] in TcInstDcls). The picture is slightly
-complicated when T is a data family, because then the field actually
-belongs to the representation tycon, though T is its parent for
-lexical scope purposes.
-
-Note [Duplicate field labels with data families]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Consider the following example:
-
-    module M where
-      data family F a
-      data instance F Int = MkF1 { foo :: Int }
-
-    module N where
-      import M
-      data instance F Char = MkF2 { foo :: Char }
-
-Both fields have the same lexical parent (the family tycon F)!  Thus
-it is not enough to lookup the field in the GlobalRdrEnv with
-lookupSubBndrGREs: we also need to check the selector names to find
-the one with the right representation tycon.
-
-\begin{code}
 tcLookupRecordsFamInst :: TyCon -> [Type] -> TcM (Maybe FamInstMatch)
 tcLookupRecordsFamInst fam tys@(r:f:_)
   | Just lbl     <- isStrLitTy f
   , Just (tc, args) <- tcSplitTyConApp_maybe r
 
-  = do { mb_ax <- lookupFldInstAxiom lbl tc args get_or_set
+  = do { rep_tc <- lookupRepTyCon tc args
+       ; mb_ax  <- lookupFldInstAxiom lbl tc rep_tc want_get
        ; return $ do { ax <- mb_ax
                      ; let fam_inst = fam_inst_for tc ax
                      ; subst <- tcMatchTys (mkVarSet (fi_tvs fam_inst)) (fi_tys fam_inst) tys
                      ; return $ FamInstMatch fam_inst (substTyVars subst (fi_tvs fam_inst)) } }
 
   where
-    is_get = isGetResultFam fam
-    get_or_set | is_get    = fldInstsGetResult
-               | otherwise = fldInstsSetResult
+    want_get = isGetResultFam fam
 
     fam_inst_for tc axiom
-      | is_get    = mkImportedFamInst getResultFamName
+      | want_get  = mkImportedFamInst getResultFamName
                         [Just (tyConName tc), Nothing] (toUnbranchedAxiom axiom)
       | otherwise = mkImportedFamInst setResultFamName
                         [Just (tyConName tc), Nothing, Nothing] (toUnbranchedAxiom axiom)
 
 tcLookupRecordsFamInst _ _ = return Nothing
-
-
-lookupFldInstAxiom :: FieldLabelString -> TyCon -> [Type] -> (FldInsts Name -> Name)
-                   -> TcM (Maybe (CoAxiom Branched))
-lookupFldInstAxiom lbl tc args which
-  = do { mb_fis <- lookupRecFldInsts lbl tc args
-       ; case mb_fis of
-           Nothing  -> return Nothing
-           Just fis -> do { thing <- tcLookupGlobal (which fis)
-                          ; case thing of  -- See Note [Bogus instances] in TcInstDcls
-                              ACoAxiom ax -> return $ Just ax
-                              _           -> return Nothing } }
-
-lookupFldInstDFun :: FieldLabelString -> TyCon -> [Type] -> (FldInsts Name -> Name)
-                   -> TcM (Maybe DFunId)
-lookupFldInstDFun lbl tc args which
-  = do { mb_fis <- lookupRecFldInsts lbl tc args
-       ; case mb_fis of
-           Nothing  -> return Nothing
-           Just fis -> do { dfun <- tcLookupId (which fis)
-                          ; if isDFunId dfun -- See Note [Bogus instances] in TcInstDcls
-                            then return (Just dfun)
-                            else return Nothing } }
-
-lookupRecFldInsts :: FieldLabelString -> TyCon -> [Type] -> TcM (Maybe (FldInsts Name))
-lookupRecFldInsts lbl tc args
-  = do { overload_ok <- xoptM Opt_OverloadedRecordFields
-       ; if not overload_ok
-         then return Nothing -- Don't magically solve constraints when
-                             -- the extension is disabled
-         else do {
-       ; rep_tc <- lookupRepTyCon tc args
-       ; case lookupFsEnv (tyConFieldLabelEnv rep_tc) lbl of
-           Nothing -> return Nothing -- This field doesn't belong to the datatype!
-           Just fl -> do
-               { gbl_env <- getGblEnv
-               ; let sel_name   = flSelector fl
-                 -- See Note [Duplicate field labels with data families]
-               ; if selectorInScope (tcg_rdr_env gbl_env) lbl (tyConName tc) sel_name
-                 then do { addUsedSelector sel_name
-                         ; return (Just (flInstances fl)) }
-                 else return Nothing } } }
-
 
 lookupRepTyCon :: TyCon -> [Type] -> TcM TyCon
 -- Lookup the representation tycon given a family tycon and its
