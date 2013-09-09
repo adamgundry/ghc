@@ -60,11 +60,44 @@ data AvailInfo = Avail Name      -- ^ An ordinary identifier in scope
 type Avails = [AvailInfo]
 
 -- | Record fields in an 'AvailInfo'
+-- See Note [Representing fields in AvailInfo]
 data AvailFlds name = NonOverloaded [name] | Overloaded [(FieldLabelString, name)]
   deriving (Eq, Data, Typeable)
 
 type AvailFields = AvailFlds Name
 type FieldLabelString = FastString
+
+{-
+Note [Representing fields in AvailInfo]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+When -XOverloadedRecordFields is disabled (the normal case), a
+datatype like
+
+  data T = MkT { foo :: Int }
+
+gives rise to the AvailInfo
+
+  AvailTC T [T, MkT] (NonOverloaded [foo]),
+
+whereas if -XOverloadedRecordFields is enabled it gives
+
+  AvailTC T [T, MkT] (Overloaded [(foo, $sel:foo:T)])
+
+since the label does not match the selector name.
+
+The labels in an Overloaded field list are not necessarily unique:
+data families allow the same parent (the family tycon) to have
+multiple distinct fields with the same label. For example,
+
+  data family F a
+  data instance F Int  = MkFInt { foo :: Int }
+  data instance F Bool = MkFBool { foo :: Bool}
+
+gives rise to
+
+  AvailTC F [F, MkFInt, MkFBool]
+    (Overloaded [(foo, $sel:foo:R:FInt), (foo, $sel:foo:R:FBool)]).
+-}
 
 
 -- | Compare lexicographically

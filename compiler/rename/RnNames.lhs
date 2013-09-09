@@ -36,6 +36,7 @@ import SrcLoc
 import ErrUtils
 import Util
 import FastString
+import FastStringEnv
 import ListSetOps
 
 import Control.Monad
@@ -820,7 +821,7 @@ filterImports iface decl_spec (Just (want_hiding, import_items))
            let subs = map NonFldChild subnames ++ subfldchildren
                subfldchildren = case subflds of
                                   NonOverloaded xs -> map FldChild xs
-                                  Overloaded xs    -> map OverloadedFldChild xs
+                                  Overloaded xs    -> map (uncurry mkOverloadedFldChild) xs
                mb_children = lookupChildren subs (ns ++ availFieldsRdrNames fs)
 
            (childnames, childflds) <- if any isNothing mb_children
@@ -916,7 +917,11 @@ plusAvailFields xs ys | nullAvailFields xs = ys
                       | nullAvailFields ys = xs
 plusAvailFields (NonOverloaded xs) (NonOverloaded ys) = NonOverloaded (xs `unionLists` ys)
 plusAvailFields (Overloaded xs)    (Overloaded ys)    = Overloaded (xs `unionLists` ys)
-plusAvailFields fs1 fs2 = pprPanic "plusAvailFields" (hsep [ppr fs1, ppr fs2])
+plusAvailFields (Overloaded xs)    (NonOverloaded ys) = Overloaded (xs `unionLists` map toOverloaded ys)
+plusAvailFields (NonOverloaded xs) (Overloaded ys)    = Overloaded (map toOverloaded xs `unionLists` ys)
+
+toOverloaded :: Name -> (FieldLabelString, Name)
+toOverloaded n = (occNameFS (nameOccName n), n)
 
 -- | trims an 'AvailInfo' to keep only a single name
 trimAvail :: AvailInfo -> Name -> AvailInfo
@@ -1002,12 +1007,37 @@ gresFromIE decl_spec (L loc ie, avail)
           item_spec = ImpSome { is_explicit = is_explicit_fld, is_iloc = loc }
 
 
-data ChildName = NonFldChild Name | FldChild Name | OverloadedFldChild (FieldLabelString, Name)
+{-
+Note [ChildNames for overloaded record fields]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Consider the module
+
+    {-# LANGUAGE OverloadedRecordFields #-}
+    module M (F(foo, MkFInt, MkFBool)) where
+      data family F a
+      data instance F Int = MkFInt { foo :: Int }
+      data instance F Bool = MkFBool { foo :: Bool }
+
+The `foo` in the export list refers to *both* selectors! For this
+reason, an OverloadedFldChild contains a list of selector names, not
+just a single name.
+-}
+
+-- | Represents the name of a child in an export item,
+-- e.g. the x in import M (T(x)).
+data ChildName = NonFldChild Name  -- ^ Not a field
+               | FldChild Name     -- ^ A non-overloaded field
+               | OverloadedFldChild FieldLabelString [Name]
+                                   -- ^ One or more overloaded fields with a common label
+                                   -- See Note [ChildNames for overloaded record fields]
+
+mkOverloadedFldChild :: FieldLabelString -> Name -> ChildName
+mkOverloadedFldChild lbl n = OverloadedFldChild lbl [n]
 
 childOccName :: ChildName -> OccName
-childOccName (NonFldChild n)               = nameOccName n
-childOccName (FldChild n)                  = nameOccName n
-childOccName (OverloadedFldChild (occ, _)) = mkVarOccFS occ
+childOccName (NonFldChild n)            = nameOccName n
+childOccName (FldChild n)               = nameOccName n
+childOccName (OverloadedFldChild lbl _) = mkVarOccFS lbl
 
 
 mkChildEnv :: [GlobalRdrElt] -> NameEnv [ChildName]
@@ -1017,7 +1047,7 @@ mkChildEnv gres = foldr add emptyNameEnv gres
         Just c  -> extendNameEnv_Acc (:) singleton env (par_is (gre_par gre)) c
         Nothing -> env
     greChild gre = case gre_par gre of
-        FldParent _ lbl | isOverloadedRecFldGRE gre -> Just (OverloadedFldChild (lbl, n))
+        FldParent _ lbl | isOverloadedRecFldGRE gre -> Just (mkOverloadedFldChild lbl n)
                         | otherwise                 -> Just (FldChild n)
         ParentIs _                                  -> Just (NonFldChild n)
         NoParent -> Nothing
@@ -1037,17 +1067,30 @@ lookupChildren :: [ChildName] -> [RdrName] -> [Maybe ChildName]
 lookupChildren all_kids rdr_items
   = map (lookupFsEnv kid_env . occNameFS . rdrNameOcc) rdr_items
   where
-    kid_env = mkFsEnv [(occNameFS (childOccName n), n) | n <- all_kids]
+    kid_env = extendFsEnvList_C plusChildName emptyFsEnv
+                  [(occNameFS (childOccName n), n) | n <- all_kids]
+
+    plusChildName x y
+      | debugIsOn && childOccName x /= childOccName y
+      = pprPanic "plusChildName" (ppr (childOccName x) <+> ppr (childOccName y))
+    plusChildName (OverloadedFldChild lbl xs) (OverloadedFldChild _ ys)
+      = OverloadedFldChild lbl (xs ++ ys)
+    plusChildName (OverloadedFldChild lbl xs) (FldChild n)
+      = OverloadedFldChild lbl (n:xs)
+    plusChildName (FldChild n) (OverloadedFldChild lbl xs)
+      = OverloadedFldChild lbl (n:xs)
+    plusChildName (FldChild m) (FldChild n)
+      = OverloadedFldChild (occNameFS (nameOccName m)) [m, n]
+    plusChildName _ _ = error "plusChildName"
 
 childrenNamesFlds :: [ChildName] -> ([Name], AvailFields)
 childrenNamesFlds xs = case mconcat (map trisect xs) of
                          (ns, fs, []) -> (ns, NonOverloaded fs)
-                         (ns, [], fs) -> (ns, Overloaded fs)
-                         _            -> error "childrenNamesFlds"
+                         (ns, fs, gs) -> (ns, Overloaded (map toOverloaded fs ++ gs))
   where
-    trisect (NonFldChild n) = ([n], [], [])
-    trisect (FldChild n)    = ([], [n], [])
-    trisect (OverloadedFldChild f) = ([], [], [f])
+    trisect (NonFldChild n)             = ([n], [], [])
+    trisect (FldChild n)                = ([], [n], [])
+    trisect (OverloadedFldChild lbl ns) = ([], [], map ((,) lbl) ns)
 
 -- | Combines 'AvailInfo's from the same family
 -- 'avails' may have several items with the same availName
@@ -1459,9 +1502,9 @@ reportUnusedNames _export_decls gbl_env
                 -- A use of C implies a use of T,
                 -- if C was brought into scope by T(..) or T(C)
       where
-        used_child (NonFldChild n)        = n `elemNameSet` used_names
-        used_child (FldChild n)           = n `elemNameSet` used_names
-        used_child (OverloadedFldChild (_, n)) = n `elemNameSet` used_names
+        used_child (NonFldChild n)           = n `elemNameSet` used_names
+        used_child (FldChild n)              = n `elemNameSet` used_names
+        used_child (OverloadedFldChild _ ns) = any (`elemNameSet` used_names) ns
 
     -- Filter out the ones that are
     --  (a) defined in this module, and
