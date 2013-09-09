@@ -917,7 +917,6 @@ data FieldLbl a = FieldLabel {
       flSelector  :: a,                -- ^ Record selector function
       flInstances :: FldInsts a        -- ^ Instances for overloading
     }
-  deriving (Eq, Ord)
 
 instance Functor FieldLbl where
     fmap = fmapDefault

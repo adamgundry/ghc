@@ -1456,7 +1456,7 @@ checkValidTyCon tc role_annots
       = whenIsJust role_annot_decl_maybe $ \decl -> illegalRoleAnnotDecl decl
 
     groups = equivClasses cmp_fld (concatMap get_fields data_cons)
-    cmp_fld (f1,_) (f2,_) = f1 `compare` f2
+    cmp_fld (f1,_) (f2,_) = flLabel f1 `compare` flLabel f2
     get_fields con = dataConFieldLabels con `zip` repeat con
         -- dataConFieldLabels may return the empty list, which is fine
 
