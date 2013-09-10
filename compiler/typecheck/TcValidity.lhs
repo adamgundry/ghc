@@ -747,7 +747,7 @@ checkValidInstHead :: UserTypeCtxt -> Class -> [Type] -> TcM ()
 checkValidInstHead ctxt clas cls_args
   = do { dflags <- getDynFlags
 
-       ; checkTc (clas `notElem` abstractClasses)
+       ; checkTc (classKey clas `notElem` abstractClasses)
                  (instTypeErr clas cls_args abstract_class_msg)
 
            -- Check language restrictions; 
@@ -803,8 +803,8 @@ checkValidInstHead ctxt clas cls_args
     abstract_class_msg =
                 text "The class is abstract, manual instances are not permitted."
 
-abstractClasses :: [ Class ]
-abstractClasses = [ coercibleClass ]
+abstractClasses :: [ Unique ]
+abstractClasses = [ classKey coercibleClass, recordHasClassNameKey, recordUpdClassNameKey ]
 
 instTypeErr :: Class -> [Type] -> SDoc -> SDoc
 instTypeErr cls tys msg
@@ -1099,7 +1099,11 @@ checkValidTyFamInst mb_clsinfo fam_tc
                     (CoAxBranch { cab_tvs = tvs, cab_lhs = typats
                                 , cab_rhs = rhs, cab_loc = loc })
   = setSrcSpan loc $ 
-    do { checkValidFamPats fam_tc tvs typats
+    do { -- Check it's not an OverloadedRecordFields family
+       ; checkTc (not (isRecordsFam fam_tc))
+                 (recordsFamInstErr fam_tc)
+
+       ; checkValidFamPats fam_tc tvs typats
 
          -- The right-hand side is a tau type
        ; checkValidMonoType rhs
@@ -1205,6 +1209,11 @@ famPatErr fam_tc tvs pats
 nestedMsg, smallerAppMsg :: SDoc
 nestedMsg     = ptext (sLit "Nested type family application")
 smallerAppMsg = ptext (sLit "Application is no smaller than the instance head")
+
+recordsFamInstErr :: TyCon -> SDoc
+recordsFamInstErr fam_tc
+  = hang (ptext (sLit "Illegal type instance declaration for") <+> quotes (ppr fam_tc))
+       2 (ptext (sLit "(Use -XOverloadedRecordFields instead.)"))
 \end{code}
 
 %************************************************************************

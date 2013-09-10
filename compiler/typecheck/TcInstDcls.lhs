@@ -434,12 +434,6 @@ tcInstDecls1 tycl_decls inst_decls deriv_decls
        ; when (safeInferOn dflags) $
              mapM_ (\x -> when (typInstCheck x) recordUnsafeInfer) local_infos
 
-       -- Prevent hand written instances of the OverloadedRecordFields classes
-       ; mapM_ (\x -> when (is_cls_nm (iSpec x) `elem` recordsClassNames)
-                           (addErrAt (getSrcSpan $ iSpec x)
-                               (recordsClassInstErr (is_cls_nm (iSpec x)))))
-              local_infos
-
        ; return ( gbl_env
                 , bagToList deriv_inst_info ++ local_infos
                 , deriv_binds)
@@ -465,9 +459,6 @@ tcInstDecls1 tycl_decls inst_decls deriv_decls
     instMsg i = hang (ptext (sLit $ "Typeable instances can only be derived; replace "
                                  ++ "the following instance:"))
                      2 (pprInstance (iSpec i))
-
-    recordsClassNames = [recordHasClassName, recordUpdClassName]
-
 
 addClsInsts :: [InstInfo Name] -> TcM a -> TcM a
 addClsInsts infos thing_inside
@@ -627,10 +618,6 @@ tcFamInstDeclCombined mb_clsinfo fam_tc_lname
        ; is_boot <- tcIsHsBoot   -- Are we compiling an hs-boot file?
        ; checkTc type_families $ badFamInstDecl fam_tc_lname
        ; checkTc (not is_boot) $ badBootFamInstDeclErr
-
-       -- Check it's not an OverloadedRecordFields family
-       ; checkTc (not (unLoc fam_tc_lname `elem` [getResultFamName, setResultFamName]))
-                 (recordsFamInstErr fam_tc_lname)
 
        -- Look up the family TyCon and check for validity including
        -- check that toplevel type instances are not for associated types.
@@ -2029,14 +2016,4 @@ badFamInstDecl tc_name
 notOpenFamily :: TyCon -> SDoc
 notOpenFamily tc
   = ptext (sLit "Illegal instance for closed family") <+> quotes (ppr tc)
-
-recordsClassInstErr :: Name -> SDoc
-recordsClassInstErr tc_name
-  = hang (ptext (sLit "Cannot give an instance for") <+> quotes (ppr tc_name))
-       2 (ptext (sLit "(use -XOverloadedRecordFields instead)"))
-
-recordsFamInstErr :: Located Name -> SDoc
-recordsFamInstErr fam_name
-  = hang (ptext (sLit "Cannot give a type instance for") <+> quotes (ppr fam_name))
-       2 (ptext (sLit "(use -XOverloadedRecordFields instead)"))
 \end{code}
