@@ -61,7 +61,6 @@ import ForeignCall
 import Util
 import Maybes
 
-import Data.Maybe
 import Control.Monad
 import Data.List
 

@@ -67,7 +67,6 @@ import ListSetOps
 import Digraph
 import DynFlags
 import FastString
-import FastStringEnv
 import Unique           ( mkBuiltinUnique )
 import BasicTypes
 

@@ -967,7 +967,7 @@ gresFromIE decl_spec (L loc ie, avail)
     is_explicit_fld = case ie of
                     IEThingAll _ -> False
                     _            -> True
-    prov_fld fld = Imported [imp_spec]
+    prov_fld _ = Imported [imp_spec]
         where
           imp_spec  = ImpSpec { is_decl = decl_spec, is_item = item_spec }
           item_spec = ImpSome { is_explicit = is_explicit_fld, is_iloc = loc }
