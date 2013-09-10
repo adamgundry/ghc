@@ -1603,26 +1603,41 @@ fact that
 
 makes no sense, because `c'` isn't bound anywhere.
 
-In general, a type variable can be changed provided:
+In general, a type variable can be changed when a field is updated
+provided that:
 
 (1) It is not 'fixed', i.e. it does not occur in the type of a
     different field of a relevant data constructor, just as in
-    Note [Type of a record update] in TcExpr.
+    Note [Type of a record update] in TcExpr. (A relevant data
+    constructor is one that has the field being updated.)
+    In the example above, `a` is fixed.
 
-(2) It occurs rigidly in the new type of the field (not under a type
-    family).
+(2) It occurs in the type of the field being updated. In the example
+    above, `c` does not occur in the type of the field.
 
-For an example of why (2) is restricted to rigid occurrences, consider
-the following:
+(3) At least one of the variable's occurrences in the field type is
+    'rigid' (not under a type family).
 
-    type family Foo a
-    data T a = MkT { foo :: Foo a }
+For an example of why (3) restricts update to variables with at least
+one rigid occurrence, consider the following:
+
+    type family G a
+    data T a = MkT { foo :: G a }
 
 Without the restriction, we would generate this:
 
-    type instance SetResult (T a) "foo" (Foo b) = T b
+    type instance SetResult (T a) "foo" (G b) = T b
 
 But we can't sensibly pattern-match on type families!
+
+On the other hand, this is okay:
+
+    data U a = MkU { foo :: a -> G a }
+
+While we cannot match on the type family, we can replace it with an
+unused variable, and make use of the rigid occurrence:
+
+    type instance SetResult (U a) "foo" (b -> z) = U b
 
 
 Note that we have to be particularly careful with kind variables when
@@ -1733,7 +1748,7 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
            -- Generate SetResult instance:
            --     type instance SetResult data_ty f hull_ty = data_ty'
            -- See Note [Calculating the hull type]
-           ; hull_ty <- hullType (tyVarsOfType data_ty') fld_ty'
+           ; hull_ty <- hullType fld_ty'
            ; set_ax  <- mkAxiom set_name setResultFamName
                             [data_ty, f, hull_ty] data_ty'
 
@@ -1875,59 +1890,34 @@ rigidTyVarsOfTypes tys = foldr (unionVarSet . rigidTyVarsOfType) emptyVarSet tys
 Note [Calculating the hull type]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 SetResult must not pattern-match on type families (see Note
-[Availability of type-changing update]). More generally, in order to
-get the best possible type inference behaviour, we want SetResult to
-match as little of the new field type as possible. For example, given
-the datatype
+[Availability of type-changing update]). For example, given the
+datatype
 
     data T a b = MkT { foo :: (a, Int, F b) }
 
 we generate
 
-    type instance SetResult (T a b) "foo" (a', x0, x1) = T a' b
+    type instance SetResult (T a b) "foo" (a', Int, x) = T a' b
 
 rather than
 
     type instance SetResult (T a b) "foo" (a', Int, F b') = T a' b'.
 
 This is accomplished by the `hullType` function, which returns a type
-in which all the unused subexpressions have been replaced with fresh
-variables.
+in which all the type family subexpressions have been replaced with
+fresh variables.
 
 \begin{code}
--- | See Note [Calculating the hull type]
-hullType :: TyVarSet -> Type -> TcM Type
-hullType tvs t = hullEither =<< hull tvs t
-  where
-    hull :: TyVarSet -> Type -> TcM (Either Kind Type)
-    hull tvs ty@(TyVarTy v) | v `elemVarSet` tvs = return $ Right ty
-                            | otherwise          = return $ Left (tyVarKind v)
-    hull tvs ty@(AppTy f s) = do { f' <- hull tvs f
-                                 ; s' <- hull tvs s
-                                 ; hullAppTy f' s' }
-      where
-        hullAppTy (Left _) (Left _) = return $ Left (typeKind ty)
-        hullAppTy f'        s'      = Right <$> (mkAppTy <$> hullEither f' <*> hullEither s')
-    hull tvs ty@(TyConApp tc tys)
-        | isDecomposableTyCon tc = do { tys' <- mapM (hull tvs) tys
-                                      ; if all isLeft tys'
-                                        then return $ Left (typeKind ty)
-                                        else Right <$> (mkTyConApp tc <$> mapM hullEither tys') }
-        | otherwise = return $ Left (typeKind ty)
-      where
-        isLeft        = either (const True) (const False)
-    hull tvs ty@(FunTy t u) = do { t' <- hull tvs t
-                                 ; u' <- hull tvs u
-                                 ; hullFunTy t' u' }
-      where
-        hullFunTy (Left _) (Left _) = return $ Left (typeKind ty)
-        hullFunTy t'       u'       = Right <$> (mkFunTy <$> hullEither t' <*> hullEither u')
-    hull _ ty@(ForAllTy _ _) = return $ Left (typeKind ty)
-    hull _ ty@(LitTy _)      = return $ Left (typeKind ty)
-
-    hullEither :: Either Kind Type -> TcM Type
-    hullEither (Left k)  = mkTyVarTy <$> (mkTyVar <$> newSysName (mkVarOcc "x") <*> pure k)
-    hullEither (Right t) = return t
+hullType :: Type -> TcM Type
+hullType ty@(TyVarTy _)      = return ty
+hullType (AppTy f s)         = AppTy <$> hullType f <*> hullType s
+hullType ty@(TyConApp tc tys)
+  | isDecomposableTyCon tc   = TyConApp tc <$> mapM hullType tys
+  | otherwise                = mkTyVarTy <$> (mkTyVar <$> newSysName (mkVarOcc "x")
+                                                      <*> pure (typeKind ty))
+hullType (FunTy t u)         = FunTy <$> hullType t <*> hullType u
+hullType (ForAllTy v ty)     = ForAllTy v <$> hullType ty
+hullType ty@(LitTy _)        = return ty
 \end{code}
 
 
