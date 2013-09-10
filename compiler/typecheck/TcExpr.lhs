@@ -751,15 +751,15 @@ so we supply
 and end up with something of type p r t.
 
 \begin{code}
-tcExpr (HsOverloadedRecFld fld) res_ty
+tcExpr (HsOverloadedRecFld lbl) res_ty
   = do { hasClass      <- tcLookupClass recordHasClassName
        ; accessorClass <- tcLookupClass accessorClassName
        ; r        <- newFlexiTyVarTy openTypeKind
        ; t        <- newFlexiTyVarTy openTypeKind
        ; p        <- newFlexiTyVarTy (mkArrowKind liftedTypeKind
                                          (mkArrowKind liftedTypeKind liftedTypeKind))
-       ; let f = mkStrLitTy $ occNameFS fld
-             origin = OccurrenceOfRecSel (mkRdrUnqual fld)
+       ; let f = mkStrLitTy lbl
+             origin = OccurrenceOfRecSel (mkVarUnqual lbl)
        ; has_var  <- emitWanted origin (mkClassPred hasClass [r, f, t])
        ; acs_var  <- emitWanted origin (mkClassPred accessorClass [p, f])
        ; field <- tcLookupId fieldName

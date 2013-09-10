@@ -671,10 +671,10 @@ lookupGlobalOccRn_maybe rdr_name
 -- The following are possible results of lookupOccRn_overloaded:
 --   Nothing              -> name not in scope (no error reported)
 --   Just (Left x)        -> name uniquely refers to x, or there is a name clash (reported)
---   Just (Right (l, xs)) -> ambiguous between the fields xs with OccName l;
+--   Just (Right (l, xs)) -> ambiguous between the fields xs with label l;
 --                           fields are represented as (parent, selector) pairs
 
-lookupOccRn_overloaded  :: RdrName -> RnM (Maybe (Either Name (OccName, [(Name, Name)])))
+lookupOccRn_overloaded  :: RdrName -> RnM (Maybe (Either Name (FieldLabelString, [(Name, Name)])))
 lookupOccRn_overloaded rdr_name
   = do { local_env <- getLocalRdrEnv
        ; case lookupLocalRdrEnv local_env rdr_name of {
@@ -701,7 +701,7 @@ lookupOccRn_overloaded rdr_name
          else do { traceRn (text "lookupOccRn_overloaded" <+> ppr rdr_name)
                  ; return Nothing } } } } } }
 
-lookupGlobalOccRn_overloaded :: RdrName -> RnM (Maybe (Either Name (OccName, [(Name, Name)])))
+lookupGlobalOccRn_overloaded :: RdrName -> RnM (Maybe (Either Name (FieldLabelString, [(Name, Name)])))
 lookupGlobalOccRn_overloaded rdr_name
   | Just n <- isExact_maybe rdr_name   -- This happens in derived code
   = do { n' <- lookupExactOcc n; return (Just (Left n')) }
@@ -716,12 +716,12 @@ lookupGlobalOccRn_overloaded rdr_name
         ; case lookupGRE_RdrName rdr_name env of
                 []    -> return Nothing
                 [gre] | isRecFldGRE gre -> do { addUsedRdrName True gre rdr_name
-                                              ; return (Just (Right (greOccName gre, [greBits gre]))) }
+                                              ; return (Just (Right (par_lbl (gre_par gre), [greBits gre]))) }
                 [gre]                   -> do { addUsedRdrName True gre rdr_name
                                               ; return (Just (Left (gre_name gre))) }
                 gres  | all isRecFldGRE gres
                         && overload_ok  -> do { mapM_ (\ gre -> addUsedRdrName True gre rdr_name) gres
-                                              ; return (Just (Right (greOccName (head gres), map greBits gres))) }
+                                              ; return (Just (Right (par_lbl (gre_par (head gres)), map greBits gres))) }
                 gres                    -> do { addNameClashErrRn rdr_name gres
                                               ; return (Just (Left (gre_name (head gres)))) } }
   where
@@ -1019,7 +1019,7 @@ lookupQualifiedName rdr_name
   where
     doc = ptext (sLit "Need to find") <+> ppr rdr_name
 
-lookupQualifiedName_overloaded :: RdrName -> RnM (Maybe (Either Name (OccName, [(Name, Name)])))
+lookupQualifiedName_overloaded :: RdrName -> RnM (Maybe (Either Name (FieldLabelString, [(Name, Name)])))
 lookupQualifiedName_overloaded rdr_name
   | Just (mod,occ) <- isQual_maybe rdr_name
    -- Note: we want to behave as we would for a source file import here,
@@ -1031,16 +1031,16 @@ lookupQualifiedName_overloaded rdr_name
                   name  <- availNames avail,
                   nameOccName name == occ ] of
               (n:ns) -> ASSERT(null ns) return (Just (Left n))
-              _ -> case [ (availName avail, fl, sel)
+              _ -> case [ (availName avail, lbl, sel)
                         | avail <- mi_exports iface,
-                          (fl, sel) <- availOverloadedFlds avail,
-                          fl == occNameFS occ ] of
+                          (lbl, sel) <- availOverloadedFlds avail,
+                          lbl == occNameFS occ ] of
                        [] -> do { traceRn (text "lookupQualified overloaded" <+> ppr rdr_name)
                                 ; return Nothing }
-                       xs@((p, _, sel):ys)
+                       xs@((p, lbl, sel):ys)
                           -> do { when (not (null ys)) $
                                       addNameClashErrRn rdr_name (map (toFakeGRE mod) xs)
-                                ; return (Just (Right (occ, [(p, sel)]))) } }
+                                ; return (Just (Right (lbl, [(p, sel)]))) } }
   | otherwise
   = pprPanic "RnEnv.lookupQualifiedName_overloaded" (ppr rdr_name)
   where

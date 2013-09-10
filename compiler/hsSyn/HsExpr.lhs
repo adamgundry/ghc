@@ -324,7 +324,7 @@ data HsExpr id
   |  HsWrap     HsWrapper    -- TRANSLATION
                 (HsExpr id)
   |  HsUnboundVar RdrName
-  |  HsOverloadedRecFld OccName
+  |  HsOverloadedRecFld FieldLabelString
   |  HsSingleRecFld RdrName id   -- Used to attach a selector id to non-overloaded fields
   deriving (Data, Typeable)
 
