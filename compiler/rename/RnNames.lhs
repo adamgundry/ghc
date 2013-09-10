@@ -1036,9 +1036,6 @@ lookupChildren all_kids rdr_items
     kid_env = extendFsEnvList_C plusChildName emptyFsEnv
                   [(occNameFS (childOccName n), n) | n <- all_kids]
 
-    plusChildName x y
-      | debugIsOn && childOccName x /= childOccName y
-      = pprPanic "plusChildName" (ppr (childOccName x) <+> ppr (childOccName y))
     plusChildName (OverloadedFldChild lbl xs) (OverloadedFldChild _ ys)
       = OverloadedFldChild lbl (xs ++ ys)
     plusChildName (OverloadedFldChild lbl xs) (FldChild n)
@@ -1047,7 +1044,10 @@ lookupChildren all_kids rdr_items
       = OverloadedFldChild lbl (n:xs)
     plusChildName (FldChild m) (FldChild n)
       = OverloadedFldChild (occNameFS (nameOccName m)) [m, n]
-    plusChildName _ _ = error "plusChildName"
+    plusChildName _ y = y -- This can happen if we have both
+                          -- Example{tc} and Example{d} in all_kids;
+                          -- take the second because it will be the
+                          -- data constructor (AvailTC invariant)
 
 childrenNamesFlds :: [ChildName] -> ([Name], AvailFields)
 childrenNamesFlds xs = case mconcat (map trisect xs) of
