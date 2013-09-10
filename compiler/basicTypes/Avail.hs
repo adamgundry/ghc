@@ -18,12 +18,15 @@ module Avail (
     availFieldsLabels,
     availFieldsNames,
     isOverloaded,
+    gresFromAvails,
+    gresFromAvail,
     pprAvailFields
   ) where
 
 import Name
 import NameEnv
 import NameSet
+import RdrName
 
 import Binary
 import Outputable
@@ -182,6 +185,41 @@ availFieldsNames (Overloaded xs)    = map snd xs
 isOverloaded :: AvailFields -> Bool
 isOverloaded (NonOverloaded _) = False
 isOverloaded (Overloaded _)    = True
+
+-- -----------------------------------------------------------------------------
+-- gresFromAvails
+
+-- | make a 'GlobalRdrEnv' where all the elements point to the same
+-- Provenance (useful for "hiding" imports, or imports with
+-- no details).
+gresFromAvails :: Provenance -> [AvailInfo] -> [GlobalRdrElt]
+gresFromAvails prov avails
+  = concatMap (gresFromAvail (const prov) (const prov)) avails
+
+gresFromAvail :: (Name -> Provenance) -> (FieldLabelString -> Provenance) ->
+                     AvailInfo -> [GlobalRdrElt]
+gresFromAvail prov_fn prov_fld avail = xs ++ ys
+  where
+    parent _ (Avail _)                   = NoParent
+    parent n (AvailTC m _ _) | n == m    = NoParent
+                             | otherwise = ParentIs m
+
+    xs = case availFlds avail of
+           NonOverloaded ns -> map greFromNonOverloadedFld ns
+           Overloaded fs    -> map greFromOverloadedFld fs
+    ys = map greFromNonFld (availNonFldNames avail)
+
+    greFromNonFld n = GRE { gre_name = n, gre_par = parent n avail, gre_prov = prov_fn n}
+
+    greFromNonOverloadedFld n
+      = GRE { gre_name = n
+            , gre_par  = FldParent (availName avail) (occNameFS (nameOccName n))
+            , gre_prov = prov_fld (occNameFS (nameOccName n)) }
+
+    greFromOverloadedFld (lbl, sel)
+      = GRE { gre_name = sel
+            , gre_par  = FldParent (availName avail) lbl
+            , gre_prov = prov_fld lbl }
 
 -- -----------------------------------------------------------------------------
 -- Printing

@@ -148,16 +148,15 @@ lookupRdrNameInModule hsc_env mod_name rdr_name = do
     case found_module of
         Found _ mod -> do
             -- Find the exports of the module
-            (_, mb_gres) <- initTc hsc_env HsSrcFile False iNTERACTIVE $ initIfaceTcRn $ do
-                iface <- loadPluginInterface doc mod
-                let decl_spec = ImpDeclSpec { is_mod = mod_name, is_as = mod_name
-                                            , is_qual = False, is_dloc = noSrcSpan }
-                    provenance = Imported [ImpSpec decl_spec ImpAll]
-                gresFromAvails provenance (mi_exports iface)
-            case mb_gres of
-                Just gres ->
+            (_, mb_iface) <- initTc hsc_env HsSrcFile False iNTERACTIVE $ initIfaceTcRn $ loadPluginInterface (ptext (sLit "contains a name used in an invocation of lookupRdrNameInModule")) mod
+            case mb_iface of
+                Just iface -> do
                     -- Try and find the required name in the exports
-                    case lookupGRE_RdrName rdr_name (mkGlobalRdrEnv gres) of
+                    let decl_spec = ImpDeclSpec { is_mod = mod_name, is_as = mod_name
+                                                , is_qual = False, is_dloc = noSrcSpan }
+                        provenance = Imported [ImpSpec decl_spec ImpAll]
+                        env = mkGlobalRdrEnv (gresFromAvails provenance (mi_exports iface))
+                    case lookupGRE_RdrName rdr_name env of
                         [gre] -> return (Just (gre_name gre))
                         []    -> return Nothing
                         _     -> panic "lookupRdrNameInModule"
@@ -165,7 +164,6 @@ lookupRdrNameInModule hsc_env mod_name rdr_name = do
                 Nothing -> throwCmdLineErrorS dflags $ hsep [ptext (sLit "Could not determine the exports of the module"), ppr mod_name]
         err -> throwCmdLineErrorS dflags $ cannotFindModule dflags mod_name err
   where dflags = hsc_dflags hsc_env
-        doc = ptext (sLit "contains a name used in an invocation of lookupRdrNameInModule")
 
 
 wrongTyThingError :: Name -> TyThing -> SDoc

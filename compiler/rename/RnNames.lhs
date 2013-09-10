@@ -416,7 +416,6 @@ extendGlobalRdrEnvRn avails new_fixities
   = do  { (gbl_env, lcl_env) <- getEnvs
         ; stage <- getStage
         ; isGHCi <- getIsGHCi
-        ; gres <- gresFromAvails LocalDef avails
         ; let rdr_env = tcg_rdr_env gbl_env
               fix_env = tcg_fix_env gbl_env
 
@@ -454,6 +453,7 @@ extendGlobalRdrEnvRn avails new_fixities
         ; traceRn (text "extendGlobalRdrEnvRn" <+> (ppr new_fixities $$ ppr fix_env $$ ppr fix_env'))
         ; return (gbl_env', lcl_env2) }
   where
+    gres = gresFromAvails LocalDef avails
 
     -- If there is a fixity decl for the gre, add it to the fixity env
     extend_fix_env fix_env gre
@@ -680,7 +680,7 @@ filterImports :: ModIface
               -> RnM (Maybe (Bool, [LIE Name]), -- Import spec w/ Names
                       [GlobalRdrElt])           -- Same again, but in GRE form
 filterImports iface decl_spec Nothing
-  = fmap ((,) Nothing) $ gresFromAvails prov (mi_exports iface)
+  = return (Nothing, gresFromAvails prov (mi_exports iface))
   where
     prov = Imported [ImpSpec { is_decl = decl_spec, is_item = ImpAll }]
 
@@ -699,8 +699,8 @@ filterImports iface decl_spec (Just (want_hiding, import_items))
             pruned_avails = filterAvails keep all_avails
             hiding_prov = Imported [ImpSpec { is_decl = decl_spec, is_item = ImpAll }]
 
-        gres <- if want_hiding then gresFromAvails hiding_prov pruned_avails
-                               else concatMapM (gresFromIE decl_spec) items2
+            gres | want_hiding = gresFromAvails hiding_prov pruned_avails
+                 | otherwise   = concatMap (gresFromIE decl_spec) items2
 
         return (Just (want_hiding, map fst items2), gres)
   where
@@ -951,42 +951,8 @@ filterAvailFields :: (Name -> Bool) -> AvailFields -> AvailFields
 filterAvailFields keep (NonOverloaded xs) = NonOverloaded (filter keep xs)
 filterAvailFields _    (Overloaded xs)    = Overloaded xs
 
--- | make a 'GlobalRdrEnv' where all the elements point to the same
--- Provenance (useful for "hiding" imports, or imports with
--- no details).
-gresFromAvails :: Provenance -> [AvailInfo] -> TcRnIf a b [GlobalRdrElt]
-gresFromAvails prov avails
-  = concatMapM (gresFromAvail (const prov) (const prov)) avails
-
-gresFromAvail :: (Name -> Provenance) -> (FieldLabelString -> Provenance) ->
-                     AvailInfo -> TcRnIf a b [GlobalRdrElt]
-gresFromAvail prov_fn prov_fld avail
-  = do { xs <- case availFlds avail of
-                 NonOverloaded ns -> return $ map greFromNonOverloadedFld ns
-                 Overloaded fs    -> mapM greFromOverloadedFld fs
-       ; let ys = map greFromNonFld (availNonFldNames avail)
-       ; return (xs ++ ys) }
-
-  where
-    greFromNonFld n = GRE { gre_name = n, gre_par = parent n, gre_prov = prov_fn n}
-
-    greFromNonOverloadedFld n
-      = GRE { gre_name = n
-            , gre_par  = FldParent (availName avail) (occNameFS (nameOccName n))
-            , gre_prov = prov_fld (occNameFS (nameOccName n)) }
-
-    greFromOverloadedFld (lbl, sel)
-      = return (GRE { gre_name = sel
-                    , gre_par  = FldParent (availName avail) lbl
-                    , gre_prov = prov_fld lbl })
-
-    parent n = case avail of
-                 Avail _                   -> NoParent
-                 AvailTC m _ _ | n == m    -> NoParent
-                               | otherwise -> ParentIs m
-
 -- | Given an import\/export spec, construct the appropriate 'GlobalRdrElt's.
-gresFromIE :: ImpDeclSpec -> (LIE Name, AvailInfo) -> TcRnIf a b [GlobalRdrElt]
+gresFromIE :: ImpDeclSpec -> (LIE Name, AvailInfo) -> [GlobalRdrElt]
 gresFromIE decl_spec (L loc ie, avail)
   = gresFromAvail prov_fn prov_fld avail
   where

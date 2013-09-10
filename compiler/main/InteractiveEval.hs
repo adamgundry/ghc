@@ -851,9 +851,9 @@ findGlobalRdrEnv hsc_env imports
       Left err -> Left (mod, err)
       Right env -> Right env
 
-availsToGlobalRdrEnv :: ModuleName -> [AvailInfo] -> TcRnIf a b GlobalRdrEnv
+availsToGlobalRdrEnv :: ModuleName -> [AvailInfo] -> GlobalRdrEnv
 availsToGlobalRdrEnv mod_name avails
-  = fmap mkGlobalRdrEnv $ gresFromAvails imp_prov avails
+  = mkGlobalRdrEnv (gresFromAvails imp_prov avails)
   where
       -- We're building a GlobalRdrEnv as if the user imported
       -- all the specified modules into the global interactive module
