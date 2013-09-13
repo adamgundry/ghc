@@ -2046,7 +2046,7 @@ matchRecordsClassInst clas tys@[r, f, _] loc
                       Just subst -> let mb_inst_tys = map (lookupTyVar subst) tvs
                                         pred        = mkClassPred clas tys
                                     in match_one dfun mb_inst_tys pred loc
-                      Nothing -> return NoInstance }
+                      Nothing -> pprPanic "matchClassInst" (ppr clas $$ ppr tvs $$ ppr tmpl_tys $$ ppr tys) }
 
 matchRecordsClassInst _ _ _ = return NoInstance
 \end{code}

@@ -754,10 +754,10 @@ and end up with something of type p r t.
 tcExpr (HsOverloadedRecFld lbl) res_ty
   = do { hasClass      <- tcLookupClass recordHasClassName
        ; accessorClass <- tcLookupClass accessorClassName
-       ; r        <- newFlexiTyVarTy openTypeKind
-       ; t        <- newFlexiTyVarTy openTypeKind
-       ; p        <- newFlexiTyVarTy (mkArrowKind liftedTypeKind
-                                         (mkArrowKind liftedTypeKind liftedTypeKind))
+       ; r <- newFlexiTyVarTy liftedTypeKind
+       ; t <- newFlexiTyVarTy liftedTypeKind
+       ; p <- newFlexiTyVarTy (mkArrowKind liftedTypeKind
+                                  (mkArrowKind liftedTypeKind liftedTypeKind))
        ; let f = mkStrLitTy lbl
              origin = OccurrenceOfRecSel (mkVarUnqual lbl)
        ; has_var  <- emitWanted origin (mkClassPred hasClass [r, f, t])
