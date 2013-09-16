@@ -76,8 +76,6 @@ import FastString
 import Module
 import VarEnv
 import NameEnv
-import Binary
-import Avail
 
 import qualified Data.Data as Data
 import qualified Data.Typeable

@@ -29,6 +29,7 @@ import Unify            ( tcMatchTys )
 import Inst
 import InstEnv
 import TyCon
+import DataCon
 import TcEvidence
 import TysWiredIn       ( coercibleClass )
 import RnEnv

@@ -34,7 +34,6 @@ import DataCon
 import Name
 import RdrName ( GlobalRdrEnv, lookupGRE_Name, mkRdrQual, is_as,
                  is_decl, Provenance(Imported), gre_prov )
-import ErrUtils
 import FunDeps
 
 import TcEvidence
