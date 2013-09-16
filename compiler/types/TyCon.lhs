@@ -102,7 +102,7 @@ module TyCon(
 
 import {-# SOURCE #-} TypeRep ( Kind, Type, PredType )
 import {-# SOURCE #-} DataCon ( DataCon, isVanillaDataCon, dataConFieldLabels )
-import {-# SOURCE #-} FamInst ( TcBuiltInSynFamily )
+import {-# SOURCE #-} TcEvidence ( TcBuiltInSynFamily )
 
 import Var
 import Class

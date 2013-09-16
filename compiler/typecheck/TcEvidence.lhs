@@ -26,7 +26,9 @@ module TcEvidence (
   mkTcAxiomRuleCo,
   tcCoercionKind, coVarsOfTcCo, isEqVar, mkTcCoVarCo, 
   isTcReflCo, isTcReflCo_maybe, getTcCoVar_maybe,
-  liftTcCoSubstWith
+  liftTcCoSubstWith,
+
+  TcBuiltInSynFamily(..), trivialBuiltInFamily
 
   ) where
 #include "HsVersions.h"
@@ -683,6 +685,34 @@ evVarsOfEvCoercible (EvCoercibleNewType _ _ _ v) = evVarsOfTerm v
 
 evVarsOfTerms :: [EvTerm] -> VarSet
 evVarsOfTerms = foldr (unionVarSet . evVarsOfTerm) emptyVarSet 
+\end{code}
+
+
+%************************************************************************
+%*                                                                      *
+                  Type checking of built-in families
+%*                                                                      *
+%************************************************************************
+
+TODO: This doesn't really belong here, but because of the use of
+TcCoercion it seems the earliest place we can put it to avoid a messy
+dependency cycle later on.
+
+\begin{code}
+data TcBuiltInSynFamily = TcBuiltInSynFamily
+  { sfMatchFam      :: [Type] -> Maybe (TcCoercion, TcType)
+  , sfInteractTop   :: [Type] -> Type -> [Pair TcType]
+  , sfInteractInert :: [Type] -> Type ->
+                       [Type] -> Type -> [Pair TcType]
+  }
+
+-- Provides default implementations that do nothing.
+trivialBuiltInFamily :: TcBuiltInSynFamily
+trivialBuiltInFamily = TcBuiltInSynFamily
+  { sfMatchFam      = \_ -> Nothing
+  , sfInteractTop   = \_ _ -> []
+  , sfInteractInert = \_ _ _ _ -> []
+  }
 \end{code}
 
 

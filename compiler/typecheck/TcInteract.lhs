@@ -20,8 +20,6 @@ import VarSet
 import Type
 import Unify
 import FamInstEnv
-import FamInst(TcBuiltInSynFamily(..))
-import InstEnv( lookupInstEnv, instanceDFunId )
 
 import InstEnv
 

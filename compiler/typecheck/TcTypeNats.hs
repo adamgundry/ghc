@@ -10,7 +10,7 @@ import TcType     ( TcType )
 import TyCon      ( TyCon, SynTyConRhs(..), mkSynTyCon, TyConParent(..)  )
 import Coercion   ( Role(..) )
 import TcRnTypes  ( Xi )
-import TcEvidence ( mkTcAxiomRuleCo, TcCoercion )
+import TcEvidence ( mkTcAxiomRuleCo, TcCoercion, TcBuiltInSynFamily(..) )
 import CoAxiom    ( CoAxiomRule(..) )
 import Name       ( Name, BuiltInSyntax(..) )
 import TysWiredIn ( typeNatKind, mkWiredInTyConName
@@ -25,7 +25,6 @@ import PrelNames  ( gHC_TYPELITS
                   , typeNatLeqTyFamNameKey
                   , typeNatSubTyFamNameKey
                   )
-import FamInst    ( TcBuiltInSynFamily(..) )
 import FastString ( FastString, fsLit )
 import qualified Data.Map as Map
 import Data.Maybe ( isJust )
