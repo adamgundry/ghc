@@ -73,7 +73,7 @@ module OccName (
 	mkPDatasTyConOcc, mkPDatasDataConOcc,
         mkPReprTyConOcc, 
         mkPADFunOcc,
-        mkRecSelOcc, mkOverloadedRecFldOccs,
+        mkRecFldSelOcc, mkRecFldDFunOcc, mkRecFldAxiomOcc,
 
 	-- ** Deconstruction
 	occNameFS, occNameString, occNameSpace, 
@@ -642,6 +642,12 @@ mkPDatasTyConOcc   = mk_simple_deriv_with tcName   "VPs:"
 mkPDataDataConOcc  = mk_simple_deriv_with dataName "VPD:"
 mkPDatasDataConOcc = mk_simple_deriv_with dataName "VPDs:"
 
+-- Overloaded record field dfunids and axioms
+mkRecFldSelOcc, mkRecFldDFunOcc, mkRecFldAxiomOcc :: String -> OccName
+mkRecFldSelOcc   = mk_deriv varName "$sel"
+mkRecFldDFunOcc  = mk_deriv varName "$f"
+mkRecFldAxiomOcc = mkInstTyCoOcc . mkTcOcc
+
 mk_simple_deriv :: NameSpace -> String -> OccName -> OccName
 mk_simple_deriv sp px occ = mk_deriv sp px (occNameString occ)
 
@@ -697,32 +703,6 @@ mkDFunOcc info_str is_boot set
   where
     prefix | is_boot   = "$fx"
 	   | otherwise = "$f"
-\end{code}
-
-
-Record selector OccNames are built from the underlying field name and
-the name of the type constructor, to support overloaded record fields.
-
-\begin{code}
-mkRecSelOcc :: FastString -> OccName -> OccName
-mkRecSelOcc lbl tc = fst $ mkOverloadedRecFldOccs lbl tc
-
-mkOverloadedRecFldOccs :: FastString -> OccName -> (OccName, FldInsts OccName)
-mkOverloadedRecFldOccs lbl tc = (sel_occ, is)
-  where
-    str     = ":" ++ unpackFS lbl ++ ":" ++ occNameString tc
-    has_str = "Has"
-    upd_str = "Upd"
-    get_str = "GetResult"
-    set_str = "SetResult"
-
-    sel_occ = mk_deriv varName "$sel" str
-    has_occ = mk_deriv varName "$f" (has_str ++ str)
-    upd_occ = mk_deriv varName "$f" (upd_str ++ str)
-    get_occ = mkInstTyCoOcc (mkTcOcc (get_str ++ str))
-    set_occ = mkInstTyCoOcc (mkTcOcc (set_str ++ str))
-
-    is = FldInsts has_occ upd_occ get_occ set_occ
 \end{code}
 
 

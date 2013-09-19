@@ -118,17 +118,14 @@ import Maybes
 import Outputable
 import FastString
 import FastStringEnv
+import FieldLabel
 import Constants
 import Util
-import Binary
 
-import Control.Applicative ( (<$>), (<*>) )
 import qualified Data.Data as Data
 import Data.Function
 import Data.List ( nubBy )
 import Data.Typeable (Typeable)
-import Data.Foldable ( Foldable(..) )
-import Data.Traversable
 \end{code}
 
 -----------------------------------------------
@@ -908,55 +905,6 @@ primElemRepSizeB DoubleElemRep = 8
 %************************************************************************
 
 \begin{code}
-type FieldLabelEnv = FastStringEnv FieldLabel
-type FieldLabel    = FieldLbl Name
-
--- | Fields in an algebraic record type
-data FieldLbl a = FieldLabel {
-      flLabel     :: FieldLabelString, -- ^ Label of the field
-      flSelector  :: a,                -- ^ Record selector function
-      flInstances :: FldInsts a        -- ^ Instances for overloading
-    }
-
-instance Functor FieldLbl where
-    fmap = fmapDefault
-
-instance Foldable FieldLbl where
-    foldMap = foldMapDefault
-
-instance Traversable FieldLbl where
-    traverse f (FieldLabel occ sel mb_is)
-        = FieldLabel occ <$> f sel <*> traverse f mb_is
-
-instance Outputable a => Outputable (FieldLbl a) where
-    ppr (FieldLabel occ sel _) = ppr occ <> braces (ppr sel)
-
-instance Binary a => Binary (FieldLbl a) where
-    put_ bh (FieldLabel aa ab ac) = do
-        put_ bh aa
-        put_ bh ab
-        put_ bh ac
-
-    get bh = do
-        aa <- get bh
-        ab <- get bh
-        ac <- get bh
-        return (FieldLabel aa ab ac)
-
-
-isOverloadedFieldLabel :: FieldLabel -> Bool
-isOverloadedFieldLabel fl = flLabel fl /= occNameFS (nameOccName (flSelector fl))
-
-fieldLabelsToAvailFields :: [FieldLabel] -> AvailFields
-fieldLabelsToAvailFields [] = NonOverloaded []
-fieldLabelsToAvailFields fls@(fl:_) = fieldLabelsToAvailFields' overloaded fls
-  where overloaded = isOverloadedFieldLabel fl
-
-fieldLabelsToAvailFields' :: Bool -> [FieldLabel] -> AvailFields
-fieldLabelsToAvailFields' overloaded fls
-    | overloaded = Overloaded (map (\ fl -> (flLabel fl, flSelector fl)) fls)
-    | otherwise  = NonOverloaded (map flSelector fls)
-
 -- | The labels for the fields of this particular 'TyCon'
 tyConFieldLabels :: TyCon -> [FieldLabel]
 tyConFieldLabels tc = fsEnvElts $ tyConFieldLabelEnv tc

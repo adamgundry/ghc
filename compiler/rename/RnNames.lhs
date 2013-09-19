@@ -28,6 +28,7 @@ import NameEnv
 import NameSet
 import Avail
 import TyCon
+import FieldLabel
 import HscTypes
 import RdrName
 import Outputable

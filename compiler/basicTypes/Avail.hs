@@ -18,6 +18,8 @@ module Avail (
     availFieldsLabels,
     availFieldsNames,
     isOverloaded,
+    fieldLabelsToAvailFields,
+    fieldLabelsToAvailFields',
     gresFromAvails,
     gresFromAvail,
     pprAvailFields
@@ -28,10 +30,10 @@ import NameEnv
 import NameSet
 import RdrName
 
+import FieldLabel
 import Binary
 import Outputable
 import Util
-import FastString
 
 import Data.Function
 import Data.Data
@@ -68,7 +70,6 @@ data AvailFlds name = NonOverloaded [name] | Overloaded [(FieldLabelString, name
   deriving (Eq, Data, Typeable)
 
 type AvailFields = AvailFlds Name
-type FieldLabelString = FastString
 
 {-
 Note [Representing fields in AvailInfo]
@@ -101,6 +102,16 @@ gives rise to
   AvailTC F [F, MkFInt, MkFBool]
     (Overloaded [(foo, $sel:foo:R:FInt), (foo, $sel:foo:R:FBool)]).
 -}
+
+fieldLabelsToAvailFields :: [FieldLabel] -> AvailFields
+fieldLabelsToAvailFields [] = NonOverloaded []
+fieldLabelsToAvailFields fls@(fl:_) = fieldLabelsToAvailFields' overloaded fls
+  where overloaded = isOverloadedFieldLabel fl
+
+fieldLabelsToAvailFields' :: Bool -> [FieldLabel] -> AvailFields
+fieldLabelsToAvailFields' overloaded fls
+    | overloaded = Overloaded (map (\ fl -> (flLabel fl, flSelector fl)) fls)
+    | otherwise  = NonOverloaded (map flSelector fls)
 
 
 -- | Compare lexicographically

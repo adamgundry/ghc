@@ -133,6 +133,7 @@ Library
         DataCon
         Demand
         Exception
+        FieldLabel
         GhcMonad
         Hooks
         Id

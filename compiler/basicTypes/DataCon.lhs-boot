@@ -1,7 +1,8 @@
 \begin{code}
 module DataCon where
 import Name( Name )
-import {-# SOURCE #-} TyCon( TyCon, FieldLabel )
+import {-# SOURCE #-} TyCon( TyCon )
+import FieldLabel ( FieldLabel )
 
 data DataCon
 data DataConRep

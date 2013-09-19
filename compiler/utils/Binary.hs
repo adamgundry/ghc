@@ -885,17 +885,3 @@ instance Binary WarningTxt where
                       return (WarningTxt w)
               _ -> do d <- get bh
                       return (DeprecatedTxt d)
-
-instance Binary a => Binary (FldInsts a) where
-    put_ bh (FldInsts a b c d) = do
-        put_ bh a
-        put_ bh b
-        put_ bh c
-        put_ bh d
-
-    get bh = do
-        a <- get bh
-        b <- get bh
-        c <- get bh
-        d <- get bh
-        return (FldInsts a b c d)
