@@ -51,7 +51,6 @@ import DataCon( HsBang(..) )
 import Type
 import TysWiredIn
 import PrelNames
-import TyCon
 import HsDoc
 import BasicTypes
 import SrcLoc
@@ -545,7 +544,6 @@ getDFunHsTypeKey (HsParTy ty)           = getDFunHsTypeKey (unLoc ty)
 getDFunHsTypeKey (HsIParamTy {})        = occNameString (getOccName ipClassName)
 getDFunHsTypeKey (HsEqTy {})            = occNameString (getOccName eqTyCon)
 getDFunHsTypeKey (HsKindSig ty _)       = getDFunHsTypeKey (unLoc ty)
-getDFunHsTypeKey (HsRoleAnnot ty _)     = getDFunHsTypeKey (unLoc ty)
 getDFunHsTypeKey (HsQuasiQuoteTy {})    = "quasiQuote"
 getDFunHsTypeKey (HsSpliceTy {})        = "splice"
 getDFunHsTypeKey (HsDocTy ty _)         = getDFunHsTypeKey (unLoc ty)

@@ -22,7 +22,7 @@ module RnEnv (
         lookupSubBndrGREs, lookupConstructorFields,
         lookupFldInstAxiom, lookupFldInstDFun, fieldLabelInScope,
         lookupSyntaxName, lookupSyntaxNames, lookupIfThenElse,
-        lookupGreRn, lookupGreLocalRn, lookupGreRn_maybe,
+        lookupGreRn, lookupGreRn_maybe,
         lookupGlobalOccInThisModule, lookupGreLocalRn_maybe, 
         getLookupOccRn, addUsedRdrNames,
 

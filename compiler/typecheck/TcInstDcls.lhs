@@ -68,7 +68,6 @@ import MkId
 import IdInfo
 import Name
 import NameSet
-import NameEnv
 import RdrName
 import Outputable
 import SrcLoc
@@ -78,10 +77,6 @@ import BooleanFormula ( isUnsatisfied, pprBooleanFormulaNice )
 import Control.Monad
 import Maybes     ( orElse, isNothing, isJust, whenIsJust )
 import qualified Data.ByteString as BS
-import Data.List
-import Data.Monoid ( mconcat )
-import Data.Traversable ( traverse )
-import MonadUtils
 \end{code}
 
 Typechecking instance declarations is done in two passes. The first
@@ -1666,7 +1661,7 @@ type FldInstDetails = Either (Name, Name, Name, Name)
 
 -- | Create and typecheck instances from datatype and data instance
 -- declarations in the module being compiled.
-makeOverloadedRecFldInsts :: [[LTyClDecl Name]] -> [LInstDecl Name]
+makeOverloadedRecFldInsts :: [TyClGroup Name] -> [LInstDecl Name]
                            -> TcM (LHsBinds Id, TcGblEnv, [InstInfo Name])
 makeOverloadedRecFldInsts tycl_decls inst_decls
     = do { fld_insts <- mapM makeRecFldInstsFor flds'

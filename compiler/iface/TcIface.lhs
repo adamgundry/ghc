@@ -71,7 +71,6 @@ import FastString
 import Data.Traversable (traverse)
 import Control.Monad
 import qualified Data.Map as Map
-import Data.Traversable ( traverse )
 \end{code}
 
 This module takes
