@@ -46,6 +46,7 @@ import TcEnv
 import TcRules
 import TcForeign
 import TcInstDcls
+import TcFldInsts
 import TcIface
 import TcMType
 import MkIface

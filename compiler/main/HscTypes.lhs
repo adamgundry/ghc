@@ -986,7 +986,7 @@ data ModGuts
         mg_insts     :: ![ClsInst],      -- ^ Class instances declared in this module
         mg_fam_insts :: ![FamInst],      -- ^ Family instances declared in this module
         mg_axioms    :: ![CoAxiom Branched], -- ^ Axioms without family instances
-                                             -- See Note [Instance scoping for OverloadedRecordFields] in TcInstDcls
+                                             -- See Note [Instance scoping for OverloadedRecordFields] in TcFldInsts
         mg_rules     :: ![CoreRule],     -- ^ Before the core pipeline starts, contains
                                          -- See Note [Overall plumbing for rules] in Rules.lhs
         mg_binds     :: !CoreProgram,    -- ^ Bindings for this module
@@ -1126,7 +1126,7 @@ data InteractiveContext
          ic_axioms     :: [CoAxiom Branched],
              -- ^ Axioms created during this session without a type family
              -- (see Note [Instance scoping for OverloadedRecordFields]
-             -- in TcInstDcls).
+             -- in TcFldInsts).
 
          ic_fix_env :: FixityEnv,
             -- ^ Fixities declared in let statements

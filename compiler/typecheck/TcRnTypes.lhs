@@ -302,7 +302,7 @@ data TcGblEnv
         tcg_insts     :: [ClsInst],         -- ...Instances
         tcg_fam_insts :: [FamInst],         -- ...Family instances
         tcg_axioms    :: [CoAxiom Branched], -- ...Axioms without family instances
-                                                   -- See Note [Instance scoping for OverloadedRecordFields] in TcInstDcls
+                                                   -- See Note [Instance scoping for OverloadedRecordFields] in TcFldInsts
         tcg_rules     :: [LRuleDecl Id],    -- ...Rules
         tcg_fords     :: [LForeignDecl Id], -- ...Foreign import & exports
         tcg_vects     :: [LVectDecl Id],    -- ...Vectorisation declarations

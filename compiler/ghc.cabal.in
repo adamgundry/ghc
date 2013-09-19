@@ -362,6 +362,7 @@ Library
         TcDeriv
         TcEnv
         TcExpr
+        TcFldInsts
         TcForeign
         TcGenDeriv
         TcGenGenerics

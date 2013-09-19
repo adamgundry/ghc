@@ -802,8 +802,8 @@ that are in scope. When looking for a match for
     etc.
 
 we check that the field foo belonging to type T is in scope, and look
-up the dfun created by makeOverloadedRecFldInsts in TcInstDcls (see
-Note [Instance scoping for OverloadedRecordFields] in TcInstDcls).
+up the dfun created by makeOverloadedRecFldInsts in TcFldInsts (see
+Note [Instance scoping for OverloadedRecordFields] in TcFldInsts).
 
 The lookupFldInstAxiom and lookupFldInstDFun functions each call
 lookupRecFieldLabel to perform most of the checks and find the
@@ -853,7 +853,7 @@ lookupFldInstAxiom lbl tc rep_tc want_get
        ; case mb_fl of
            Nothing -> return Nothing
            Just fl -> do { thing <- tcLookupGlobal (get_or_set fl)
-                         ; case thing of  -- See Note [Bogus instances] in TcInstDcls
+                         ; case thing of  -- See Note [Bogus instances] in TcFldInsts
                                ACoAxiom ax -> return $ Just ax
                                _           -> return Nothing } }
   where
@@ -869,7 +869,7 @@ lookupFldInstDFun lbl tc rep_tc want_has
        ; case mb_fl of
            Nothing -> return Nothing
            Just fl -> do { dfun <- tcLookupId (has_or_upd fl)
-                         ; if isDFunId dfun -- See Note [Bogus instances] in TcInstDcls
+                         ; if isDFunId dfun -- See Note [Bogus instances] in TcFldInsts
                            then return $ Just dfun
                            else return Nothing } }
   where
