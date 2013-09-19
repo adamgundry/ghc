@@ -16,7 +16,7 @@ module TyCon(
         SynTyConRhs(..), Role(..),
 
         -- ** Field labels
-        FieldLbl(..), FieldLabel, FldInsts(..), FieldLabelString,
+        FieldLbl(..), FieldLabel, FieldLabelString,
         isOverloadedFieldLabel, fieldLabelsToAvailFields,
         fieldLabelsToAvailFields',
         tyConFieldLabels, tyConFieldLabelEnv, tyConDataConsWithFields,

@@ -10,10 +10,9 @@ module FieldLabel ( FieldLabelString
                   , FieldLabelEnv
                   , FieldLbl(..)
                   , FieldLabel
-                  , FldInsts(..)
                   , isOverloadedFieldLabel
                   , mkRecSelOcc
-                  , mkOverloadedRecFldOccs
+                  , mkFieldLabelOccs
                   ) where
 
 import OccName
@@ -27,65 +26,51 @@ import Outputable
 import Data.Foldable
 import Data.Traversable
 
-
+-- | Field labels are just represented as strings;
+-- they are not necessarily unique (even within a module)
 type FieldLabelString = FastString
 
-
+-- | A map from labels to all the auxiliary information
 type FieldLabelEnv = FastStringEnv FieldLabel
-type FieldLabel    = FieldLbl Name
+
+
+type FieldLabel = FieldLbl Name
 
 -- | Fields in an algebraic record type
 data FieldLbl a = FieldLabel {
-      flLabel     :: FieldLabelString, -- ^ Label of the field
-      flSelector  :: a,                -- ^ Record selector function
-      flInstances :: FldInsts a        -- ^ Instances for overloading
+      flLabel          :: FieldLabelString, -- ^ Label of the field
+      flSelector       :: a,                -- ^ Record selector function
+      flHasDFun        :: a,                -- ^ DFun for Has class instance
+      flUpdDFun        :: a,                -- ^ DFun for Upd class instance
+      flGetResultAxiom :: a,                -- ^ Axiom for GetResult family instance
+      flSetResultAxiom :: a                 -- ^ Axiom for SetResult family instance
     }
   deriving (Functor, Foldable, Traversable)
 
 instance Outputable a => Outputable (FieldLbl a) where
-    ppr (FieldLabel occ sel _) = ppr occ <> braces (ppr sel)
+    ppr fl = ppr (flLabel fl) <> braces (ppr (flSelector fl))
 
 instance Binary a => Binary (FieldLbl a) where
-    put_ bh (FieldLabel aa ab ac) = do
+    put_ bh (FieldLabel aa ab ac ad ae af) = do
         put_ bh aa
         put_ bh ab
         put_ bh ac
+        put_ bh ad
+        put_ bh ae
+        put_ bh af
 
     get bh = do
         aa <- get bh
         ab <- get bh
         ac <- get bh
-        return (FieldLabel aa ab ac)
+        ad <- get bh
+        ae <- get bh
+        af <- get bh
+        return (FieldLabel aa ab ac ad ae af)
 
 
 isOverloadedFieldLabel :: FieldLabel -> Bool
 isOverloadedFieldLabel fl = flLabel fl /= occNameFS (nameOccName (flSelector fl))
-
-
--- | Represents names for overloaded record field instances, specifically
---   the dfuns for Has and Upd, and axioms for GetResult and SetResult
-data FldInsts a = FldInsts { fldInstsHas :: a
-                           , fldInstsUpd :: a
-                           , fldInstsGetResult :: a
-                           , fldInstsSetResult :: a }
-  deriving (Functor, Foldable, Traversable)
-
-instance Outputable a => Outputable (FldInsts a) where
-  ppr (FldInsts a b c d) = ppr (a, b, c, d)
-
-instance Binary a => Binary (FldInsts a) where
-    put_ bh (FldInsts a b c d) = do
-        put_ bh a
-        put_ bh b
-        put_ bh c
-        put_ bh d
-
-    get bh = do
-        a <- get bh
-        b <- get bh
-        c <- get bh
-        d <- get bh
-        return (FldInsts a b c d)
 \end{code}
 
 
@@ -94,10 +79,11 @@ the name of the type constructor, to support overloaded record fields.
 
 \begin{code}
 mkRecSelOcc :: FieldLabelString -> OccName -> OccName
-mkRecSelOcc lbl tc = fst $ mkOverloadedRecFldOccs lbl tc
+mkRecSelOcc lbl tc = flSelector $ mkFieldLabelOccs lbl tc
 
-mkOverloadedRecFldOccs :: FieldLabelString -> OccName -> (OccName, FldInsts OccName)
-mkOverloadedRecFldOccs lbl tc = (sel_occ, is)
+mkFieldLabelOccs :: FieldLabelString -> OccName -> FieldLbl OccName
+mkFieldLabelOccs lbl tc
+  = FieldLabel lbl sel_occ has_occ upd_occ get_occ set_occ
   where
     str     = ":" ++ unpackFS lbl ++ ":" ++ occNameString tc
     has_str = "Has"
@@ -110,6 +96,4 @@ mkOverloadedRecFldOccs lbl tc = (sel_occ, is)
     upd_occ = mkRecFldDFunOcc (upd_str ++ str)
     get_occ = mkRecFldAxiomOcc (get_str ++ str)
     set_occ = mkRecFldAxiomOcc (set_str ++ str)
-
-    is = FldInsts has_occ upd_occ get_occ set_occ
 \end{code}

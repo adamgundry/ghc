@@ -806,7 +806,7 @@ up the dfun created by makeOverloadedRecFldInsts in TcInstDcls (see
 Note [Instance scoping for OverloadedRecordFields] in TcInstDcls).
 
 The lookupFldInstAxiom and lookupFldInstDFun functions each call
-lookupRecFldInsts to perform most of the checks and find the
+lookupRecFieldLabel to perform most of the checks and find the
 appropriate name.
 
 
@@ -828,11 +828,11 @@ lookupSubBndrGREs: we also need to check the selector names to find
 the one with the right representation tycon.
 
 \begin{code}
-lookupRecFldInsts :: FieldLabelString -> TyCon -> TyCon
-                  -> TcM (Maybe (FldInsts Name))
--- Lookup the names of the OverloadedRecordFields dfuns/axioms from a
--- field label, parent tycon and representation tycon
-lookupRecFldInsts lbl tc rep_tc
+lookupRecFieldLabel :: FieldLabelString -> TyCon -> TyCon
+                     -> TcM (Maybe FieldLabel)
+-- Lookup the FieldLabel from a label string, parent tycon and
+-- representation tycon
+lookupRecFieldLabel lbl tc rep_tc
   = do { overload_ok <- xoptM Opt_OverloadedRecordFields
        ; if not overload_ok   -- Don't magically solve constraints when
          then return Nothing  -- the extension is disabled
@@ -841,40 +841,40 @@ lookupRecFldInsts lbl tc rep_tc
              Just fl -> do { gbl_env <- getGblEnv
                            ; if fieldLabelInScope (tcg_rdr_env gbl_env) tc fl
                              then do { addUsedSelector (flSelector fl)
-                                     ; return (Just (flInstances fl)) }
+                                     ; return $ Just fl }
                              else return Nothing } }
 
 lookupFldInstAxiom :: FieldLabelString -> TyCon -> TyCon
                    -> Bool -> TcM (Maybe (CoAxiom Branched))
--- Lookup a GetResult or SetResult axiom from a field label, parent
+-- Lookup a GetResult or SetResult axiom from a label string, parent
 -- tycon and representation tycon
 lookupFldInstAxiom lbl tc rep_tc want_get
-  = do { mb_fis <- lookupRecFldInsts lbl tc rep_tc
-       ; case mb_fis of
-           Nothing  -> return Nothing
-           Just fis -> do { thing <- tcLookupGlobal (get_or_set fis)
-                          ; case thing of  -- See Note [Bogus instances] in TcInstDcls
-                              ACoAxiom ax -> return $ Just ax
-                              _           -> return Nothing } }
+  = do { mb_fl <- lookupRecFieldLabel lbl tc rep_tc
+       ; case mb_fl of
+           Nothing -> return Nothing
+           Just fl -> do { thing <- tcLookupGlobal (get_or_set fl)
+                         ; case thing of  -- See Note [Bogus instances] in TcInstDcls
+                               ACoAxiom ax -> return $ Just ax
+                               _           -> return Nothing } }
   where
-    get_or_set | want_get  = fldInstsGetResult
-               | otherwise = fldInstsSetResult
+    get_or_set | want_get  = flGetResultAxiom
+               | otherwise = flSetResultAxiom
 
 lookupFldInstDFun :: FieldLabelString -> TyCon -> TyCon
                   -> Bool -> TcM (Maybe DFunId)
--- Lookup a Has or Upd DFunId from a field label, parent tycon and
+-- Lookup a Has or Upd DFunId from a label string, parent tycon and
 -- representation tycon
 lookupFldInstDFun lbl tc rep_tc want_has
-  = do { mb_fis <- lookupRecFldInsts lbl tc rep_tc
-       ; case mb_fis of
-           Nothing  -> return Nothing
-           Just fis -> do { dfun <- tcLookupId (has_or_upd fis)
-                          ; if isDFunId dfun -- See Note [Bogus instances] in TcInstDcls
-                            then return (Just dfun)
-                            else return Nothing } }
+  = do { mb_fl <- lookupRecFieldLabel lbl tc rep_tc
+       ; case mb_fl of
+           Nothing -> return Nothing
+           Just fl -> do { dfun <- tcLookupId (has_or_upd fl)
+                         ; if isDFunId dfun -- See Note [Bogus instances] in TcInstDcls
+                           then return $ Just dfun
+                           else return Nothing } }
   where
-    has_or_upd | want_has  = fldInstsHas
-               | otherwise = fldInstsUpd
+    has_or_upd | want_has  = flHasDFun
+               | otherwise = flUpdDFun
 
 fieldLabelInScope :: GlobalRdrEnv -> TyCon -> FieldLabel -> Bool
 -- Determine whether a FieldLabel in scope, given its parent (family)

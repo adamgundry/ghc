@@ -581,14 +581,20 @@ getLocalNonValBinders fixity_env
       do { sel_name <- newTopSrcBinder $ L loc $ mkRdrUnqual $
                            if overload_ok then sel_occ else lbl_occ
          ; mod      <- getModule
-         ; is'      <- traverse (\ occ -> newGlobalBinder mod occ loc) is
-         ; return $ FieldLabel { flLabel = lbl
-                               , flSelector = sel_name
-                               , flInstances = is' } }
+         ; has      <- newGlobalBinder mod (flHasDFun fl) loc
+         ; upd      <- newGlobalBinder mod (flUpdDFun fl) loc
+         ; get_ax   <- newGlobalBinder mod (flGetResultAxiom fl) loc
+         ; set_ax   <- newGlobalBinder mod (flSetResultAxiom fl) loc
+         ; return $ fl { flSelector = sel_name
+                       , flHasDFun = has
+                       , flUpdDFun = upd
+                       , flGetResultAxiom = get_ax
+                       , flSetResultAxiom = set_ax } }
       where
-        lbl_occ       = rdrNameOcc fld
-        lbl           = occNameFS lbl_occ
-        (sel_occ, is) = mkOverloadedRecFldOccs lbl tc
+        lbl_occ = rdrNameOcc fld
+        lbl     = occNameFS lbl_occ
+        fl      = mkFieldLabelOccs lbl tc
+        sel_occ = flSelector fl
 
     -- Calculate the mapping from constructor names to fields, which
     -- will go in tcg_field_env. It's convenient to do this here where

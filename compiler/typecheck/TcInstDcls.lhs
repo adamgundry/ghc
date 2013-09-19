@@ -1685,7 +1685,7 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
              data_ty0      = dataConOrigResTy dc
              is_existential = not (tyVarsOfType fld_ty0
                                       `subVarSet` tyVarsOfType data_ty0)
-             FldInsts has_name upd_name get_name set_name = flInstances fl
+             FieldLabel _ _ has_name upd_name get_name set_name = fl
 
        -- If the field is universally or existentially quantified,
        -- don't generate any instances.
