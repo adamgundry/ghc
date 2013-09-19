@@ -10,8 +10,6 @@ module FieldLabel ( FieldLabelString
                   , FieldLabelEnv
                   , FieldLbl(..)
                   , FieldLabel
-                  , isOverloadedFieldLabel
-                  , mkRecSelOcc
                   , mkFieldLabelOccs
                   ) where
 
@@ -39,6 +37,7 @@ type FieldLabel = FieldLbl Name
 -- | Fields in an algebraic record type
 data FieldLbl a = FieldLabel {
       flLabel          :: FieldLabelString, -- ^ Label of the field
+      flIsOverloaded   :: Bool,             -- ^ Is this field overloaded?
       flSelector       :: a,                -- ^ Record selector function
       flHasDFun        :: a,                -- ^ DFun for Has class instance
       flUpdDFun        :: a,                -- ^ DFun for Upd class instance
@@ -51,13 +50,14 @@ instance Outputable a => Outputable (FieldLbl a) where
     ppr fl = ppr (flLabel fl) <> braces (ppr (flSelector fl))
 
 instance Binary a => Binary (FieldLbl a) where
-    put_ bh (FieldLabel aa ab ac ad ae af) = do
+    put_ bh (FieldLabel aa ab ac ad ae af ag) = do
         put_ bh aa
         put_ bh ab
         put_ bh ac
         put_ bh ad
         put_ bh ae
         put_ bh af
+        put_ bh ag
 
     get bh = do
         aa <- get bh
@@ -66,11 +66,8 @@ instance Binary a => Binary (FieldLbl a) where
         ad <- get bh
         ae <- get bh
         af <- get bh
-        return (FieldLabel aa ab ac ad ae af)
-
-
-isOverloadedFieldLabel :: FieldLabel -> Bool
-isOverloadedFieldLabel fl = flLabel fl /= occNameFS (nameOccName (flSelector fl))
+        ag <- get bh
+        return (FieldLabel aa ab ac ad ae af ag)
 \end{code}
 
 
@@ -78,12 +75,9 @@ Record selector OccNames are built from the underlying field name and
 the name of the type constructor, to support overloaded record fields.
 
 \begin{code}
-mkRecSelOcc :: FieldLabelString -> OccName -> OccName
-mkRecSelOcc lbl tc = flSelector $ mkFieldLabelOccs lbl tc
-
-mkFieldLabelOccs :: FieldLabelString -> OccName -> FieldLbl OccName
-mkFieldLabelOccs lbl tc
-  = FieldLabel lbl sel_occ has_occ upd_occ get_occ set_occ
+mkFieldLabelOccs :: FieldLabelString -> OccName -> Bool -> FieldLbl OccName
+mkFieldLabelOccs lbl tc is_overloaded
+  = FieldLabel lbl is_overloaded sel_occ has_occ upd_occ get_occ set_occ
   where
     str     = ":" ++ unpackFS lbl ++ ":" ++ occNameString tc
     has_str = "Has"
@@ -91,7 +85,8 @@ mkFieldLabelOccs lbl tc
     get_str = "GetResult"
     set_str = "SetResult"
 
-    sel_occ = mkRecFldSelOcc str
+    sel_occ | is_overloaded = mkRecFldSelOcc str
+            | otherwise     = mkVarOccFS lbl
     has_occ = mkRecFldDFunOcc (has_str ++ str)
     upd_occ = mkRecFldDFunOcc (upd_str ++ str)
     get_occ = mkRecFldAxiomOcc (get_str ++ str)

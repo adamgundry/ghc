@@ -42,6 +42,7 @@ import Demand
 import Annotations
 import Class
 import TyCon
+import FieldLabel
 import NameSet
 import CoAxiom ( BranchIndex )
 import Name

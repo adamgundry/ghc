@@ -1502,7 +1502,7 @@ tyThingAvailInfo (ATyCon t)
    = case tyConClass_maybe t of
         Just c  -> AvailTC n (n : map getName (classMethods c)
                                  ++ map getName (classATs c))
-                             (NonOverloaded [])
+                             []
              where n = getName c
         Nothing -> AvailTC n (n : map getName dcs) (fieldLabelsToAvailFields flds)
              where n    = getName t

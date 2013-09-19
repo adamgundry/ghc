@@ -40,7 +40,7 @@ import TysPrim          ( funTyConName )
 import Name
 import SrcLoc
 import NameSet
-import TyCon
+import FieldLabel
 
 import Util
 import BasicTypes       ( compareFixity, funTyFixity, negateFixity,

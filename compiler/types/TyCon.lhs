@@ -16,9 +16,6 @@ module TyCon(
         SynTyConRhs(..), Role(..),
 
         -- ** Field labels
-        FieldLbl(..), FieldLabel, FieldLabelString,
-        isOverloadedFieldLabel, fieldLabelsToAvailFields,
-        fieldLabelsToAvailFields',
         tyConFieldLabels, tyConFieldLabelEnv, tyConDataConsWithFields,
 
         -- ** Constructing TyCons
@@ -112,7 +109,6 @@ import ForeignCall
 import Name
 import NameSet
 import CoAxiom
-import Avail
 import PrelNames
 import Maybes
 import Outputable

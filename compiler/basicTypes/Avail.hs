@@ -5,7 +5,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 
 module Avail (
-    Avails, AvailFlds(..), AvailFields, FieldLabelString,
+    Avails, AvailFlds, AvailFld, AvailFields, AvailField,
     AvailInfo(..),
     availsToNameSet,
     availsToNameSetWithSelectors,
@@ -14,15 +14,12 @@ module Avail (
     availNamesWithSelectors,
     availFlds, availOverloadedFlds,
     stableAvailCmp, stableAvailFieldsCmp,
-    nullAvailFields,
     availFieldsLabels,
-    availFieldsNames,
-    isOverloaded,
+    availFieldsNames, availFieldsNamesWithSelectors,
     fieldLabelsToAvailFields,
-    fieldLabelsToAvailFields',
     gresFromAvails,
     gresFromAvail,
-    pprAvailFields
+    pprAvailField
   ) where
 
 import Name
@@ -36,7 +33,6 @@ import Outputable
 import Util
 
 import Data.Function
-import Data.Data
 
 -- -----------------------------------------------------------------------------
 -- The AvailInfo type
@@ -66,10 +62,10 @@ type Avails = [AvailInfo]
 
 -- | Record fields in an 'AvailInfo'
 -- See Note [Representing fields in AvailInfo]
-data AvailFlds name = NonOverloaded [name] | Overloaded [(FieldLabelString, name)]
-  deriving (Eq, Data, Typeable)
-
-type AvailFields = AvailFlds Name
+type AvailFlds name = [AvailFld name]
+type AvailFld name  = (name, Maybe FieldLabelString)
+type AvailFields    = AvailFlds Name
+type AvailField     = AvailFld Name
 
 {-
 Note [Representing fields in AvailInfo]
@@ -81,11 +77,11 @@ datatype like
 
 gives rise to the AvailInfo
 
-  AvailTC T [T, MkT] (NonOverloaded [foo]),
+  AvailTC T [T, MkT] [(foo, Nothing)],
 
 whereas if -XOverloadedRecordFields is enabled it gives
 
-  AvailTC T [T, MkT] (Overloaded [(foo, $sel:foo:T)])
+  AvailTC T [T, MkT] [($sel:foo:T, Just "foo")]
 
 since the label does not match the selector name.
 
@@ -100,19 +96,8 @@ multiple distinct fields with the same label. For example,
 gives rise to
 
   AvailTC F [F, MkFInt, MkFBool]
-    (Overloaded [(foo, $sel:foo:R:FInt), (foo, $sel:foo:R:FBool)]).
+    [($sel:foo:R:FInt, Just "foo"), ($sel:foo:R:FBool, Just "foo")].
 -}
-
-fieldLabelsToAvailFields :: [FieldLabel] -> AvailFields
-fieldLabelsToAvailFields [] = NonOverloaded []
-fieldLabelsToAvailFields fls@(fl:_) = fieldLabelsToAvailFields' overloaded fls
-  where overloaded = isOverloadedFieldLabel fl
-
-fieldLabelsToAvailFields' :: Bool -> [FieldLabel] -> AvailFields
-fieldLabelsToAvailFields' overloaded fls
-    | overloaded = Overloaded (map (\ fl -> (flLabel fl, flSelector fl)) fls)
-    | otherwise  = NonOverloaded (map flSelector fls)
-
 
 -- | Compare lexicographically
 stableAvailCmp :: AvailInfo -> AvailInfo -> Ordering
@@ -125,10 +110,7 @@ stableAvailCmp (AvailTC n ns nfs) (AvailTC m ms mfs) =
 stableAvailCmp (AvailTC {})       (Avail {})     = GT
 
 stableAvailFieldsCmp :: AvailFields -> AvailFields -> Ordering
-stableAvailFieldsCmp (NonOverloaded xs) (NonOverloaded ys) = cmpList stableNameCmp xs ys
-stableAvailFieldsCmp (NonOverloaded {}) (Overloaded {})    = LT
-stableAvailFieldsCmp (Overloaded xs)    (Overloaded ys)    = cmpList (stableNameCmp `on` snd) xs ys
-stableAvailFieldsCmp (Overloaded {})    (NonOverloaded {}) = GT
+stableAvailFieldsCmp = cmpList (stableNameCmp `on` fst)
 
 -- -----------------------------------------------------------------------------
 -- Operations on AvailInfo
@@ -154,14 +136,13 @@ availName (AvailTC n _ _) = n
 
 -- | All names made available by the availability information (excluding selectors)
 availNames :: AvailInfo -> [Name]
-availNames (Avail n)                         = [n]
-availNames (AvailTC _ ns (NonOverloaded fs)) = ns ++ fs
-availNames (AvailTC _ ns (Overloaded _))     = ns
+availNames (Avail n)         = [n]
+availNames (AvailTC _ ns fs) = ns ++ availFieldsNames fs
 
 -- | All names made available by the availability information (including selectors)
 availNamesWithSelectors :: AvailInfo -> [Name]
 availNamesWithSelectors (Avail n)         = [n]
-availNamesWithSelectors (AvailTC _ ns fs) = ns ++ availFieldsNames fs
+availNamesWithSelectors (AvailTC _ ns fs) = ns ++ availFieldsNamesWithSelectors fs
 
 -- | Names for non-fields made available by the availability information
 availNonFldNames :: AvailInfo -> [Name]
@@ -171,31 +152,36 @@ availNonFldNames (AvailTC _ ns _) = ns
 -- | Fields made available by the availability information
 availFlds :: AvailInfo -> AvailFields
 availFlds (AvailTC _ _ fs) = fs
-availFlds _                = NonOverloaded []
+availFlds _                = []
 
--- | Fields made available by the availability information
+-- | Overloaded fields made available by the availability information
 availOverloadedFlds :: AvailInfo -> [(FieldLabelString, Name)]
-availOverloadedFlds (AvailTC _ _ (Overloaded fs)) = fs
-availOverloadedFlds _                             = []
+availOverloadedFlds avail = [ (lbl, sel) | (sel, Just lbl) <- availFlds avail ]
 
 -- -----------------------------------------------------------------------------
 -- Operations on AvailFields
 
-nullAvailFields :: AvailFields -> Bool
-nullAvailFields (NonOverloaded xs) = null xs
-nullAvailFields (Overloaded xs)    = null xs
-
 availFieldsLabels :: AvailFields -> [FieldLabelString]
-availFieldsLabels (NonOverloaded xs) = map (occNameFS . nameOccName) xs
-availFieldsLabels (Overloaded xs)    = map fst xs
+availFieldsLabels = map help
+  where
+    help (_,   Just lbl) = lbl
+    help (sel, Nothing)  = occNameFS $ nameOccName sel
 
 availFieldsNames :: AvailFlds name -> [name]
-availFieldsNames (NonOverloaded xs) = xs
-availFieldsNames (Overloaded xs)    = map snd xs
+availFieldsNames fs = [ n | (n, Nothing) <- fs ]
 
-isOverloaded :: AvailFields -> Bool
-isOverloaded (NonOverloaded _) = False
-isOverloaded (Overloaded _)    = True
+availFieldsNamesWithSelectors :: AvailFlds name -> [name]
+availFieldsNamesWithSelectors = map fst
+
+fieldLabelToAvailField :: FieldLabel -> AvailField
+fieldLabelToAvailField fl = (flSelector fl, mb_lbl)
+  where
+    mb_lbl | flIsOverloaded fl = Just (flLabel fl)
+           | otherwise         = Nothing
+
+fieldLabelsToAvailFields :: [FieldLabel] -> AvailFields
+fieldLabelsToAvailFields = map fieldLabelToAvailField
+
 
 -- -----------------------------------------------------------------------------
 -- gresFromAvails
@@ -215,19 +201,16 @@ gresFromAvail prov_fn prov_fld avail = xs ++ ys
     parent n (AvailTC m _ _) | n == m    = NoParent
                              | otherwise = ParentIs m
 
-    xs = case availFlds avail of
-           NonOverloaded ns -> map greFromNonOverloadedFld ns
-           Overloaded fs    -> map greFromOverloadedFld fs
+    xs = map greFromFld (availFlds avail)
     ys = map greFromNonFld (availNonFldNames avail)
 
     greFromNonFld n = GRE { gre_name = n, gre_par = parent n avail, gre_prov = prov_fn n}
 
-    greFromNonOverloadedFld n
+    greFromFld (n, Nothing)
       = GRE { gre_name = n
             , gre_par  = FldParent (availName avail) (occNameFS (nameOccName n))
             , gre_prov = prov_fld (occNameFS (nameOccName n)) }
-
-    greFromOverloadedFld (lbl, sel)
+    greFromFld (sel, Just lbl)
       = GRE { gre_name = sel
             , gre_par  = FldParent (availName avail) lbl
             , gre_prov = prov_fld lbl }
@@ -239,15 +222,12 @@ instance Outputable AvailInfo where
    ppr = pprAvail
 
 pprAvail :: AvailInfo -> SDoc
-pprAvail (Avail n)          = ppr n
-pprAvail (AvailTC n ns nfs) = ppr n <> braces (hsep (punctuate comma (map ppr ns ++ pprAvailFields nfs)))
+pprAvail (Avail n)         = ppr n
+pprAvail (AvailTC n ns fs) = ppr n <> braces (hsep (punctuate comma (map ppr ns ++ map pprAvailField fs)))
 
-instance Outputable n => Outputable (AvailFlds n) where
-    ppr flds = braces $ hsep $ punctuate comma $ pprAvailFields flds
-
-pprAvailFields :: Outputable n => AvailFlds n -> [SDoc]
-pprAvailFields (Overloaded xs)    = map ppr xs
-pprAvailFields (NonOverloaded xs) = map ppr xs
+pprAvailField :: Outputable name => AvailFld name -> SDoc
+pprAvailField (n, Nothing)  = ppr n
+pprAvailField (_, Just lbl) = ppr lbl
 
 instance Binary AvailInfo where
     put_ bh (Avail aa) = do
@@ -267,18 +247,3 @@ instance Binary AvailInfo where
                       ac <- get bh
                       ad <- get bh
                       return (AvailTC ab ac ad)
-
-instance Binary n => Binary (AvailFlds n) where
-    put_ bh (NonOverloaded xs) = do
-        putByte bh 0
-        put_ bh xs
-    put_ bh (Overloaded xs) = do
-        putByte bh 1
-        put_ bh xs
-    get bh = do
-        h <- getByte bh
-        case h of
-            0 -> do xs <- get bh
-                    return (NonOverloaded xs)
-            _ -> do xs <- get bh
-                    return (Overloaded xs)

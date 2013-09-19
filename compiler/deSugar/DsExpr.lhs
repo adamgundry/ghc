@@ -35,7 +35,6 @@ import TcType
 import TcEvidence
 import TcRnMonad
 import Type
-import TyCon
 import CoreSyn
 import CoreUtils
 import CoreFVs

@@ -1043,8 +1043,7 @@ mkIfaceExports exports
        -- Maintain the AvailTC Invariant
 
     sort_flds :: AvailFields -> AvailFields
-    sort_flds (NonOverloaded xs) = NonOverloaded (sortBy stableNameCmp xs)
-    sort_flds (Overloaded fs)    = Overloaded (sort fs)
+    sort_flds = sortBy (stableNameCmp `on` fst)
 \end{code}
 
 Note [Orignal module]

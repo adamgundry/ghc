@@ -122,6 +122,7 @@ import Type
 import TcEvidence
 import Class
 import TyCon
+import FieldLabel
 
 import Name
 import RdrName (RdrName, GlobalRdrEnv)

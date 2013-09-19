@@ -64,6 +64,7 @@ import Coercion
 import Kind
 import Unify
 import TyCon
+import FieldLabel
 import Class
 import Name
 import Var

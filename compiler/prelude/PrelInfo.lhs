@@ -129,7 +129,7 @@ ghcPrimExports :: [IfaceExport]
 ghcPrimExports
  = map (Avail . idName) ghcPrimIds ++
    map (Avail . idName . primOpId) allThePrimOps ++
-   [ AvailTC n [n] (NonOverloaded [])
+   [ AvailTC n [n] []
    | tc <- funTyCon : coercibleTyCon : primTyCons, let n = tyConName tc  ]
 \end{code}
 
