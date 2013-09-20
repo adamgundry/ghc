@@ -962,10 +962,10 @@ mk_dict_err ctxt (ct, (matches, unifiers, safe_haskell))
       = vcat [ addArising orig (no_inst_herald <+> pprParendType pred $$
                                 coercible_msg safe_mod rdr_env)
              , vcat (pp_givens givens)
+             , records_msg
              , ppWhen (has_ambig_tvs && not (null unifiers && null givens))
                (vcat [ ambig_msg, binds_msg, potential_msg ])
-             , show_fixes (add_to_ctxt_fixes has_ambig_tvs ++ drv_fixes)
-             , records_msg ]
+             , show_fixes (add_to_ctxt_fixes has_ambig_tvs ++ drv_fixes) ]
 
     potential_msg
       = ppWhen (not (null unifiers) && want_potential orig) $
