@@ -553,11 +553,19 @@ pprParenTheta sepf theta = parens (sepf (punctuate comma preds))
     pprTriples rfts@((r,_,_):_) = pprHasPred r (map (\ (_, f, t) -> (f, t)) rfts)
     pprTriples []               = empty
 
+-- Pretty-print a bunch of Has constraints using the OverloadedRecordFields
+-- syntactic sugar, e.g
+--     (Has r "foo" Int, Has r "bar" (GetResult r "bar"))
+-- becomes
+--     r { foo :: Int, bar :: ... }
 pprHasPred :: Type -> [(FastString, Type)] -> SDoc
 pprHasPred r fs = pprParendType r <+> braces (sep (punctuate comma (map pprField fs')))
   where
     fs' = sortBy (compare `on` fst) fs
-    pprField (f, t) = (ftext f <+> ptext (sLit "::") <+> pprType t)
+    pprField (f, t) = (ftext f <+> ptext (sLit "::") <+> pprTypeOrDots f t)
+    pprTypeOrDots f (TyConApp tc [_, LitTy (StrTyLit f')])
+      | tc `hasKey` getResultFamNameKey && f == f' = ptext (sLit "...")
+    pprTypeOrDots _ t = pprType t
 
 pprThetaArrowTy :: ThetaType -> SDoc
 pprThetaArrowTy []      = empty
