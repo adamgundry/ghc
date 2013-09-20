@@ -166,7 +166,7 @@ type FldInstDetails = Either (Name, Name, Name, Name)
 -- | Create and typecheck instances from datatype and data instance
 -- declarations in the module being compiled.
 makeOverloadedRecFldInsts :: [TyClGroup Name] -> [LInstDecl Name]
-                           -> TcM (LHsBinds Id, TcGblEnv, [InstInfo Name])
+                           -> TcM (LHsBinds Id, TcGblEnv)
 makeOverloadedRecFldInsts tycl_decls inst_decls
     = do { fld_insts <- mapM makeRecFldInstsFor flds'
          ; tcFldInsts fld_insts }
@@ -421,7 +421,7 @@ looking up the instances: the bogus Ids are just vanilla bindings of
 -- | Typecheck the generated Has, Upd, GetResult and SetResult
 -- instances. This adds the dfuns and axioms to the global
 -- environment, but does not add user-visible instances.
-tcFldInsts :: [(Name, FldInstDetails)] -> TcM (LHsBinds Id, TcGblEnv, [InstInfo Name])
+tcFldInsts :: [(Name, FldInstDetails)] -> TcM (LHsBinds Id, TcGblEnv)
 tcFldInsts fld_insts
     = updGblEnv (\env -> env { tcg_axioms = axioms ++ tcg_axioms env }) $
         tcExtendGlobalEnvImplicit things $
@@ -441,7 +441,7 @@ tcFldInsts fld_insts
                              (\s -> delListFromNameSet s (map fst fld_insts))
 
                  ; ASSERT2( isEmptyBag ev_binds , ppr ev_binds)
-                   return (binds, env, inst_infos) }
+                   return (binds, env) }
   where
     has_upd (_, Right (has, upd, _, _)) = [has, upd]
     has_upd _                           = []
