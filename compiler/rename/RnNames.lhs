@@ -388,20 +388,6 @@ top level binders specially in two ways
    fields of Brack, hence the error thunks in thRnBrack.
 
 
-Note [Duplicate overloaded record fields for data families]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Overloaded record fields do not normally give rise to duplicates, but
-consider the following:
-
-    data family F (a :: *) :: *
-    data instance F Int  = MkF1 { foo :: Int }
-    data instance F Bool = MkF2 { foo :: Bool }
-
-We can't call both selectors $sel_foo_F. Really we should use the
-representation (instance) tycon name, not the data family tycon name,
-but this is not available in the renamer. So we just forbid this case.
-
-
 \begin{code}
 extendGlobalRdrEnvRn :: [AvailInfo]
                      -> MiniFixityEnv
@@ -437,17 +423,10 @@ extendGlobalRdrEnvRn avails new_fixities
               fix_env' = foldl extend_fix_env     fix_env  gres
               dups = findLocalDupsRdrEnv rdr_env3 new_occs
 
-              -- See Note [Duplicate overloaded record fields for data families]
-              new_orfs = [ (greOccName gre, gre_name gre)
-                         | gre <- gres, isOverloadedRecFldGRE gre ]
-              dups' = findLocalSelectorDupsRdrEnv rdr_env3 new_orfs
-
               gbl_env' = gbl_env { tcg_rdr_env = rdr_env3, tcg_fix_env = fix_env' }
 
         ; traceRn (text "extendGlobalRdrEnvRn dups" <+> (ppr dups))
-        ; traceRn (text "extendGlobalRdrEnvRn dups'" <+> (ppr dups'))
         ; mapM_ addDupDeclErr dups
-        ; mapM_ addDupSelectorDeclErr dups'
 
         ; traceRn (text "extendGlobalRdrEnvRn" <+> (ppr new_fixities $$ ppr fix_env $$ ppr fix_env'))
         ; return (gbl_env', lcl_env2) }
@@ -1910,23 +1889,6 @@ addDupDeclErr names@(name : _)
                    vcat (map (ppr . nameSrcLoc) sorted_names)]
   where
     sorted_names = sortWith nameSrcLoc names
-
-addDupSelectorDeclErr :: [GlobalRdrElt] -> TcRn ()
-addDupSelectorDeclErr []
-  = panic "addDupDeclErr: empty list"
-addDupSelectorDeclErr gres@(gre : _)
-  = addErrAt (getSrcSpan (gre_name (last sorted_gres))) $
-    -- Report the error at the later location
-    vcat [ptext (sLit "Multiple declarations of") <+>
-             quotes (ppr (greOccName gre)),
-             -- NB. print the OccName, not the Name, because the
-             -- latter might not be in scope in the RdrEnv and so will
-             -- be printed qualified.
-          ptext (sLit "Declared at:") <+>
-                   vcat (map (ppr . nameSrcLoc . gre_name) sorted_gres),
-          ptext (sLit "(Fields of a single data family cannot be overloaded)")]
-  where
-    sorted_gres = sortWith (nameSrcLoc . gre_name) gres
 
 dupExportWarn :: OccName -> IE RdrName -> IE RdrName -> SDoc
 dupExportWarn occ_name ie1 ie2
