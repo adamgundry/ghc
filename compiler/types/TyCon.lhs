@@ -917,6 +917,8 @@ tyConDataConsWithFields tc lbls = filter has_flds (tyConDataCons tc)
   where has_flds dc = all (has_fld dc) lbls
         has_fld dc lbl = any (\ fl -> flLabel fl == lbl) (dataConFieldLabels dc)
 
+-- | Make a map from strings to FieldLabels from all the data
+-- constructors of this algebraic tycon
 fieldsOfAlgTcRhs :: AlgTyConRhs -> FieldLabelEnv
 fieldsOfAlgTcRhs rhs = mkFsEnv [ (flLabel fl, fl)
                                | fl <- dataConsFields (visibleDataCons rhs) ]
