@@ -2,6 +2,40 @@
 % (c) Adam Gundry 2013
 %
 
+This module defines the representation of FieldLabels as stored in
+TyCons.  As well as a selector name, these have some extra structure
+to support the OverloadedRecordFields extension.  For every field
+label, regardless of whether the extension is enabled in the defining
+module, we generate instances of the Has and Upd classes and GetResult
+and SetResult type families (all defined in base:GHC.Records).
+
+In the normal case (with NoOverloadedRecordFields), a datatype like
+
+    data T = MkT { foo :: Int }
+
+has FieldLabel { flLabel = "foo"
+               , flIsOverloaded = False
+               , flSelector = foo
+               , flHasDFun = $fHas:foo:T
+               , flUpdDFun = $fUpd:foo:T
+               , flGetResultAxiom = TFCo:GetResult:foo:T
+               , flSetResultAxiom = TFCo:SetResult:foo:T }.
+
+In particular, the Name of the selector has the same string
+representation as the label.  If the OverloadedRecordFields extension
+is enabled, however, the same declaration instead gives
+
+               { flIsOverloaded = True
+               , flSelector = $sel:foo:T }.
+
+Now the name of the selector ($sel:foo:T) does not match the label of
+the field (foo).  We must be careful not to show the selector name to
+the user!  The point of mangling the selector name is to allow a
+module to define the same field label in different datatypes:
+
+    data T = MkT { foo :: Int }
+    data U = MkU { foo :: Bool }
+
 \begin{code}
 
 {-# LANGUAGE DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
