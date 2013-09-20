@@ -409,8 +409,7 @@ extendGlobalRdrEnvRn avails new_fixities
               --    we are going to shadow them
               -- See Note [Top-level Names in Template Haskell decl quotes]
               shadowP  = isBrackStage stage
-              new_occs = [ nameOccName (gre_name gre)
-                         | gre <- gres, not (isOverloadedRecFldGRE gre) ]
+              new_occs = map nameOccName (concatMap availNames avails)
               rdr_env_TH = transformGREs qual_gre new_occs rdr_env
               rdr_env_GHCi = delListFromOccEnv rdr_env new_occs
 

@@ -1226,9 +1226,17 @@ setInteractivePrintName ic n = ic{ic_int_print = n}
 -- | Add TyThings to the GlobalRdrEnv, earlier ones in the list shadowing
 -- later ones, and shadowing existing entries in the GlobalRdrEnv.
 icPlusGblRdrEnv :: [TyThing] -> GlobalRdrEnv -> GlobalRdrEnv
-icPlusGblRdrEnv tythings env = extendOccEnvList env list
-  where new_gres = gresFromAvails LocalDef (map tyThingAvailInfo tythings)
-        list = [ (greOccName gre, [gre]) | gre <- new_gres ]
+icPlusGblRdrEnv tythings env = plusOccEnv_C combine (mkOccEnv list) env
+  where
+    new_gres = gresFromAvails LocalDef (map tyThingAvailInfo tythings)
+    list = [ (greOccName gre, [gre]) | gre <- new_gres ]
+
+    -- Don't shadow old record fields when using -XOverloadedRecordFields
+    combine :: [GlobalRdrElt] -> [GlobalRdrElt] -> [GlobalRdrElt]
+    combine gres1@(gre1:_) gres2@(gre2:_)
+              | isRecFldGRE gre2 && isOverloadedRecFldGRE gre1
+              = gres1 ++ gres2
+    combine gres1 _ = gres1
 
 substInteractiveContext :: InteractiveContext -> TvSubst -> InteractiveContext
 substInteractiveContext ictxt subst

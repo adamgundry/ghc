@@ -1456,6 +1456,7 @@ hscDeclsWithLocation hsc_env0 str source linenumber =
 
         tythings =  map AnId user_vars
                  ++ map ATyCon tcs
+                 ++ map ACoAxiom axioms
 
     let ictxt1 = extendInteractiveContext icontext tythings
         ictxt  = ictxt1 { ic_sys_vars  = sys_vars ++ ic_sys_vars ictxt1,
