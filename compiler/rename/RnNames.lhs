@@ -865,11 +865,10 @@ catIELookupM ms = [ a | Succeeded a <- ms ]
 greExportAvail :: GlobalRdrElt -> AvailInfo
 greExportAvail gre
   = case gre_par gre of
-      ParentIs p                                  -> AvailTC p [me] []
-      FldParent p lbl | isOverloadedRecFldGRE gre -> AvailTC p [] [(me, Just lbl)]
-                      | otherwise                 -> AvailTC p [] [(me, Nothing)]
-      NoParent        | isTyConName me            -> AvailTC me [me] []
-                      | otherwise                 -> Avail   me
+      ParentIs p                       -> AvailTC p  [me] []
+      FldParent p lbl                  -> AvailTC p  []   [(me, lbl)]
+      NoParent        | isTyConName me -> AvailTC me [me] []
+                      | otherwise      -> Avail   me
   where
     me = gre_name gre
 
@@ -931,7 +930,7 @@ gresFromIE decl_spec (L loc ie, avail)
     is_explicit_fld = case ie of
                     IEThingAll _ -> False
                     _            -> True
-    prov_fld _ = Imported [imp_spec]
+    prov_fld = Imported [imp_spec]
         where
           imp_spec  = ImpSpec { is_decl = decl_spec, is_item = item_spec }
           item_spec = ImpSome { is_explicit = is_explicit_fld, is_iloc = loc }
@@ -981,10 +980,10 @@ mkChildEnv gres = foldr add emptyNameEnv gres
         Just c  -> extendNameEnv_Acc (:) singleton env (par_is (gre_par gre)) c
         Nothing -> env
     greChild gre = case gre_par gre of
-        FldParent _ lbl | isOverloadedRecFldGRE gre -> Just (mkOverloadedFldChild lbl n)
-                        | otherwise                 -> Just (FldChild n)
-        ParentIs _                                  -> Just (NonFldChild n)
-        NoParent -> Nothing
+        FldParent _ (Just lbl) -> Just (mkOverloadedFldChild lbl n)
+        FldParent _ Nothing    -> Just (FldChild n)
+        ParentIs _             -> Just (NonFldChild n)
+        NoParent               -> Nothing
       where n = gre_name gre
 
 findChildren :: NameEnv [ChildName] -> Name -> [ChildName]
@@ -1482,11 +1481,12 @@ warnUnusedImportDecls gbl_env
        ; let usage :: [ImportDeclUsage]
              usage = findImportUsage imports rdr_env (Set.elems uses) sel_uses fld_env
 
-             fld_env = mkNameEnv [ (gre_name gre, (par_lbl par, par_is par))
+             fld_env = mkNameEnv [ (gre_name gre, (lbl, par_is par))
                                      | gres <- occEnvElts rdr_env
                                      , gre <- gres
                                      , isOverloadedRecFldGRE gre
-                                     , let par = gre_par gre ]
+                                     , let par      = gre_par gre
+                                           Just lbl = par_lbl par ]
 
        ; traceRn (vcat [ ptext (sLit "Uses:") <+> ppr (Set.elems uses)
                        , ptext (sLit "Selector uses:") <+> ppr (nameSetToList sel_uses)

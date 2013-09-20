@@ -191,9 +191,9 @@ fieldLabelsToAvailFields = map fieldLabelToAvailField
 -- no details).
 gresFromAvails :: Provenance -> [AvailInfo] -> [GlobalRdrElt]
 gresFromAvails prov avails
-  = concatMap (gresFromAvail (const prov) (const prov)) avails
+  = concatMap (gresFromAvail (const prov) prov) avails
 
-gresFromAvail :: (Name -> Provenance) -> (FieldLabelString -> Provenance) ->
+gresFromAvail :: (Name -> Provenance) -> Provenance ->
                      AvailInfo -> [GlobalRdrElt]
 gresFromAvail prov_fn prov_fld avail = xs ++ ys
   where
@@ -206,14 +206,10 @@ gresFromAvail prov_fn prov_fld avail = xs ++ ys
 
     greFromNonFld n = GRE { gre_name = n, gre_par = parent n avail, gre_prov = prov_fn n}
 
-    greFromFld (n, Nothing)
+    greFromFld (n, mb_lbl)
       = GRE { gre_name = n
-            , gre_par  = FldParent (availName avail) (occNameFS (nameOccName n))
-            , gre_prov = prov_fld (occNameFS (nameOccName n)) }
-    greFromFld (sel, Just lbl)
-      = GRE { gre_name = sel
-            , gre_par  = FldParent (availName avail) lbl
-            , gre_prov = prov_fld lbl }
+            , gre_par  = FldParent (availName avail) mb_lbl
+            , gre_prov = prov_fld }
 
 -- -----------------------------------------------------------------------------
 -- Printing

@@ -715,15 +715,16 @@ lookupGlobalOccRn_overloaded rdr_name
         ; overload_ok <- xoptM Opt_OverloadedRecordFields
         ; case lookupGRE_RdrName rdr_name env of
                 []    -> return Nothing
-                [gre] | isRecFldGRE gre -> do { addUsedRdrName True gre rdr_name
-                                              ; return (Just (Right (par_lbl (gre_par gre), [greBits gre]))) }
-                [gre]                   -> do { addUsedRdrName True gre rdr_name
-                                              ; return (Just (Left (gre_name gre))) }
-                gres  | all isRecFldGRE gres
-                        && overload_ok  -> do { mapM_ (\ gre -> addUsedRdrName True gre rdr_name) gres
-                                              ; return (Just (Right (par_lbl (gre_par (head gres)), map greBits gres))) }
-                gres                    -> do { addNameClashErrRn rdr_name gres
-                                              ; return (Just (Left (gre_name (head gres)))) } }
+                [gre] | Just lbl <- greLabel gre
+                         -> do { addUsedRdrName True gre rdr_name
+                               ; return (Just (Right (lbl, [greBits gre]))) }
+                [gre]    -> do { addUsedRdrName True gre rdr_name
+                               ; return (Just (Left (gre_name gre))) }
+                gres  | all isRecFldGRE gres && overload_ok
+                         -> do { mapM_ (\ gre -> addUsedRdrName True gre rdr_name) gres
+                               ; return (Just (Right (expectJust "greLabel" (greLabel (head gres)), map greBits gres))) }
+                gres     -> do { addNameClashErrRn rdr_name gres
+                               ; return (Just (Left (gre_name (head gres)))) } }
   where
     greBits (GRE{ gre_name = n, gre_par = FldParent { par_is = p }}) = (p, n)
     greBits gre = pprPanic "lookupGlobalOccRn_overloaded/greBits" (ppr gre)
@@ -1048,7 +1049,7 @@ lookupQualifiedName_overloaded rdr_name
 
     -- Make up a fake GRE solely for error-reporting purposes.
     toFakeGRE mod (p, lbl, sel) = GRE { gre_name = sel
-                                      , gre_par  = FldParent p lbl
+                                      , gre_par  = FldParent p (Just lbl)
                                       , gre_prov = Imported [imp_spec] }
       where imp_spec = ImpSpec (ImpDeclSpec mod mod True noSrcSpan) ImpAll
 \end{code}
@@ -1831,8 +1832,8 @@ addNameClashErrRn rdr_name gres
     msgs = [ptext (sLit "    or") <+> mk_ref np | np <- nps]
     mk_ref gre = sep [nom <> comma, pprNameProvenance gre]
       where nom = case gre_par gre of
-                    FldParent { par_lbl = lbl } -> text "the field" <+> quotes (ppr lbl)
-                    _                           -> quotes (ppr (gre_name gre))
+                    FldParent { par_lbl = Just lbl } -> text "the field" <+> quotes (ppr lbl)
+                    _                                -> quotes (ppr (gre_name gre))
 
 shadowedNameWarn :: OccName -> [SDoc] -> SDoc
 shadowedNameWarn occ shadowed_locs

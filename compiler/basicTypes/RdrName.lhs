@@ -50,7 +50,7 @@ module RdrName (
         transformGREs, findLocalDupsRdrEnv, pickGREs,
 
         -- ** Global 'RdrName' mapping elements: 'GlobalRdrElt', 'Provenance', 'ImportSpec'
-        GlobalRdrElt(..), isLocalGRE, isRecFldGRE, isOverloadedRecFldGRE,
+        GlobalRdrElt(..), isLocalGRE, isRecFldGRE, isOverloadedRecFldGRE, greLabel,
         unQualOK, qualSpecOK, unQualSpecOK,
         Provenance(..), pprNameProvenance,
         Parent(..),
@@ -66,6 +66,7 @@ import NameSet
 import Maybes
 import SrcLoc
 import FastString
+import FieldLabel
 import Outputable
 import Unique
 import Util
@@ -402,7 +403,7 @@ data GlobalRdrElt
 --   notation in export lists.  See Note [Parents]
 data Parent = NoParent
             | ParentIs  { par_is :: Name }
-            | FldParent { par_is :: Name, par_lbl :: FastString }
+            | FldParent { par_is :: Name, par_lbl :: Maybe FieldLabelString }
             deriving (Eq)
 
 {- Note [Parents]
@@ -467,7 +468,7 @@ hasParentIs n (ParentIs n')
 #endif
 hasParentIs n _  = ParentIs n
 
-hasFldParent :: Name -> FastString -> Parent -> Parent
+hasFldParent :: Name -> Maybe FieldLabelString -> Parent -> Parent
 #ifdef DEBUG
 hasFldParent n f (FldParent n' f')
   | n /= n' || f /= f'    -- Parents should agree
@@ -503,8 +504,8 @@ extendGlobalRdrEnv :: GlobalRdrEnv -> GlobalRdrElt -> GlobalRdrEnv
 extendGlobalRdrEnv env gre = extendOccEnv_Acc (:) singleton env (greOccName gre) gre
 
 greOccName :: GlobalRdrElt -> OccName
-greOccName (GRE{gre_par = FldParent{par_lbl = lbl}}) = mkVarOccFS lbl
-greOccName gre                                       = nameOccName (gre_name gre)
+greOccName (GRE{gre_par = FldParent{par_lbl = Just lbl}}) = mkVarOccFS lbl
+greOccName gre                                            = nameOccName (gre_name gre)
 
 lookupGRE_RdrName :: RdrName -> GlobalRdrEnv -> [GlobalRdrElt]
 lookupGRE_RdrName rdr_name env
@@ -595,9 +596,15 @@ isRecFldGRE (GRE {gre_par = FldParent{}}) = True
 isRecFldGRE _                             = False
 
 isOverloadedRecFldGRE :: GlobalRdrElt -> Bool
-isOverloadedRecFldGRE (GRE {gre_name = n, gre_par = FldParent{par_lbl = f}})
-                        = occNameFS (nameOccName n) /= f
+isOverloadedRecFldGRE (GRE {gre_par = FldParent{par_lbl = Just _}})
+                        = True
 isOverloadedRecFldGRE _ = False
+
+-- Returns the field label of this GRE, if it has one
+greLabel :: GlobalRdrElt -> Maybe FieldLabelString
+greLabel (GRE{gre_par = FldParent{par_lbl = Just lbl}}) = Just lbl
+greLabel (GRE{gre_name = n, gre_par = FldParent{}})     = Just (occNameFS (nameOccName n))
+greLabel _                                              = Nothing
 
 unQualOK :: GlobalRdrElt -> Bool
 -- ^ Test if an unqualifed version of this thing would be in scope
