@@ -236,25 +236,22 @@ tcLookupFamInst tycon tys
 
 
 tcLookupRecordsFamInst :: TyCon -> [Type] -> TcM (Maybe FamInstMatch)
-tcLookupRecordsFamInst fam tys@(r:f:_)
-  | Just lbl     <- isStrLitTy f
-  , Just (tc, args) <- tcSplitTyConApp_maybe r
-
+tcLookupRecordsFamInst fam tys
+  | Just (lbl, tc, args) <- tcSplitRecordsArgs tys
   = do { rep_tc <- lookupRepTyCon tc args
        ; mb_ax  <- lookupFldInstAxiom lbl tc rep_tc want_get
        ; return $ do { ax <- mb_ax
                      ; let fam_inst = fam_inst_for tc ax
                      ; subst <- tcMatchTys (mkVarSet (fi_tvs fam_inst)) (fi_tys fam_inst) tys
                      ; return $ FamInstMatch fam_inst (substTyVars subst (fi_tvs fam_inst)) } }
-
   where
-    want_get = isGetResultFam fam
+    want_get = isFldTyFam fam
 
     fam_inst_for tc axiom
-      | want_get  = mkImportedFamInst getResultFamName
-                        [Just (tyConName tc), Nothing] (toUnbranchedAxiom axiom)
-      | otherwise = mkImportedFamInst setResultFamName
-                        [Just (tyConName tc), Nothing, Nothing] (toUnbranchedAxiom axiom)
+      | want_get  = mkImportedFamInst fldTyFamName
+                        [Nothing, Just (tyConName tc)] (toUnbranchedAxiom axiom)
+      | otherwise = mkImportedFamInst updTyFamName
+                        [Nothing, Just (tyConName tc), Nothing] (toUnbranchedAxiom axiom)
 
 tcLookupRecordsFamInst _ _ = return Nothing
 

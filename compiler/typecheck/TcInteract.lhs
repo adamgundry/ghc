@@ -2023,9 +2023,8 @@ constraint solving.
 
 \begin{code}
 matchRecordsClassInst :: Class -> [Type] -> CtLoc -> TcS LookupInstResult
-matchRecordsClassInst clas tys@[r, f, _] loc
-  | Just lbl <- isStrLitTy f
-  , Just (tc, args) <- splitTyConApp_maybe r
+matchRecordsClassInst clas tys loc
+  | Just (lbl, tc, args) <- tcSplitRecordsArgs tys
     = do { rep_tc <- lookupRepTyCon tc args
          ; mb_dfun  <- lookupFldInstDFun lbl tc rep_tc (isHasClass clas)
          ; case mb_dfun of

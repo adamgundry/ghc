@@ -564,7 +564,7 @@ pprHasPred r fs = pprParendType r <+> braces (sep (punctuate comma (map pprField
     fs' = sortBy (compare `on` fst) fs
     pprField (f, t) = (ftext f <+> ptext (sLit "::") <+> pprTypeOrDots f t)
     pprTypeOrDots f (TyConApp tc [_, LitTy (StrTyLit f')])
-      | tc `hasKey` getResultFamNameKey && f == f' = ptext (sLit "...")
+      | tc `hasKey` fldTyFamNameKey && f == f' = ptext (sLit "...")
     pprTypeOrDots _ t = pprType t
 
 pprThetaArrowTy :: ThetaType -> SDoc

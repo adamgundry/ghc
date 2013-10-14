@@ -69,9 +69,9 @@ distinctions arise in ModGuts and the InteractiveContext.
 
 Note [Availability of type-changing update]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-When generating instances of the Upd class and the SetResult family
-for a field `f` of a datatype `T a b c`, we must decide which
-variables may be changed when the field is updated. For example, in
+When generating instances of the Upd class and the UpdTy family for a
+field `f` of a datatype `T a b c`, we must decide which variables may
+be changed when the field is updated. For example, in
 
     data T a b c = MkT { foo :: (a, b), bar :: a }
 
@@ -79,14 +79,14 @@ an update to `foo` must keep `a` the same, since `a` occurs in the
 type of `bar`, but the update may change `b`.  Thus we generate:
 
     instance t ~ (a, b') => Upd (T a b c) "foo" t
-    type instance SetResult (T a b c) "foo" (a, b') = T a b' c
+    type instance UpdTy (T a b c) "foo" (a, b') = T a b' c
 
 As `c` does not occur in the type of `foo`, updates must keep it the
 same. This is slightly annoying, because a traditional record update
 `r { foo = (x, y) }` could change the type. It is a consequence of the
 fact that
 
-    type instance SetResult (T a b c) "foo" (a, b') = T a b' c'
+    type instance UpdTy (T a b c) "foo" (a, b') = T a b' c'
 
 makes no sense, because `c'` isn't bound anywhere.
 
@@ -113,7 +113,7 @@ one rigid occurrence, consider the following:
 
 Without the restriction, we would generate this:
 
-    type instance SetResult (T a) "foo" (G b) = T b
+    type instance UpdTy (T a) "foo" (G b) = T b
 
 But we can't sensibly pattern-match on type families!
 
@@ -124,7 +124,7 @@ On the other hand, this is okay:
 While we cannot match on the type family, we can replace it with an
 unused variable, and make use of the rigid occurrence:
 
-    type instance SetResult (U a) "foo" (b -> z) = U b
+    type instance UpdTy (U a) "foo" (b -> z) = U b
 
 
 Note that we have to be particularly careful with kind variables when
@@ -134,9 +134,9 @@ Consider the following definition, with kinds made explicit:
     data FC (x :: BOX)(y :: BOX)(f :: x -> *)(g :: y -> x)(a :: y) :: * where
         FC :: { runFC :: f (g a) } -> FC x y f g a
 
-The obvious SetResult instance is this:
+The obvious UpdTy instance is this:
 
-    type instance SetResult (FC x y f g a) "runFC" (f' (g' a')) = FC x' y' f' g' a'
+    type instance UpdTy (FC x y f g a) "runFC" (f' (g' a')) = FC x' y' f' g' a'
 
 But this is bogus, because the kind variables x' and y' are not bound
 on the left-hand side!
@@ -156,9 +156,9 @@ updates to fields of V may change the types but not the kinds:
 
 
 \begin{code}
--- | Contains Has and Upd class instances, and GetResult and SetResult
--- axioms, in that order. Left means that they are bogus (because the
--- field is higher-rank or existential); Right gives the real things.
+-- | Contains Has and Upd class instances, and FldTy and UpdTy axioms,
+-- in that order. Left means that they are bogus (because the field is
+-- higher-rank or existential); Right gives the real things.
 type FldInstDetails = Either (Name, Name, Name, Name)
                              (InstInfo Name, InstInfo Name,
                                  CoAxiom Unbranched, CoAxiom Unbranched)
@@ -176,7 +176,7 @@ makeOverloadedRecFldInsts tycl_decls inst_decls
 
 
 -- | Given a (label, selector name, tycon name) triple, construct the
--- appropriate Has, Upd, GetResult and SetResult instances.
+-- appropriate Has, Upd, FldTy and UpdTy instances.
 makeRecFldInstsFor :: (FieldLabelString, Name, Name) -> TcM (Name, FldInstDetails)
 makeRecFldInstsFor (lbl, sel_name, tycon_name)
   = do { rep_tc <- lookupRepTyConOfSelector tycon_name sel_name
@@ -201,42 +201,41 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
            -- Freshen the type variables in the constituent types
            { let univ_tvs     = dataConUnivTyVars dc
            ; (subst0, tyvars) <- tcInstSkolTyVars (univ_tvs ++ dataConExTyVars dc)
-           ; let f            = mkStrLitTy lbl
-                 t_ty         = substTy subst0 (mkFamilyTyConApp rep_tc
+           ; let n            = mkStrLitTy lbl
+                 r            = substTy subst0 (mkFamilyTyConApp rep_tc
                                                    (mkTyVarTys univ_tvs))
                  data_ty      = substTy subst0 data_ty0
                  fld_ty       = substTy subst0 fld_ty0
                  eq_spec      = substTys subst0 (eqSpecPreds (dataConEqSpec dc))
                  stupid_theta = substTys subst0 (dataConStupidTheta dc)
-           ; b <- mkTyVar <$> newSysName (mkVarOcc "b") <*> pure liftedTypeKind
 
            -- Generate Has instance:
-           --     instance (b ~ fld_ty, ...) => Has t_ty f b
-           ; has_inst <- mkHasInstInfo has_name sel_name lbl f tyvars
-                             (eq_spec ++ stupid_theta) t_ty fld_ty b
+           --     instance theta => Has r n
+           ; has_inst <- mkHasInstInfo has_name sel_name lbl n tyvars
+                             (eq_spec ++ stupid_theta) r
 
-           -- Generate GetResult instance:
-           --     type instance GetResult data_ty f = fld_ty
-           ; get_ax <- mkAxiom get_name getResultFamName [data_ty, f] fld_ty
+           -- Generate FldTy instance:
+           --     type instance FldTy data_ty n = fld_ty
+           ; get_ax <- mkAxiom get_name fldTyFamName [data_ty, n] fld_ty
 
            -- Generate Upd instance:
-           --     instance (b ~ fld_ty', ...) => Upd t_ty f b
+           --     instance (b ~ fld_ty', theta) => Upd r n b
            -- See Note [Availability of type-changing update]
            ; (subst, tyvars') <- updatingSubst lbl relevant_cons tyvars
                                      (rigidTyVarsOfType fld_ty)
            ; let fld_ty'  = substTy subst fld_ty
                  data_ty' = substTy subst data_ty
                  stupid_theta' = substTys subst stupid_theta
-           ; upd_inst <- mkUpdInstInfo upd_name lbl f
+           ; upd_inst <- mkUpdInstInfo upd_name lbl n
                              (eq_spec ++ stupid_theta ++ stupid_theta')
-                             t_ty b tyvars' fld_ty' relevant_cons rep_tc
+                             r tyvars' fld_ty' relevant_cons rep_tc
 
-           -- Generate SetResult instance:
-           --     type instance SetResult data_ty f hull_ty = data_ty'
+           -- Generate UpdTy instance:
+           --     type instance UpdTy data_ty n hull_ty = data_ty'
            -- See Note [Calculating the hull type]
            ; hull_ty <- hullType fld_ty'
-           ; set_ax  <- mkAxiom set_name setResultFamName
-                            [data_ty, f, hull_ty] data_ty'
+           ; set_ax  <- mkAxiom set_name updTyFamName
+                            [data_ty, n, hull_ty] data_ty'
 
            -- ; dumpDerivingInfo (hang (text "Overloaded record field instances:")
            --                  2 (vcat [ppr has_inst, ppr get_ax,
@@ -247,16 +246,15 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
   where
 
     -- | Make InstInfo for Has thus:
-    --     instance forall b tyvars . (b ~ fld_ty, theta) => Has t_ty f b where
+    --     instance forall tyvars . theta => Has t n where
     --         getField _ = sel_name
-    mkHasInstInfo dfun_name sel_name lbl f tyvars theta t_ty fld_ty b
-        = do { hasClass   <- tcLookupClass recordHasClassName
-             ; let args   = [t_ty, f, mkTyVarTy b]
-                   theta' = mkEqPred (mkTyVarTy b) fld_ty : theta
-                   dfun   = mkDictFunId dfun_name (b:tyvars) theta' hasClass args
-             ; cls_inst   <- mkFreshenedClsInst dfun (b:tyvars) hasClass args
+    mkHasInstInfo dfun_name sel_name lbl n tyvars theta t
+        = do { hasClass <- tcLookupClass recordHasClassName
+             ; let dfun = mkDictFunId dfun_name tyvars theta hasClass args
+             ; cls_inst <- mkFreshenedClsInst dfun tyvars hasClass args
              ; return (InstInfo cls_inst inst_bind) }
       where
+        args = [t, n]
         inst_bind = VanillaInst bind [] True
           where
             bind  = unitBag $ noLoc $ (mkTopFunBind (noLoc getFieldName) [match])
@@ -266,14 +264,15 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
 
 
     -- | Make InstInfo for Upd thus:
-    --     instance forall b tyvars' . (b ~ fld_ty', theta) => Upd t_ty f b where
+    --     instance forall b tyvars' . (b ~ fld_ty', theta) => Upd t n b where
     --         setField _ (MkT fld1 ... fldn) x = MkT fld1 ... x ... fldn
     --  fld_ty' is fld_ty with fresh tyvars (if type-changing update is possible)
     --  It would be nicer to use record-update syntax, but that isn't
     --  possible because of Trac #2595.
-    mkUpdInstInfo dfun_name lbl f theta t_ty b tyvars' fld_ty' relevant_cons rep_tc
+    mkUpdInstInfo dfun_name lbl n theta t tyvars' fld_ty' relevant_cons rep_tc
         = do { updClass   <- tcLookupClass recordUpdClassName
-             ; let args   = [t_ty, f, mkTyVarTy b]
+             ; b <- mkTyVar <$> newSysName (mkVarOcc "b") <*> pure liftedTypeKind
+             ; let args   = [t, n, mkTyVarTy b]
                    theta' = mkEqPred (mkTyVarTy b) fld_ty' : theta
                    dfun   = mkDictFunId dfun_name (b:tyvars') theta' updClass args
              ; cls_inst   <- mkFreshenedClsInst dfun (b:tyvars') updClass args
@@ -375,7 +374,7 @@ rigidTyVarsOfTypes tys = foldr (unionVarSet . rigidTyVarsOfType) emptyVarSet tys
 
 Note [Calculating the hull type]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-SetResult must not pattern-match on type families (see Note
+UpdTy must not pattern-match on type families (see Note
 [Availability of type-changing update]). For example, given the
 datatype
 
@@ -383,11 +382,11 @@ datatype
 
 we generate
 
-    type instance SetResult (T a b) "foo" (a', Int, x) = T a' b
+    type instance UpdTy (T a b) "foo" (a', Int, x) = T a' b
 
 rather than
 
-    type instance SetResult (T a b) "foo" (a', Int, F b') = T a' b'.
+    type instance UpdTy (T a b) "foo" (a', Int, F b') = T a' b'.
 
 This is accomplished by the `hullType` function, which returns a type
 in which all the type family subexpressions have been replaced with
@@ -418,9 +417,9 @@ looking up the instances: the bogus Ids are just vanilla bindings of
 (), not DFunIds or CoAxioms.
 
 \begin{code}
--- | Typecheck the generated Has, Upd, GetResult and SetResult
--- instances. This adds the dfuns and axioms to the global
--- environment, but does not add user-visible instances.
+-- | Typecheck the generated Has, Upd, FldTy and UpdTy instances.
+-- This adds the dfuns and axioms to the global environment, but does
+-- not add user-visible instances.
 tcFldInsts :: [(Name, FldInstDetails)] -> TcM (LHsBinds Id, TcGblEnv)
 tcFldInsts fld_insts
     = updGblEnv (\env -> env { tcg_axioms = axioms ++ tcg_axioms env }) $

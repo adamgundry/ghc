@@ -52,8 +52,6 @@ module Type (
         mkClassPred,
         noParenPred, isClassPred, isEqPred,
         isIPPred, isIPPred_maybe, isIPTyCon, isIPClass,
-        isHasClass, isUpdClass, isRecordsClass,
-        isGetResultFam, isSetResultFam, isRecordsFam,
 
         -- Deconstructing predicate types
         PredTree(..), classifyPredType,
@@ -66,6 +64,10 @@ module Type (
         -- ** Predicates on types
         isTypeVar, isKindVar,
         isTyVarTy, isFunTy, isDictTy, isPredTy, 
+
+        -- Overloaded record fields predicates
+        isHasClass, isUpdClass, isRecordsClass,
+        isFldTyFam, isUpdTyFam, isRecordsFam,
 
         -- (Lifting and boxity)
         isUnLiftedType, isUnboxedTupleType, isAlgType, isClosedAlgType,
@@ -877,17 +879,6 @@ isIPPred_maybe ty =
      guard (isIPTyCon tc)
      x <- isStrLitTy t1
      return (x,t2)
-
-isHasClass, isUpdClass, isRecordsClass :: Class -> Bool
-isHasClass cls = cls `hasKey` recordHasClassNameKey
-isUpdClass cls = cls `hasKey` recordUpdClassNameKey
-isRecordsClass cls = isHasClass cls || isUpdClass cls
-
-isGetResultFam, isSetResultFam, isRecordsFam :: TyCon -> Bool
-isGetResultFam tc = tc `hasKey` getResultFamNameKey
-isSetResultFam tc = tc `hasKey` setResultFamNameKey
-isRecordsFam tc   = isGetResultFam tc || isSetResultFam tc
-
 \end{code}
 
 Make PredTypes
@@ -1137,6 +1128,25 @@ isPrimitiveType ty = case splitTyConApp_maybe ty of
                         Just (tc, ty_args) -> ASSERT( ty_args `lengthIs` tyConArity tc )
                                               isPrimTyCon tc
                         _                  -> False
+\end{code}
+
+
+%************************************************************************
+%*                                                                      *
+\subsection{OverloadedRecordFields predicates}
+%*                                                                      *
+%************************************************************************
+
+\begin{code}
+isHasClass, isUpdClass, isRecordsClass :: Class -> Bool
+isHasClass     cls = cls `hasKey` recordHasClassNameKey
+isUpdClass     cls = cls `hasKey` recordUpdClassNameKey
+isRecordsClass cls = isHasClass cls || isUpdClass cls
+
+isFldTyFam, isUpdTyFam, isRecordsFam :: TyCon -> Bool
+isFldTyFam   tc = tc `hasKey` fldTyFamNameKey
+isUpdTyFam   tc = tc `hasKey` updTyFamNameKey
+isRecordsFam tc = isFldTyFam tc || isUpdTyFam tc
 \end{code}
 
 

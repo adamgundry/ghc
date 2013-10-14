@@ -793,13 +793,13 @@ lookupGreRn_help rdr_name lookup
 %*                                                      *
 %*********************************************************
 
-The Has and Upd typeclasses, and the GetResult and SetResult type
-families, (all defined in GHC.Records) are magical, in that rather
-than looking for instances in the usual way, we refer to the fields
-that are in scope. When looking for a match for
+The Has and Upd typeclasses, and the FldTy and UpdTy type families,
+(all defined in GHC.Records) are magical, in that rather than looking
+for instances in the usual way, we refer to the fields that are in
+scope. When looking for a match for
 
     Has (T a b) "foo" t
-    GetResult (T a b) "foo"
+    FldTy (T a b) "foo"
     etc.
 
 we check that the field foo belonging to type T is in scope, and look
@@ -847,7 +847,7 @@ lookupRecFieldLabel lbl tc rep_tc
 
 lookupFldInstAxiom :: FieldLabelString -> TyCon -> TyCon
                    -> Bool -> TcM (Maybe (CoAxiom Branched))
--- Lookup a GetResult or SetResult axiom from a label string, parent
+-- Lookup a FldTy or UpdTy axiom from a label string, parent
 -- tycon and representation tycon
 lookupFldInstAxiom lbl tc rep_tc want_get
   = do { mb_fl <- lookupRecFieldLabel lbl tc rep_tc
@@ -858,8 +858,8 @@ lookupFldInstAxiom lbl tc rep_tc want_get
                                ACoAxiom ax -> return $ Just ax
                                _           -> return Nothing } }
   where
-    get_or_set | want_get  = flGetResultAxiom
-               | otherwise = flSetResultAxiom
+    get_or_set | want_get  = flFldTyAxiom
+               | otherwise = flUpdTyAxiom
 
 lookupFldInstDFun :: FieldLabelString -> TyCon -> TyCon
                   -> Bool -> TcM (Maybe DFunId)

@@ -331,8 +331,8 @@ basicKnownKeyNames
         , recordHasClassName
         , recordUpdClassName
         , accessorClassName
-        , getResultFamName
-        , setResultFamName
+        , fldTyFamName
+        , updTyFamName
         , getFieldName
         , setFieldName
         , fieldName
@@ -1156,16 +1156,16 @@ ipClassName :: Name
 ipClassName         = clsQual gHC_IP (fsLit "IP")      ipClassNameKey
 
 -- Overloaded record fields
-recordHasClassName, recordUpdClassName, accessorClassName, getResultFamName,
-  setResultFamName, getFieldName, setFieldName, fieldName :: Name
-recordHasClassName = clsQual gHC_RECORDS (fsLit "Has")       recordHasClassNameKey
-recordUpdClassName = clsQual gHC_RECORDS (fsLit "Upd")       recordUpdClassNameKey
-accessorClassName  = clsQual gHC_RECORDS (fsLit "Accessor")  accessorClassNameKey
-getResultFamName   = tcQual  gHC_RECORDS (fsLit "GetResult") getResultFamNameKey
-setResultFamName   = tcQual  gHC_RECORDS (fsLit "SetResult") setResultFamNameKey
-getFieldName       = varQual gHC_RECORDS (fsLit "getField")  getFieldNameKey
-setFieldName       = varQual gHC_RECORDS (fsLit "setField")  setFieldNameKey
-fieldName          = varQual gHC_RECORDS (fsLit "field")     fieldNameKey
+recordHasClassName, recordUpdClassName, accessorClassName, fldTyFamName,
+  updTyFamName, getFieldName, setFieldName, fieldName :: Name
+recordHasClassName = clsQual gHC_RECORDS (fsLit "Has")      recordHasClassNameKey
+recordUpdClassName = clsQual gHC_RECORDS (fsLit "Upd")      recordUpdClassNameKey
+accessorClassName  = clsQual gHC_RECORDS (fsLit "Accessor") accessorClassNameKey
+fldTyFamName       = tcQual  gHC_RECORDS (fsLit "FldTy")    fldTyFamNameKey
+updTyFamName       = tcQual  gHC_RECORDS (fsLit "UpdTy")    updTyFamNameKey
+getFieldName       = varQual gHC_RECORDS (fsLit "getField") getFieldNameKey
+setFieldName       = varQual gHC_RECORDS (fsLit "setField") setFieldNameKey
+fieldName          = varQual gHC_RECORDS (fsLit "field")    fieldNameKey
 
 -- dotnet interop
 objectTyConName :: Name
@@ -1511,9 +1511,9 @@ proxyPrimTyConKey :: Unique
 proxyPrimTyConKey = mkPreludeTyConUnique 176
 
 -- Overloaded record fields
-getResultFamNameKey, setResultFamNameKey :: Unique
-getResultFamNameKey = mkPreludeTyConUnique 177
-setResultFamNameKey = mkPreludeTyConUnique 178
+fldTyFamNameKey, updTyFamNameKey :: Unique
+fldTyFamNameKey = mkPreludeTyConUnique 177
+updTyFamNameKey = mkPreludeTyConUnique 178
 
 ---------------- Template Haskell -------------------
 --      USES TyConUniques 200-299

@@ -558,13 +558,13 @@ getLocalNonValBinders fixity_env
          ; mod      <- getModule
          ; has      <- newGlobalBinder mod (flHasDFun fl) loc
          ; upd      <- newGlobalBinder mod (flUpdDFun fl) loc
-         ; get_ax   <- newGlobalBinder mod (flGetResultAxiom fl) loc
-         ; set_ax   <- newGlobalBinder mod (flSetResultAxiom fl) loc
+         ; get_ax   <- newGlobalBinder mod (flFldTyAxiom fl) loc
+         ; set_ax   <- newGlobalBinder mod (flUpdTyAxiom fl) loc
          ; return $ fl { flSelector = sel_name
                        , flHasDFun = has
                        , flUpdDFun = upd
-                       , flGetResultAxiom = get_ax
-                       , flSetResultAxiom = set_ax } }
+                       , flFldTyAxiom = get_ax
+                       , flUpdTyAxiom = set_ax } }
       where
         lbl     = occNameFS $ rdrNameOcc fld
         fl      = mkFieldLabelOccs lbl tc overload_ok

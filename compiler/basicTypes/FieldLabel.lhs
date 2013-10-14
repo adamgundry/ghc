@@ -6,8 +6,8 @@ This module defines the representation of FieldLabels as stored in
 TyCons.  As well as a selector name, these have some extra structure
 to support the OverloadedRecordFields extension.  For every field
 label, regardless of whether the extension is enabled in the defining
-module, we generate instances of the Has and Upd classes and GetResult
-and SetResult type families (all defined in base:GHC.Records).
+module, we generate instances of the Has and Upd classes and FldTy and
+UpdTy type families (all defined in base:GHC.Records).
 
 In the normal case (with NoOverloadedRecordFields), a datatype like
 
@@ -18,8 +18,8 @@ has FieldLabel { flLabel = "foo"
                , flSelector = foo
                , flHasDFun = $fHas:foo:T
                , flUpdDFun = $fUpd:foo:T
-               , flGetResultAxiom = TFCo:GetResult:foo:T
-               , flSetResultAxiom = TFCo:SetResult:foo:T }.
+               , flFldTyAxiom = TFCo:FldTy:foo:T
+               , flUpdTyAxiom = TFCo:UpdTy:foo:T }.
 
 In particular, the Name of the selector has the same string
 representation as the label.  If the OverloadedRecordFields extension
@@ -70,13 +70,13 @@ type FieldLabel = FieldLbl Name
 
 -- | Fields in an algebraic record type
 data FieldLbl a = FieldLabel {
-      flLabel          :: FieldLabelString, -- ^ Label of the field
-      flIsOverloaded   :: Bool,             -- ^ Is this field overloaded?
-      flSelector       :: a,                -- ^ Record selector function
-      flHasDFun        :: a,                -- ^ DFun for Has class instance
-      flUpdDFun        :: a,                -- ^ DFun for Upd class instance
-      flGetResultAxiom :: a,                -- ^ Axiom for GetResult family instance
-      flSetResultAxiom :: a                 -- ^ Axiom for SetResult family instance
+      flLabel        :: FieldLabelString, -- ^ Label of the field
+      flIsOverloaded :: Bool,             -- ^ Is this field overloaded?
+      flSelector     :: a,                -- ^ Record selector function
+      flHasDFun      :: a,                -- ^ DFun for Has class instance
+      flUpdDFun      :: a,                -- ^ DFun for Upd class instance
+      flFldTyAxiom   :: a,                -- ^ Axiom for FldTy family instance
+      flUpdTyAxiom   :: a                 -- ^ Axiom for UpdTy family instance
     }
   deriving (Functor, Foldable, Traversable)
 
@@ -116,8 +116,8 @@ mkFieldLabelOccs lbl tc is_overloaded
     str     = ":" ++ unpackFS lbl ++ ":" ++ occNameString tc
     has_str = "Has"
     upd_str = "Upd"
-    get_str = "GetResult"
-    set_str = "SetResult"
+    get_str = "FldTy"
+    set_str = "UpdTy"
 
     sel_occ | is_overloaded = mkRecFldSelOcc str
             | otherwise     = mkVarOccFS lbl

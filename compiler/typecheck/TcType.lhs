@@ -59,6 +59,7 @@ module TcType (
   tcInstHeadTyNotSynonym, tcInstHeadTyAppAllTyVars,
   tcGetTyVar_maybe, tcGetTyVar,
   tcSplitSigmaTy, tcDeepSplitSigmaTy_maybe,  
+  tcSplitRecordsArgs,
 
   ---------------------------------
   -- Predicates. 
@@ -175,6 +176,7 @@ import VarEnv
 import PrelNames
 import TysWiredIn
 import BasicTypes
+import FieldLabel
 import Util
 import Maybes
 import ListSetOps
@@ -997,6 +999,13 @@ tcInstHeadTyAppAllTyVars ty
 
     get_tv (TyVarTy tv)  = Just tv	-- through synonyms
     get_tv _             = Nothing
+
+tcSplitRecordsArgs :: [Type] -> Maybe (FieldLabelString, TyCon, [Type])
+tcSplitRecordsArgs (r:n:_)
+  | Just lbl <- isStrLitTy n
+  , Just (tc, tys) <- tcSplitTyConApp_maybe r
+  = Just (lbl, tc, tys)
+tcSplitRecordsArgs _ = Nothing
 \end{code}
 
 \begin{code}

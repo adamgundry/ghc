@@ -41,16 +41,15 @@ import RdrName
 import Name
 import TyCon
 import Type
-import TysPrim ( anyTypeOfKind )
 import TcEvidence
 import Var
 import VarSet
 import VarEnv
 import TysWiredIn
-import TysPrim( intPrimTy )
+import TysPrim
+import MkId
 import PrimOp( tagToEnumKey )
 import PrelNames
-import MkCore ( uNDEFINED_ID )
 import DynFlags
 import SrcLoc
 import Util
@@ -738,38 +737,37 @@ tcExpr (RecordUpd record_expr rbnds _ _ _) res_ty
 When typechecking a use of an overloaded record field, we need to
 construct an appropriate instantiation of
 
-    field :: forall proxy f r t p . (Has r f t, Accessor p f) => proxy f -> p r t
+    field :: forall p r n . Accessor p r n => Proxy# n -> p r (FldTy r n)
 
 so we supply
 
-    proxy         = Any
-    f             = field label
-    r, t, p       = metavariables
-    Has, Accessor = wanted constraints
-    proxy f       = undefined
+    p = metavariable
+    r = metavariable
+    n = field label
 
-and end up with something of type p r t.
+    Accessor p r n = wanted constraint
+    Proxy# n       = proxy#
+
+and end up with something of type p r (FldTy r n).
 
 \begin{code}
 tcExpr (HsOverloadedRecFld lbl) res_ty
-  = do { hasClass      <- tcLookupClass recordHasClassName
-       ; accessorClass <- tcLookupClass accessorClassName
-       ; r <- newFlexiTyVarTy liftedTypeKind
-       ; t <- newFlexiTyVarTy liftedTypeKind
-       ; p <- newFlexiTyVarTy (mkArrowKind liftedTypeKind
+  = do { p <- newFlexiTyVarTy (mkArrowKind liftedTypeKind
                                   (mkArrowKind liftedTypeKind liftedTypeKind))
-       ; let f = mkStrLitTy lbl
-             origin = OccurrenceOfRecSel (mkVarUnqual lbl)
-       ; has_var  <- emitWanted origin (mkClassPred hasClass [r, f, t])
-       ; acs_var  <- emitWanted origin (mkClassPred accessorClass [p, f])
-       ; field <- tcLookupId fieldName
-       ; loc      <- getSrcSpanM
-       ; let proxy     = anyTypeOfKind (mkArrowKind typeSymbolKind liftedTypeKind)
-             wrap      = mkWpEvVarApps [has_var, acs_var] <.> mkWpTyApps [proxy, f, r, t, p]
-             proxy_arg = noLoc (mkHsWrap (mkWpTyApps [mkAppTy proxy f])
-                                         (HsVar uNDEFINED_ID))
+       ; r <- newFlexiTyVarTy liftedTypeKind
+       ; accessorClass <- tcLookupClass accessorClassName
+       ; acs_var <- emitWanted origin (mkClassPred accessorClass [p, r, n])
+       ; field   <- tcLookupId fieldName
+       ; loc     <- getSrcSpanM
+       ; fldTy   <- tcLookupTyCon fldTyFamName
+       ; let wrap      = mkWpEvVarApps [acs_var] <.> mkWpTyApps [p, r, n]
+             proxy_arg = noLoc (mkHsWrap (mkWpTyApps [typeSymbolKind, n])
+                                         (HsVar proxyHashId))
              tm        = L loc (mkHsWrap wrap (HsVar field)) `HsApp` proxy_arg
-       ; tcWrapResult tm (mkAppTys p [r, t]) res_ty }
+       ; tcWrapResult tm (mkAppTys p [r, mkTyConApp fldTy [r, n]]) res_ty }
+  where
+    n      = mkStrLitTy lbl
+    origin = OccurrenceOfRecSel (mkVarUnqual lbl)
 
 tcExpr (HsSingleRecFld f sel_name) res_ty
     = tcCheckRecSelId f sel_name res_ty

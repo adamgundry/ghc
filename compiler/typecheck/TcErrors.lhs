@@ -1169,7 +1169,7 @@ mk_dict_err ctxt (ct, (matches, unifiers, safe_haskell))
                         _ -> return empty }
       | otherwise = return empty
       where
-        [r, f, _] = tys
+        (r:f:_) = tys
         suggest_overloaded = ptext $ sLit "Perhaps you should enable -XOverloadedRecordFields?"
 
         missing_field lbl ty
