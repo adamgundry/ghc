@@ -834,16 +834,13 @@ lookupRecFieldLabel :: FieldLabelString -> TyCon -> TyCon
 -- Lookup the FieldLabel from a label string, parent tycon and
 -- representation tycon
 lookupRecFieldLabel lbl tc rep_tc
-  = do { overload_ok <- xoptM Opt_OverloadedRecordFields
-       ; if not overload_ok   -- Don't magically solve constraints when
-         then return Nothing  -- the extension is disabled
-         else case lookupFsEnv (tyConFieldLabelEnv rep_tc) lbl of
-             Nothing -> return Nothing -- This field doesn't belong to the datatype!
-             Just fl -> do { gbl_env <- getGblEnv
-                           ; if fieldLabelInScope (tcg_rdr_env gbl_env) tc fl
-                             then do { addUsedSelector (flSelector fl)
-                                     ; return $ Just fl }
-                             else return Nothing } }
+  = case lookupFsEnv (tyConFieldLabelEnv rep_tc) lbl of
+        Nothing -> return Nothing -- This field doesn't belong to the datatype!
+        Just fl -> do { gbl_env <- getGblEnv
+                      ; if fieldLabelInScope (tcg_rdr_env gbl_env) tc fl
+                        then do { addUsedSelector (flSelector fl)
+                                ; return $ Just fl }
+                        else return Nothing }
 
 lookupFldInstAxiom :: FieldLabelString -> TyCon -> TyCon
                    -> Bool -> TcM (Maybe (CoAxiom Branched))

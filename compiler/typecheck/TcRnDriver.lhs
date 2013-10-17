@@ -571,7 +571,7 @@ tcRnHsBootDecls decls
 
                 -- Create overloaded record field instances
         ; traceTc "Tc3a (boot)" empty
-        ; (_binds, tcg_env) <- makeOverloadedRecFldInsts tycl_decls inst_decls
+        ; tcg_env <- makeOverloadedRecFldInsts tycl_decls inst_decls
         ; setGblEnv tcg_env       $ do {
 
                 -- Typecheck value declarations
@@ -1151,8 +1151,7 @@ tcTopSrcDecls boot_details
 
                 -- Create overloaded record field instances
         traceTc "Tc3a" empty ;
-        (fld_inst_binds, tcg_env)
-            <- makeOverloadedRecFldInsts tycl_decls inst_decls ;
+        tcg_env <- makeOverloadedRecFldInsts tycl_decls inst_decls ;
         setGblEnv tcg_env       $ do {
 
                 -- Generate Applicative/Monad proposal (AMP) warnings
@@ -1201,7 +1200,6 @@ tcTopSrcDecls boot_details
                 -- Wrap up
         traceTc "Tc7a" empty ;
         let { all_binds = inst_binds     `unionBags`
-                          fld_inst_binds `unionBags`
                           foe_binds
 
             ; fo_gres = fi_gres `unionBags` foe_gres

@@ -166,7 +166,7 @@ type FldInstDetails = Either (Name, Name, Name, Name)
 -- | Create and typecheck instances from datatype and data instance
 -- declarations in the module being compiled.
 makeOverloadedRecFldInsts :: [TyClGroup Name] -> [LInstDecl Name]
-                           -> TcM (LHsBinds Id, TcGblEnv)
+                          -> TcM TcGblEnv
 makeOverloadedRecFldInsts tycl_decls inst_decls
     = do { fld_insts <- mapM makeRecFldInstsFor flds'
          ; tcFldInsts fld_insts }
@@ -420,16 +420,11 @@ looking up the instances: the bogus Ids are just vanilla bindings of
 -- | Typecheck the generated Has, Upd, FldTy and UpdTy instances.
 -- This adds the dfuns and axioms to the global environment, but does
 -- not add user-visible instances.
-tcFldInsts :: [(Name, FldInstDetails)] -> TcM (LHsBinds Id, TcGblEnv)
+tcFldInsts :: [(Name, FldInstDetails)] -> TcM TcGblEnv
 tcFldInsts fld_insts
     = updGblEnv (\env -> env { tcg_axioms = axioms ++ tcg_axioms env }) $
         tcExtendGlobalEnvImplicit things $
-            -- We need to typecheck the instances and solve the
-            -- constraints with the extension enabled, so that the
-            -- superclasses of Has and Upd will be solved.
-            setXOptM Opt_OverloadedRecordFields $
-              do { (binds, lie) <- captureConstraints $ tcInstDecls2 [] inst_infos
-                 ; ev_binds     <- simplifyTop lie
+              do { binds  <- tcInstDecls2 [] inst_infos
 
                  -- See Note [Bogus instances]
                  ; let (bogus_sigs, bogus_binds) = mapAndUnzip mkBogusId bogus_insts
@@ -439,8 +434,7 @@ tcFldInsts fld_insts
                  ; updMutVar (tcg_used_selectors env)
                              (\s -> delListFromNameSet s (map fst fld_insts))
 
-                 ; ASSERT2( isEmptyBag ev_binds , ppr ev_binds)
-                   return (binds, env) }
+                 ; return $ env { tcg_binds = tcg_binds env `unionBags` binds } }
   where
     has_upd (_, Right (has, upd, _, _)) = [has, upd]
     has_upd _                           = []
