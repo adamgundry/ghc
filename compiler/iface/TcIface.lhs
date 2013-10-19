@@ -603,16 +603,21 @@ tcIfaceDataCons tycon_name tycon _ if_cons
   = case if_cons of
         IfAbstractTyCon dis -> return (AbstractTyCon dis)
         IfDataFamTyCon  -> return DataFamilyTyCon
-        IfDataTyCon cons -> do  { data_cons <- mapM tc_con_decl cons
-                                ; return (mkDataTyConRhs data_cons) }
-        IfNewTyCon con   -> do  { data_con <- tc_con_decl con
-                                ; mkNewTyConRhs tycon_name tycon data_con }
+        IfDataTyCon cons fs -> do  { field_lbls <- mapM tc_field_lbl fs
+                                   ; data_cons <- mapM (tc_con_decl field_lbls) cons
+                                   ; return (mkDataTyConRhs data_cons) }
+        IfNewTyCon con   fs -> do  { field_lbls <- mapM tc_field_lbl fs
+                                   ; data_con <- (tc_con_decl field_lbls) con
+                                   ; mkNewTyConRhs tycon_name tycon data_con }
   where
-    tc_con_decl (IfCon { ifConInfix = is_infix, 
-                         ifConUnivTvs = univ_tvs, ifConExTvs = ex_tvs,
-                         ifConOcc = occ, ifConCtxt = ctxt, ifConEqSpec = spec,
-                         ifConArgTys = args, ifConFields = field_lbls,
-                         ifConStricts = if_stricts})
+    tc_field_lbl :: FieldLbl OccName -> IfL FieldLabel
+    tc_field_lbl = traverse lookupIfaceTop
+
+    tc_con_decl field_lbls (IfCon { ifConInfix = is_infix,
+                                    ifConUnivTvs = univ_tvs, ifConExTvs = ex_tvs,
+                                    ifConOcc = occ, ifConCtxt = ctxt, ifConEqSpec = spec,
+                                    ifConArgTys = args, ifConFields = my_lbls,
+                                    ifConStricts = if_stricts})
      = bindIfaceTyVars univ_tvs $ \ univ_tyvars -> do
        bindIfaceTyVars ex_tvs    $ \ ex_tyvars -> do
         { traceIf (text "Start interface-file tc_con_decl" <+> ppr occ)
@@ -631,7 +636,9 @@ tcIfaceDataCons tycon_name tycon _ if_cons
                         -- The IfBang field can mention 
                         -- the type itself; hence inside forkM
                 ; return (eq_spec, theta, arg_tys, stricts) }
-        ; lbl_names <- mapM (traverse lookupIfaceTop) field_lbls
+
+          -- AMG TODO: optimise?
+        ; let my_field_lbls = filter (\ fl -> nameOccName (flSelector fl) `elem` my_lbls) field_lbls
 
         -- Remember, tycon is the representation tycon
         ; let orig_res_ty = mkFamilyTyConApp tycon 
@@ -639,7 +646,7 @@ tcIfaceDataCons tycon_name tycon _ if_cons
 
         ; con <- buildDataCon (pprPanic "tcIfaceDataCons: FamInstEnvs" (ppr name))
                        name is_infix
-                       stricts lbl_names
+                       stricts my_field_lbls
                        univ_tyvars ex_tyvars 
                        eq_spec theta 
                        arg_tys orig_res_ty tycon

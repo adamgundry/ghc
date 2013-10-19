@@ -102,6 +102,7 @@ import UniqFM
 import Unique
 import Util             hiding ( eqListBy )
 import FastString
+import FastStringEnv
 import Maybes
 import ListSetOps
 import Binary
@@ -1508,7 +1509,7 @@ tyConToIfaceDecl env tycon
                 ifTyVars  = toIfaceTvBndrs tyvars,
                 ifRoles   = tyConRoles tycon,
                 ifCtxt    = tidyToIfaceContext env1 (tyConStupidTheta tycon),
-                ifCons    = ifaceConDecls (algTyConRhs tycon),
+                ifCons    = ifaceConDecls (algTyConRhs tycon) (algTcFields tycon),
                 ifRec     = boolToRecFlag (isRecursiveTyCon tycon),
                 ifGadtSyntax = isGadtSyntaxTyCon tycon,
                 ifPromotable = isJust (promotableTyCon_maybe tycon),
@@ -1532,10 +1533,10 @@ tyConToIfaceDecl env tycon
     to_ifsyn_rhs (BuiltInSynFamTyCon {}) = pprPanic "toIfaceDecl: BuiltInFamTyCon" (ppr tycon)
 
 
-    ifaceConDecls (NewTyCon { data_con = con })     = IfNewTyCon  (ifaceConDecl con)
-    ifaceConDecls (DataTyCon { data_cons = cons })  = IfDataTyCon (map ifaceConDecl cons)
-    ifaceConDecls (DataFamilyTyCon {})              = IfDataFamTyCon
-    ifaceConDecls (AbstractTyCon distinct)          = IfAbstractTyCon distinct
+    ifaceConDecls (NewTyCon { data_con = con })    flds = IfNewTyCon  (ifaceConDecl con) (ifaceFields flds)
+    ifaceConDecls (DataTyCon { data_cons = cons }) flds = IfDataTyCon (map ifaceConDecl cons) (ifaceFields flds)
+    ifaceConDecls (DataFamilyTyCon {})             _    = IfDataFamTyCon
+    ifaceConDecls (AbstractTyCon distinct)         _    = IfAbstractTyCon distinct
         -- The last case happens when a TyCon has been trimmed during tidying
         -- Furthermore, tyThingToIfaceDecl is also used
         -- in TcRnDriver for GHCi, when browsing a module, in which case the
@@ -1550,7 +1551,7 @@ tyConToIfaceDecl env tycon
                     ifConEqSpec  = to_eq_spec eq_spec,
                     ifConCtxt    = tidyToIfaceContext env2 theta,
                     ifConArgTys  = map (tidyToIfaceType env2) arg_tys,
-                    ifConFields  = map (fmap nameOccName) (dataConFieldLabels data_con),
+                    ifConFields  = map (nameOccName . flSelector) (dataConFieldLabels data_con),
                     ifConStricts = map (toIfaceBang env2) (dataConRepBangs data_con) }
         where
           (univ_tvs, ex_tvs, eq_spec, theta, arg_tys, _) = dataConFullSig data_con
@@ -1561,6 +1562,8 @@ tyConToIfaceDecl env tycon
           (env2, ex_tvs')   = tidyTyVarBndrs env1 ex_tvs
           to_eq_spec spec = [ (getOccName (tidyTyVar env2 tv), tidyToIfaceType env2 ty)
                             | (tv,ty) <- spec]
+
+    ifaceFields flds = map (fmap nameOccName) $ fsEnvElts flds
 
 toIfaceBang :: TidyEnv -> HsBang -> IfaceBang
 toIfaceBang _    HsNoBang            = IfNoBang
