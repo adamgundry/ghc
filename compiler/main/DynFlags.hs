@@ -2901,11 +2901,13 @@ impliedFlags
 
     , (Opt_JavaScriptFFI, turnOn, Opt_InterruptibleFFI)
 
-    -- Overloaded record fields require field disambiguation (well duh), and
-    -- flexible contexts and constraint kinds (for the Has class encoding).
+    -- Overloaded record fields require field disambiguation (well
+    -- duh), and flexible contexts, constraint kinds and type families
+    -- (for the Has class encoding and desugaring of r { f :: t } syntax).
     , (Opt_OverloadedRecordFields, turnOn, Opt_DisambiguateRecordFields)
     , (Opt_OverloadedRecordFields, turnOn, Opt_FlexibleContexts)
     , (Opt_OverloadedRecordFields, turnOn, Opt_ConstraintKinds)
+    , (Opt_OverloadedRecordFields, turnOn, Opt_TypeFamilies)
   ]
 
 optLevelFlags :: [([Int], GeneralFlag)]
