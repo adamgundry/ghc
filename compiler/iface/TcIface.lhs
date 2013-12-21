@@ -68,6 +68,7 @@ import DynFlags
 import Util
 import FastString
 
+import Data.List
 import Data.Traversable (traverse)
 import Control.Monad
 import qualified Data.Map as Map
@@ -637,8 +638,12 @@ tcIfaceDataCons tycon_name tycon _ if_cons
                         -- the type itself; hence inside forkM
                 ; return (eq_spec, theta, arg_tys, stricts) }
 
-          -- AMG TODO: optimise?
-        ; let my_field_lbls = filter (\ fl -> nameOccName (flSelector fl) `elem` my_lbls) field_lbls
+        -- Look up the field labels for this constructor; note that
+        -- they should be in the same order as my_lbls!
+        ; let my_field_lbls = map find_lbl my_lbls
+              find_lbl x = case find (\ fl -> nameOccName (flSelector fl) == x) field_lbls of
+                             Just fl -> fl
+                             Nothing -> error $ "find_lbl missing " ++ occNameString x
 
         -- Remember, tycon is the representation tycon
         ; let orig_res_ty = mkFamilyTyConApp tycon 
