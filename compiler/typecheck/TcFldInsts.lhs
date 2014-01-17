@@ -425,7 +425,10 @@ tcFldInsts :: [(Name, FldInstDetails)] -> TcM TcGblEnv
 tcFldInsts fld_insts
     = updGblEnv (\env -> env { tcg_axioms = axioms ++ tcg_axioms env }) $
         tcExtendGlobalEnvImplicit things $
-              do { binds  <- tcInstDecls2 [] inst_infos
+                 -- Invoke the constraint solver to find uses of
+                 -- fields now rather than later
+              do { (binds, lie) <- captureConstraints $ tcInstDecls2 [] inst_infos
+                 ; ev_binds     <- simplifyTop lie
 
                  -- See Note [Bogus instances]
                  ; let (bogus_sigs, bogus_binds) = mapAndUnzip mkBogusId bogus_insts
@@ -435,7 +438,8 @@ tcFldInsts fld_insts
                  ; updMutVar (tcg_used_selectors env)
                              (\s -> delListFromNameSet s (map fst fld_insts))
 
-                 ; return $ env { tcg_binds = tcg_binds env `unionBags` binds } }
+                 ; ASSERT2( isEmptyBag ev_binds , ppr ev_binds)
+                   return $ env { tcg_binds = tcg_binds env `unionBags` binds } }
   where
     has_upd (_, Right (has, upd, _, _)) = [has, upd]
     has_upd _                           = []
