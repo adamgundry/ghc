@@ -379,19 +379,18 @@ tc_hs_type hs_ty@(HsOpTy ty1 (_, l_op@(L _ op)) ty2) exp_kind
 
 tc_hs_type hs_ty@(HsAppTy ty1 (L loc (HsRecTy flds))) exp_kind
   = do { ty1' <- tc_lhs_type ty1 ekLifted
-       ; cs <- setSrcSpan loc $ concatMapM (checkRecordField ty1') flds
+       ; cs <- setSrcSpan loc $ mapM (checkRecordField ty1') flds
        ; checkExpectedKind hs_ty constraintKind exp_kind
        ; return (mkTupleTy ConstraintTuple cs) }
   where
-    checkRecordField :: Type -> ConDeclField Name -> TcM [Type]
+    checkRecordField :: Type -> ConDeclField Name -> TcM Type
     checkRecordField r (ConDeclField lbl _ ty _)
       = do { ty'      <- tc_lhs_type ty ekLifted
-           ; ty''     <- zonkTcType ty' -- Make sure it really has kind *, for mkEqPred
+           ; ty''     <- zonkTcType ty' -- Make sure it really has kind * (AMG TODO: is this still needed?)
            ; hasClass <- tcLookupClass recordHasClassName
            ; fldTy    <- tcLookupTyCon fldTyFamName
            ; let n = mkStrLitTy (occNameFS (rdrNameOcc (unLoc lbl)))
-           ; return [ mkClassPred hasClass [r, n]
-                    , mkEqPred (mkTyConApp fldTy [r, n]) ty'' ] }
+           ; return $ mkClassPred hasClass [r, n, ty''] }
 
 tc_hs_type hs_ty@(HsAppTy ty1 ty2) exp_kind
 --  | L _ (HsTyVar fun) <- fun_ty

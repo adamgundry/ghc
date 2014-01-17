@@ -737,34 +737,36 @@ tcExpr (RecordUpd record_expr rbnds _ _ _) res_ty
 When typechecking a use of an overloaded record field, we need to
 construct an appropriate instantiation of
 
-    field :: forall p r n . Accessor p r n => Proxy# n -> p r (FldTy r n)
+    field :: forall p r n t . Accessor p r n t => Proxy# n -> p r t
 
 so we supply
 
     p = metavariable
     r = metavariable
+    t = metavariable
     n = field label
 
-    Accessor p r n = wanted constraint
-    Proxy# n       = proxy#
+    Accessor p r n t = wanted constraint
+    Proxy# n         = proxy#
 
-and end up with something of type p r (FldTy r n).
+and end up with something of type p r t.
 
 \begin{code}
 tcExpr (HsOverloadedRecFld lbl) res_ty
   = do { p <- newFlexiTyVarTy (mkArrowKind liftedTypeKind
                                   (mkArrowKind liftedTypeKind liftedTypeKind))
        ; r <- newFlexiTyVarTy liftedTypeKind
+       ; t <- newFlexiTyVarTy liftedTypeKind
        ; accessorClass <- tcLookupClass accessorClassName
-       ; acs_var <- emitWanted origin (mkClassPred accessorClass [p, r, n])
+       ; acs_var <- emitWanted origin (mkClassPred accessorClass [p, r, n, t])
        ; field   <- tcLookupId fieldName
        ; loc     <- getSrcSpanM
        ; fldTy   <- tcLookupTyCon fldTyFamName
-       ; let wrap      = mkWpEvVarApps [acs_var] <.> mkWpTyApps [p, r, n]
+       ; let wrap      = mkWpEvVarApps [acs_var] <.> mkWpTyApps [p, r, n, t]
              proxy_arg = noLoc (mkHsWrap (mkWpTyApps [typeSymbolKind, n])
                                          (HsVar proxyHashId))
              tm        = L loc (mkHsWrap wrap (HsVar field)) `HsApp` proxy_arg
-       ; tcWrapResult tm (mkAppTys p [r, mkTyConApp fldTy [r, n]]) res_ty }
+       ; tcWrapResult tm (mkAppTys p [r, t]) res_ty }
   where
     n      = mkStrLitTy lbl
     origin = OccurrenceOfRecSel (mkVarUnqual lbl)

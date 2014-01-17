@@ -208,11 +208,12 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
                  fld_ty       = substTy subst0 fld_ty0
                  eq_spec      = substTys subst0 (eqSpecPreds (dataConEqSpec dc))
                  stupid_theta = substTys subst0 (dataConStupidTheta dc)
+           ; b <- mkTyVar <$> newSysName (mkVarOcc "b") <*> pure liftedTypeKind
 
            -- Generate Has instance:
-           --     instance theta => Has r n
+           --     instance (b ~ fld_ty, theta) => Has r n b
            ; has_inst <- mkHasInstInfo has_name sel_name lbl n tyvars
-                             (eq_spec ++ stupid_theta) r
+                             (eq_spec ++ stupid_theta) r fld_ty b
 
            -- Generate FldTy instance:
            --     type instance FldTy data_ty n = fld_ty
@@ -228,7 +229,7 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
                  stupid_theta' = substTys subst stupid_theta
            ; upd_inst <- mkUpdInstInfo upd_name lbl n
                              (eq_spec ++ stupid_theta ++ stupid_theta')
-                             r tyvars' fld_ty' relevant_cons rep_tc
+                             r b tyvars' fld_ty' relevant_cons rep_tc
 
            -- Generate UpdTy instance:
            --     type instance UpdTy data_ty n hull_ty = data_ty'
@@ -246,15 +247,16 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
   where
 
     -- | Make InstInfo for Has thus:
-    --     instance forall tyvars . theta => Has t n where
+    --     instance forall b tyvars . (b ~ fld_ty, theta) => Has t n b where
     --         getField _ = sel_name
-    mkHasInstInfo dfun_name sel_name lbl n tyvars theta t
+    mkHasInstInfo dfun_name sel_name lbl n tyvars theta t fld_ty b
         = do { hasClass <- tcLookupClass recordHasClassName
-             ; let dfun = mkDictFunId dfun_name tyvars theta hasClass args
-             ; cls_inst <- mkFreshenedClsInst dfun tyvars hasClass args
+             ; let theta' = mkEqPred (mkTyVarTy b) fld_ty : theta
+                   dfun   = mkDictFunId dfun_name (b:tyvars) theta' hasClass args
+             ; cls_inst <- mkFreshenedClsInst dfun (b:tyvars) hasClass args
              ; return (InstInfo cls_inst inst_bind) }
       where
-        args = [t, n]
+        args = [t, n, mkTyVarTy b]
         inst_bind = VanillaInst bind [] True
           where
             bind  = unitBag $ noLoc $ (mkTopFunBind (noLoc getFieldName) [match])
@@ -269,9 +271,8 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
     --  fld_ty' is fld_ty with fresh tyvars (if type-changing update is possible)
     --  It would be nicer to use record-update syntax, but that isn't
     --  possible because of Trac #2595.
-    mkUpdInstInfo dfun_name lbl n theta t tyvars' fld_ty' relevant_cons rep_tc
+    mkUpdInstInfo dfun_name lbl n theta t b tyvars' fld_ty' relevant_cons rep_tc
         = do { updClass   <- tcLookupClass recordUpdClassName
-             ; b <- mkTyVar <$> newSysName (mkVarOcc "b") <*> pure liftedTypeKind
              ; let args   = [t, n, mkTyVarTy b]
                    theta' = mkEqPred (mkTyVarTy b) fld_ty' : theta
                    dfun   = mkDictFunId dfun_name (b:tyvars') theta' updClass args
