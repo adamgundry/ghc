@@ -393,7 +393,7 @@ schedule (Capability *initialCapability, Task *task)
 	 
 run_thread:
 
-    // CurrentTSO is the thread to run.  t might be different if we
+    // CurrentTSO is the thread to run. It might be different if we
     // loop back to run_thread, so make sure to set CurrentTSO after
     // that.
     cap->r.rCurrentTSO = t;
@@ -1082,7 +1082,7 @@ schedulePostRunThread (Capability *cap, StgTSO *t)
 }
 
 /* -----------------------------------------------------------------------------
- * Handle a thread that returned to the scheduler with ThreadHeepOverflow
+ * Handle a thread that returned to the scheduler with ThreadHeapOverflow
  * -------------------------------------------------------------------------- */
 
 static rtsBool
@@ -1438,7 +1438,7 @@ scheduleDoGC (Capability **pcap, Task *task USED_IF_THREADS,
     rtsBool heap_census;
     nat collect_gen;
 #ifdef THREADED_RTS
-    StgWord8 gc_type;
+    nat gc_type;
     nat i, sync;
     StgTSO *tso;
 #endif

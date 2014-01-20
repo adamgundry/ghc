@@ -76,7 +76,7 @@ module TyCon(
         synTyConDefn_maybe, synTyConRhs_maybe, 
         tyConExtName,           -- External name for foreign types
         algTyConRhs,
-        newTyConRhs, newTyConEtadRhs, unwrapNewTyCon_maybe,
+        newTyConRhs, newTyConEtadArity, newTyConEtadRhs, unwrapNewTyCon_maybe,
         tupleTyConBoxity, tupleTyConSort, tupleTyConArity,
         algTcFields,
 
@@ -88,7 +88,7 @@ module TyCon(
 
         -- * Primitive representations of Types
         PrimRep(..), PrimElemRep(..),
-        tyConPrimRep,
+        tyConPrimRep, isVoidRep, isGcPtrRep,
         primRepSizeW, primElemRepSizeB,
 
         -- * Recursion breaking
@@ -100,7 +100,6 @@ module TyCon(
 
 import {-# SOURCE #-} TypeRep ( Kind, Type, PredType )
 import {-# SOURCE #-} DataCon ( DataCon, isVanillaDataCon, dataConFieldLabels )
-import {-# SOURCE #-} TcEvidence ( TcBuiltInSynFamily )
 
 import Var
 import Class
@@ -643,7 +642,7 @@ data SynTyConRhs
    -- type family F a where ..
    | AbstractClosedSynFamilyTyCon
 
-   | BuiltInSynFamTyCon TcBuiltInSynFamily
+   | BuiltInSynFamTyCon BuiltInSynFamily
 \end{code}
 
 Note [Closed type families]
@@ -867,6 +866,14 @@ instance Outputable PrimRep where
 
 instance Outputable PrimElemRep where
   ppr r = text (show r)
+
+isVoidRep :: PrimRep -> Bool
+isVoidRep VoidRep = True
+isVoidRep _other  = False
+
+isGcPtrRep :: PrimRep -> Bool
+isGcPtrRep PtrRep = True
+isGcPtrRep _      = False
 
 -- | Find the size of a 'PrimRep', in words
 primRepSizeW :: DynFlags -> PrimRep -> Int
@@ -1288,7 +1295,7 @@ isClosedSynFamilyTyCon_maybe
   (SynTyCon {synTcRhs = ClosedSynFamilyTyCon ax}) = Just ax
 isClosedSynFamilyTyCon_maybe _ = Nothing
 
-isBuiltInSynFamTyCon_maybe :: TyCon -> Maybe TcBuiltInSynFamily
+isBuiltInSynFamTyCon_maybe :: TyCon -> Maybe BuiltInSynFamily
 isBuiltInSynFamTyCon_maybe
   SynTyCon {synTcRhs = BuiltInSynFamTyCon ops } = Just ops
 isBuiltInSynFamTyCon_maybe _ = Nothing
@@ -1526,6 +1533,12 @@ tyConRoles tc
 newTyConRhs :: TyCon -> ([TyVar], Type)
 newTyConRhs (AlgTyCon {tyConTyVars = tvs, algTcRhs = NewTyCon { nt_rhs = rhs }}) = (tvs, rhs)
 newTyConRhs tycon = pprPanic "newTyConRhs" (ppr tycon)
+
+-- | The number of type parameters that need to be passed to a newtype to resolve it. May be less than in the definition if it can be eta-contracted.
+newTyConEtadArity :: TyCon -> Int
+newTyConEtadArity (AlgTyCon {algTcRhs = NewTyCon { nt_etad_rhs = tvs_rhs }})
+        = length (fst tvs_rhs)
+newTyConEtadArity tycon = pprPanic "newTyConEtadArity" (ppr tycon)
 
 -- | Extract the bound type variables and type expansion of an eta-contracted type synonym 'TyCon'.
 -- Panics if the 'TyCon' is not a synonym

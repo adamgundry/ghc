@@ -5,8 +5,8 @@
 # This file is part of the GHC build system.
 #
 # To understand how the build system works and how to modify it, see
-#      http://hackage.haskell.org/trac/ghc/wiki/Building/Architecture
-#      http://hackage.haskell.org/trac/ghc/wiki/Building/Modifying
+#      http://ghc.haskell.org/trac/ghc/wiki/Building/Architecture
+#      http://ghc.haskell.org/trac/ghc/wiki/Building/Modifying
 #
 # -----------------------------------------------------------------------------
 
@@ -136,7 +136,7 @@ ifneq "$4" "0"
 ifeq "$$(TargetElf)" "YES"
 $1_$2_$3_GHC_LD_OPTS += \
     -fno-use-rpaths \
-    $$(foreach d,$$($1_$2_TRANSITIVE_DEPS),-optl-Wl$$(comma)-rpath -optl-Wl$$(comma)'$$$$ORIGIN/../$$d') -optl-Wl,-z -optl-Wl,origin
+    $$(foreach d,$$($1_$2_TRANSITIVE_DEPS),-optl-Wl$$(comma)-rpath -optl-Wl$$(comma)'$$$$ORIGIN/../$$d') -optl-Wl,-zorigin
 else ifeq "$$(TargetOS_CPP)" "darwin"
 $1_$2_$3_GHC_LD_OPTS += -optl-Wl,-headerpad_max_install_names
 endif

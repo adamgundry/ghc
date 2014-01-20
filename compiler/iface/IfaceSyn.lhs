@@ -8,7 +8,7 @@
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
---     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
+--     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
 module IfaceSyn (
@@ -39,7 +39,6 @@ module IfaceSyn (
 import IfaceType
 import PprCore()            -- Printing DFunArgs
 import Demand
-import Annotations
 import Class
 import TyCon
 import FieldLabel
@@ -49,7 +48,7 @@ import Name
 import CostCentre
 import Literal
 import ForeignCall
-import Serialized
+import Annotations( AnnPayload, AnnTarget )
 import BasicTypes
 import Outputable
 import FastString
@@ -263,9 +262,9 @@ instance Binary IfaceClassOp where
         occ <- return $! mkOccNameFS varName n
         return (IfaceClassOp occ def ty)
 
-data IfaceAT = IfaceAT IfaceDecl [IfaceAxBranch]
-        -- Nothing => no default associated type instance
-        -- Just ds => default associated type instance from these templates
+data IfaceAT = IfaceAT
+                  IfaceDecl        -- The associated type declaration
+                  [IfaceAxBranch]  -- Default associated type instances, if any
 
 instance Binary IfaceAT where
     put_ bh (IfaceAT dec defs) = do
@@ -285,7 +284,7 @@ pprAxBranch mtycon (IfaceAxBranch { ifaxbTyVars = tvs
                                   , ifaxbRHS = ty
                                   , ifaxbIncomps = incomps })
   = ppr tvs <+> ppr_lhs <+> char '=' <+> ppr ty $+$
-    nest 4 maybe_incomps
+    nest 2 maybe_incomps
       where
         ppr_lhs
           | Just tycon <- mtycon
@@ -490,8 +489,11 @@ instance Binary IfaceRule where
 data IfaceAnnotation
   = IfaceAnnotation {
         ifAnnotatedTarget :: IfaceAnnTarget,
-        ifAnnotatedValue :: Serialized
+        ifAnnotatedValue  :: AnnPayload
   }
+
+instance Outputable IfaceAnnotation where
+  ppr (IfaceAnnotation target value) = ppr target <+> colon <+> ppr value
 
 instance Binary IfaceAnnotation where
     put_ bh (IfaceAnnotation a1 a2) = do
@@ -912,7 +914,7 @@ defined.)
 
 Note [Versioning of instances]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-See [http://hackage.haskell.org/trac/ghc/wiki/Commentary/Compiler/RecompilationAvoidance#Instances]
+See [http://ghc.haskell.org/trac/ghc/wiki/Commentary/Compiler/RecompilationAvoidance#Instances]
 
 \begin{code}
 -- -----------------------------------------------------------------------------
@@ -1018,18 +1020,17 @@ pprIfaceDecl (IfaceSyn {ifName = tycon,
                         ifTyVars = tyvars,
                         ifSynRhs = IfaceSynonymTyCon mono_ty})
   = hang (ptext (sLit "type") <+> pprIfaceDeclHead [] tycon tyvars)
-       4 (vcat [equals <+> ppr mono_ty])
+       2 (vcat [equals <+> ppr mono_ty])
 
 pprIfaceDecl (IfaceSyn {ifName = tycon, ifTyVars = tyvars,
-                        ifSynRhs = IfaceOpenSynFamilyTyCon, ifSynKind = kind })
+                        ifSynRhs = rhs, ifSynKind = kind })
   = hang (ptext (sLit "type family") <+> pprIfaceDeclHead [] tycon tyvars)
-       4 (dcolon <+> ppr kind)
-
--- this case handles both abstract and instantiated closed family tycons
-pprIfaceDecl (IfaceSyn {ifName = tycon, ifTyVars = tyvars,
-                        ifSynRhs = _closedSynFamilyTyCon, ifSynKind = kind })
-  = hang (ptext (sLit "closed type family") <+> pprIfaceDeclHead [] tycon tyvars)
-       4 (dcolon <+> ppr kind)
+       2 (sep [dcolon <+> ppr kind, parens (pp_rhs rhs)])
+  where
+    pp_rhs IfaceOpenSynFamilyTyCon           = ptext (sLit "open")
+    pp_rhs (IfaceClosedSynFamilyTyCon ax)    = ptext (sLit "closed, axiom") <+> ppr ax
+    pp_rhs IfaceAbstractClosedSynFamilyTyCon = ptext (sLit "closed, abstract")
+    pp_rhs _ = panic "pprIfaceDecl syn"
 
 pprIfaceDecl (IfaceData {ifName = tycon, ifCType = cType,
                          ifCtxt = context,
@@ -1037,9 +1038,9 @@ pprIfaceDecl (IfaceData {ifName = tycon, ifCType = cType,
                          ifRec = isrec, ifPromotable = is_prom,
                          ifAxiom = mbAxiom})
   = hang (pp_nd <+> pprIfaceDeclHead context tycon tyvars)
-       4 (vcat [ pprCType cType
+       2 (vcat [ pprCType cType
                , pprRoles roles
-               , pprRec isrec <> comma <+> pp_prom 
+               , pprRec isrec <> comma <+> pp_prom
                , pp_condecls tycon condecls
                , pprAxiom mbAxiom])
   where
@@ -1055,7 +1056,7 @@ pprIfaceDecl (IfaceClass {ifCtxt = context, ifName = clas, ifTyVars = tyvars,
                           ifRoles = roles, ifFDs = fds, ifATs = ats, ifSigs = sigs,
                           ifRec = isrec})
   = hang (ptext (sLit "class") <+> pprIfaceDeclHead context clas tyvars <+> pprFundeps fds)
-       4 (vcat [pprRoles roles,
+       2 (vcat [pprRoles roles,
                 pprRec isrec,
                 sep (map ppr ats),
                 sep (map ppr sigs)])
@@ -1083,7 +1084,10 @@ instance Outputable IfaceClassOp where
    ppr (IfaceClassOp n dm ty) = ppr n <+> ppr dm <+> dcolon <+> ppr ty
 
 instance Outputable IfaceAT where
-   ppr (IfaceAT d defs) = hang (ppr d) 2 (vcat (map ppr defs))
+   ppr (IfaceAT d defs) 
+      = vcat [ ppr d
+             , ppUnless (null defs) $ nest 2 $
+               ptext (sLit "Defaults:") <+> vcat (map ppr defs) ]
 
 pprIfaceDeclHead :: IfaceContext -> OccName -> [IfaceTvBndr] -> SDoc
 pprIfaceDeclHead context thing tyvars
@@ -1111,9 +1115,9 @@ pprIfaceConDecl tc
          if is_infix then ptext (sLit "Infix") else empty,
          if has_wrap then ptext (sLit "HasWrapper") else empty,
          ppUnless (null strs) $
-            nest 4 (ptext (sLit "Stricts:") <+> hsep (map ppr_bang strs)),
+            nest 2 (ptext (sLit "Stricts:") <+> hsep (map ppr_bang strs)),
          ppUnless (null fields) $
-            nest 4 (ptext (sLit "Fields:") <+> hsep (map ppr fields))]
+            nest 2 (ptext (sLit "Fields:") <+> hsep (map ppr fields))]
   where
     ppr_bang IfNoBang = char '_'        -- Want to see these
     ppr_bang IfStrict = char '!'

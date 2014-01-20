@@ -18,13 +18,14 @@
     <itemizedlist>
         <listitem>
             <para>
-                GHC now supports "type holes" with the
-                <literal>TypeHoles</literal> extension. When enabled, the
-                unbound literal <literal>_</literal> may be used during
-                development in place of a regular identifier, and GHC will
-                respond with the type necessary to "fill in the hole."
+                By default, GHC has a new warning enabled,
+                <literal>-fwarn-typed-holes</literal>, which causes the
+                compiler to respond with the types of unbound
+                variables it encounters in the source code. (It is
+                reminiscient of the "holes" feature in languages such
+                as Agda.)
 
-                TODO FIXME: reference.
+                For more information, see <xref linkend="typed-holes"/>.
            </para>
        </listitem>
 
@@ -113,10 +114,8 @@
 
         <listitem>
             <para>
-                The LLVM backend now supports 128bit SIMD
-                operations. This is now exploited in both the
-                <literal>vector</literal> and <literal>dph</literal>
-                packages, exposing a high level interface.
+                The LLVM backend now supports 128- and 256-bit SIMD
+                operations.
 
                 TODO FIXME: reference.
            </para>
@@ -199,7 +198,10 @@
                 compiling with <literal>--make</literal> (which is on
                 by default,) you may also specify
                 <literal>-jN</literal> in order to compile
-                <replaceable>N</replaceable> modules in parallel.
+                <replaceable>N</replaceable> modules in
+                parallel. (Note: this will automatically scale on
+                multicore machines without specifying <literal>+RTS
+                -N</literal> to the compiler.)
            </para>
        </listitem>
 
@@ -248,7 +250,7 @@
 
             <para>
                 Note: this interface will likely see continuous
-                refinment and API changes in future releases, so it
+                refinement and API changes in future releases, so it
                 should be considered a preview.
            </para>
        </listitem>
@@ -418,6 +420,24 @@
                     in the future.
                </para>
            </listitem>
+            <listitem>
+                <para>
+                    GHC now detects annotation changes during
+                    recompilation, and correctly persists new
+                    annotations.
+               </para>
+           </listitem>
+            <listitem>
+                <para>
+                    There is a new set of primops for utilizing
+                    hardware-based prefetch instructions, to help
+                    guide the processor's caching decisions.
+               </para>
+                <para>
+                    Currently, these are only supported with the LLVM
+                    backend and x86/amd64 backends.
+               </para>
+           </listitem>
        </itemizedlist>
     </sect3>
 
@@ -441,11 +461,17 @@
                </para>
            </listitem>
 
+           <listitem>
+                <para>
+                    On Linux, the static GHCi linker now supports weak symbols.
+               </para>
+           </listitem>
+
             <listitem>
                 <para>
-                    The GHCi linker now runs constructors for linked
-                    libraries. This means for example that C code
-                    using
+                    The (static) GHCi linker now runs constructors for
+                    linked libraries. This means for example that C
+                    code using
                     <literal>__attribute__((constructor))</literal>
                     can now properly be loaded into GHCi.
                </para>
@@ -462,8 +488,27 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    TODO FIXME
+                    Template Haskell now supports Roles (TODO FIXME: elaborate?)
                </para>
+           </listitem>
+            <listitem>
+                <para>
+                    Template Haskell now supports annotation pragmas.
+               </para>
+           </listitem>
+           <listitem>
+             <para>
+                    Typed Template Haskell expressions are now supported. See
+                    <xref linkend="template-haskell"/> for more details.
+             </para>
+           </listitem>
+           <listitem>
+             <para>
+                    Template Haskell declarations, types, patterns, and
+                    <emphasis>untyped</emphasis> expressions are no longer
+                    typechecked at all. This is a backwards-compatible change
+                    since it allows strictly more programs to be typed.
+             </para>
            </listitem>
        </itemizedlist>
     </sect3>
@@ -492,6 +537,17 @@
                 <para>
                     The performance of <literal>StablePtr</literal>s and
                     <literal>StableName</literal>s has been improved.
+               </para>
+           </listitem>
+
+            <listitem>
+                <para>
+                    The default maximum stack size has
+                    increased. Previously, it defaulted to 8m
+                    (equivalent to passing <literal>+RTS
+                    -K8m</literal>. Now, GHC will use up-to 80% of the
+                    <emphasis>physical memory</emphasis> available at
+                    runtime.
                </para>
            </listitem>
        </itemizedlist>
@@ -576,18 +632,38 @@
                     The <literal>Control.Category</literal> module now has the
                     <literal>PolyKinds</literal> extension enabled, meaning
                     that instances of <literal>Category</literal> no longer
-                    need be of kind <literal>* -> * -> *</literal>
+                    need be of kind <literal>* -> * -> *</literal>.
                </para>
            </listitem>
             <listitem>
                 <para>
                     There are now <literal>Foldable</literal> and <literal>Traversable</literal>
-                    instances for <literal>Either a</literal>, <literal>Const r</literal>, and <literal>(,) a</literal>
+                    instances for <literal>Either a</literal>, <literal>Const r</literal>, and <literal>(,) a</literal>.
                </para>
            </listitem>
             <listitem>
                 <para>
-                    There is now a <literal>Data</literal> instance for <literal>Data.Version</literal>
+                    There is now a <literal>Monoid</literal> instance for <literal>Const</literal>.
+               </para>
+           </listitem>
+             <listitem>
+                <para>
+                    There is now a <literal>Data</literal> instance for <literal>Data.Version</literal>.
+               </para>
+           </listitem>
+             <listitem>
+                <para>
+                    There are now <literal>Eq</literal>, <literal>Ord</literal>, <literal>Show</literal> and <literal>Read</literal> instances for <literal>ZipList</literal>.
+               </para>
+           </listitem>
+             <listitem>
+                <para>
+                    There are now <literal>Eq</literal>, <literal>Ord</literal>, <literal>Show</literal> and <literal>Read</literal> instances for <literal>Down</literal>.
+               </para>
+           </listitem>
+             <listitem>
+                <para>
+                    There are now <literal>Eq</literal>, <literal>Ord</literal>, <literal>Show</literal>, <literal>Read</literal> and <literal>Generic</literal> instances for types in GHC.Generics (<literal>U1</literal>, <literal>Par1</literal>, <literal>Rec1</literal>, <literal>K1</literal>, <literal>M1</literal>, <literal>(:+:)</literal>, <literal>(:*:)</literal>, <literal>(:.:)</literal>).
                </para>
            </listitem>
             <listitem>
@@ -681,7 +757,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 0.7.1.0 (was 0.5.1.1)
                </para>
            </listitem>
        </itemizedlist>
@@ -692,7 +768,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 0.10.3.0 (was 0.10.0.0)
                </para>
            </listitem>
        </itemizedlist>
@@ -703,7 +779,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 1.18.1.2 (was 1.16.0)
               </para>
           </listitem>
       </itemizedlist>
@@ -714,7 +790,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 0.5.3.1 (was 0.5.0.0)
                </para>
            </listitem>
        </itemizedlist>
@@ -725,7 +801,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 1.3.0.2 (was 1.3.0.1)
                </para>
            </listitem>
        </itemizedlist>
@@ -736,7 +812,24 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 1.2.0.2 (was 1.2.0.1)
+               </para>
+           </listitem>
+            <listitem>
+                <para>
+                    The function <literal>findExecutables</literal>
+                    now correctly checks to see if the execute bit is
+                    set on Linux, rather than just looking in
+                    <literal>$PATH</literal>.
+               </para>
+           </listitem>
+            <listitem>
+                <para>
+                    There are several new functions for finding files,
+                    including <literal>findFiles</literal> and
+                    <literal>findFilesWith</literal>, which allow you
+                    to search for a file given a set of filepaths, and
+                    run a predicate over them.
                </para>
            </listitem>
        </itemizedlist>
@@ -747,7 +840,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 1.3.0.2 (was 1.3.0.1)
                </para>
            </listitem>
        </itemizedlist>
@@ -758,7 +851,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 0.3.1.0 (was 0.3.0.0)
                </para>
            </listitem>
             <listitem>
@@ -769,6 +862,17 @@
                      pragma.
                </para>
            </listitem>
+            <listitem>
+                <para>
+                    There is a new type exposed by
+                    <literal>GHC.Types</literal>, called
+                    <literal>SPEC</literal>, which can be used to
+                    inform GHC to perform call-pattern specialisation
+                    extremely aggressively. See <xref
+                    linkend="options-optimise"/> for more details
+                    concerning <literal>-fspec-constr</literal>.
+               </para>
+           </listitem>
        </itemizedlist>
     </sect3>
 
@@ -777,7 +881,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 2.0.0.3 (was 2.0.0.2)
                </para>
            </listitem>
        </itemizedlist>
@@ -788,7 +892,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 1.1.1.1 (was 1.1.1.0)
                </para>
            </listitem>
        </itemizedlist>
@@ -799,7 +903,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 3.10.0.0 (was 3.9.0.0)
                </para>
            </listitem>
        </itemizedlist>
@@ -810,7 +914,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 0.6.0.1 (was 0.6.0.0)
                </para>
            </listitem>
        </itemizedlist>
@@ -821,7 +925,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 0.5.1.0 (was 0.5.0.0)
                </para>
            </listitem>
        </itemizedlist>
@@ -832,7 +936,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 1.0.0.6 (was 1.0.0.5)
                </para>
            </listitem>
        </itemizedlist>
@@ -843,7 +947,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 1.1.0.2 (was 1.1.0.1)
                </para>
            </listitem>
        </itemizedlist>
@@ -854,7 +958,14 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 1.2.0.0 (was 1.1.0.2)
+               </para>
+           </listitem>
+            <listitem>
+                <para>
+                    Several bugs have been fixed, including deadlocks
+                    in <literal>readProcess</literal> and
+                    <literal>readProcessWithExitCode</literal>.
                </para>
            </listitem>
        </itemizedlist>
@@ -865,7 +976,12 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 2.9.0.0 (was 2.8.0.0)
+               </para>
+           </listitem>
+            <listitem>
+                <para>
+                    There is now support for annotation pragmas.
                </para>
            </listitem>
        </itemizedlist>
@@ -876,7 +992,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 1.4.1 (was 1.4.1)
                </para>
            </listitem>
        </itemizedlist>
@@ -915,7 +1031,7 @@
         <itemizedlist>
             <listitem>
                 <para>
-                    Version number XXXX (was XXXX)
+                    Version number 2.3.0.0 (was 2.3.0.0)
                </para>
            </listitem>
        </itemizedlist>

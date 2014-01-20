@@ -5,7 +5,7 @@
  * API for invoking Haskell functions via the RTS
  *
  * To understand the structure of the RTS headers, see the wiki:
- *   http://hackage.haskell.org/trac/ghc/wiki/Commentary/SourceTree/Includes
+ *   http://ghc.haskell.org/trac/ghc/wiki/Commentary/SourceTree/Includes
  *
  * --------------------------------------------------------------------------*/
 
@@ -94,14 +94,12 @@ extern void hs_init_with_rtsopts (int *argc, char **argv[]);
 extern void hs_init_ghc (int *argc, char **argv[],   // program arguments
                          RtsConfig rts_config);      // RTS configuration
 
-extern void shutdownHaskellAndExit ( int exitCode )
-#if __GNUC__ >= 3
-    __attribute__((__noreturn__))
-#endif
-    ;
+extern void shutdownHaskellAndExit (int exitCode, int fastExit)
+    GNUC3_ATTRIBUTE(__noreturn__);
 
 #ifndef mingw32_HOST_OS
-extern void shutdownHaskellAndSignal (int sig);
+extern void shutdownHaskellAndSignal (int sig, int fastExit)
+     GNUC3_ATTRIBUTE(__noreturn__);
 #endif
 
 extern void getProgArgv            ( int *argc, char **argv[] );

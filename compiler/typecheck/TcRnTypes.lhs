@@ -35,7 +35,7 @@ module TcRnTypes(
         pprTcTyThingCategory, pprPECategory,
 
         -- Template Haskell
-        ThStage(..), topStage, topAnnStage, topSpliceStage,
+        ThStage(..), PendingStuff(..), topStage, topAnnStage, topSpliceStage,
         ThLevel, impLevel, outerLevel, thLevel,
 
         -- Arrows
@@ -43,18 +43,22 @@ module TcRnTypes(
 
         -- Canonical constraints
         Xi, Ct(..), Cts, emptyCts, andCts, andManyCts, dropDerivedWC,
-        singleCt, extendCts, isEmptyCts, isCTyEqCan, isCFunEqCan,
+        singleCt, listToCts, ctsElts, extendCts, extendCtsList, 
+        isEmptyCts, isCTyEqCan, isCFunEqCan,
         isCDictCan_Maybe, isCFunEqCan_maybe,
         isCIrredEvCan, isCNonCanonical, isWantedCt, isDerivedCt,
         isGivenCt, isHoleCt,
-        ctEvidence,
-        SubGoalDepth, mkNonCanonical, mkNonCanonicalCt,
-        ctPred, ctEvPred, ctEvTerm, ctEvId,
+        ctEvidence, ctLoc, ctPred,
+        mkNonCanonical, mkNonCanonicalCt,
+        ctEvPred, ctEvTerm, ctEvId, ctEvCheckDepth,
 
         WantedConstraints(..), insolubleWC, emptyWC, isEmptyWC,
         andWC, unionsWC, addFlats, addImplics, mkFlatWC, addInsols,
 
         Implication(..),
+        SubGoalCounter(..),
+        SubGoalDepth, initialSubGoalDepth, maxSubGoalDepth,
+        bumpSubGoalDepth, subGoalCounterValue, subGoalDepthExceeded,
         CtLoc(..), ctLocSpan, ctLocEnv, ctLocOrigin,
         ctLocDepth, bumpCtLocDepth,
         setCtLocOrigin, setCtLocEnv,
@@ -65,9 +69,8 @@ module TcRnTypes(
 
         CtEvidence(..),
         mkGivenLoc,
-        isWanted, isGiven,
-        isDerived, canSolve, canRewrite,
-        CtFlavour(..), ctEvFlavour, ctFlavour,
+        isWanted, isGiven, isDerived,
+        canRewrite, canRewriteOrSame,
 
         -- Pretty printing
         pprEvVarTheta, pprWantedsWithLocs,
@@ -87,7 +90,7 @@ import TcEvidence
 import Type
 import Class    ( Class )
 import TyCon    ( TyCon )
-import DataCon  ( DataCon, FieldLabel, dataConUserType )
+import DataCon  ( DataCon, FieldLabel, dataConUserType, dataConOrigArgTys )
 import CoAxiom
 import TcType
 import Annotations
@@ -115,6 +118,14 @@ import ListSetOps
 import FastString
 
 import Data.Set (Set)
+
+#ifdef GHCI
+import Data.Map      ( Map )
+import Data.Dynamic  ( Dynamic )
+import Data.Typeable ( TypeRep )
+
+import qualified Language.Haskell.TH as TH
+#endif
 \end{code}
 
 
@@ -206,6 +217,7 @@ data TcGblEnv
 
         tcg_fix_env   :: FixityEnv,     -- ^ Just for things in this module
         tcg_field_env :: RecFieldEnv,   -- ^ Just for things in this module
+                                        -- See Note [The interactive package] in HscTypes
 
         tcg_type_env :: TypeEnv,
           -- ^ Global type env for the module we are compiling now.  All
@@ -214,6 +226,9 @@ data TcGblEnv
           --
           -- (Ids defined in this module start in the local envt, though they
           --  move to the global envt during zonking)
+          --
+          -- NB: for what "things in this module" means, see
+          -- Note [The interactive package] in HscTypes
 
         tcg_type_env_var :: TcRef TypeEnv,
                 -- Used only to initialise the interface-file
@@ -225,6 +240,7 @@ data TcGblEnv
           -- ^ Instance envt for all /home-package/ modules;
           -- Includes the dfuns in tcg_insts
         tcg_fam_inst_env :: FamInstEnv, -- ^ Ditto for family instances
+        tcg_ann_env      :: AnnEnv,     -- ^ And for annotations
 
                 -- Now a bunch of things about this module that are simply
                 -- accumulated, but never consulted until the end.
@@ -292,6 +308,20 @@ data TcGblEnv
 
         tcg_dependent_files :: TcRef [FilePath], -- ^ dependencies from addDependentFile
 
+#ifdef GHCI
+        tcg_th_topdecls :: TcRef [LHsDecl RdrName],
+        -- ^ Top-level declarations from addTopDecls
+
+        tcg_th_topnames :: TcRef NameSet,
+        -- ^ Exact names bound in top-level declarations in tcg_th_topdecls
+
+        tcg_th_modfinalizers :: TcRef [TH.Q ()],
+        -- ^ Template Haskell module finalizers
+
+        tcg_th_state :: TcRef (Map TypeRep Dynamic),
+        -- ^ Template Haskell state
+#endif /* GHCI */
+
         tcg_ev_binds  :: Bag EvBind,        -- Top-level evidence bindings
         tcg_binds     :: LHsBinds Id,       -- Value bindings in this module
         tcg_sigs      :: NameSet,           -- ...Top-level names that *lack* a signature
@@ -345,7 +375,7 @@ We gather three sorts of usage information
                (see RnNames.reportUnusedNames)
            (b) to generate version-tracking usage info in interface
                files (see MkIface.mkUsedNames)
-   This usage info is mainly gathered by the renamer's 
+   This usage info is mainly gathered by the renamer's
    gathering of free-variables
 
  * tcg_used_rdrnames
@@ -353,7 +383,7 @@ We gather three sorts of usage information
       Used only to report unused import declarations
       Notice that they are RdrNames, not Names, so we can
       tell whether the reference was qualified or unqualified, which
-      is esssential in deciding whether a particular import decl 
+      is esssential in deciding whether a particular import decl
       is unnecessary.  This info isn't present in Names.
 
  * tcg_used_selectors
@@ -434,7 +464,11 @@ data TcLclEnv           -- Changes as we move inside an expression
         tcl_loc        :: SrcSpan,         -- Source span
         tcl_ctxt       :: [ErrCtxt],       -- Error context, innermost on top
         tcl_untch      :: Untouchables,    -- Birthplace for new unification variables
+
         tcl_th_ctxt    :: ThStage,         -- Template Haskell context
+        tcl_th_bndrs   :: ThBindEnv,       -- Binding level of in-scope Names
+                                           -- defined in this module (not imported)
+
         tcl_arrow_ctxt :: ArrowCtxt,       -- Arrow-notation context
 
         tcl_rdr :: LocalRdrEnv,         -- Local name envt
@@ -470,9 +504,18 @@ data TcLclEnv           -- Changes as we move inside an expression
 
 type TcTypeEnv = NameEnv TcTyThing
 
-data TcIdBinder 
-  = TcIdBndr 
-       TcId 
+type ThBindEnv = NameEnv (TopLevelFlag, ThLevel)
+   -- Domain = all Ids bound in this module (ie not imported)
+   -- The TopLevelFlag tells if the binding is syntactically top level.
+   -- We need to know this, because the cross-stage persistence story allows
+   -- cross-stage at arbitrary types if the Id is bound at top level.
+   --
+   -- Nota bene: a ThLevel of 'outerLevel' is *not* the same as being
+   -- bound at top level!  See Note [Template Haskell levels] in TcSplice
+
+data TcIdBinder
+  = TcIdBndr
+       TcId
        TopLevelFlag    -- Tells whether the bindind is syntactically top-level
                        -- (The monomorphic Ids for a recursive group count
                        --  as not-top-level for this purpose.)
@@ -500,47 +543,50 @@ data ThStage    -- See Note [Template Haskell state diagram] in TcSplice
                 -- This code will be run *at compile time*;
                 --   the result replaces the splice
                 -- Binding level = 0
+      Bool      -- True if in a typed splice, False otherwise
 
   | Comp        -- Ordinary Haskell code
                 -- Binding level = 1
 
   | Brack                       -- Inside brackets
-      ThStage                   --   Binding level = level(stage) + 1
-      (TcRef [PendingSplice])   --   Accumulate pending splices here
-      (TcRef WantedConstraints) --     and type constraints here
+      ThStage                   --   Enclosing stage
+      PendingStuff
+
+data PendingStuff
+  = RnPendingUntyped              -- Renaming the inside of an *untyped* bracket
+      (TcRef [PendingRnSplice])   -- Pending splices in here
+
+  | RnPendingTyped                -- Renaming the inside of a *typed* bracket
+
+  | TcPending                     -- Typechecking the iniside of a typed bracket
+      (TcRef [PendingTcSplice])   --   Accumulate pending splices here
+      (TcRef WantedConstraints)   --     and type constraints here
 
 topStage, topAnnStage, topSpliceStage :: ThStage
 topStage       = Comp
-topAnnStage    = Splice
-topSpliceStage = Splice
+topAnnStage    = Splice False
+topSpliceStage = Splice False
 
 instance Outputable ThStage where
-   ppr Splice        = text "Splice"
-   ppr Comp          = text "Comp"
-   ppr (Brack s _ _) = text "Brack" <> parens (ppr s)
+   ppr (Splice _)  = text "Splice"
+   ppr Comp        = text "Comp"
+   ppr (Brack s _) = text "Brack" <> parens (ppr s)
 
 type ThLevel = Int
-        -- See Note [Template Haskell levels] in TcSplice
-        -- Incremented when going inside a bracket,
-        -- decremented when going inside a splice
-        -- NB: ThLevel is one greater than the 'n' in Fig 2 of the
-        --     original "Template meta-programming for Haskell" paper
+    -- NB: see Note [Template Haskell levels] in TcSplice
+    -- Incremented when going inside a bracket,
+    -- decremented when going inside a splice
+    -- NB: ThLevel is one greater than the 'n' in Fig 2 of the
+    --     original "Template meta-programming for Haskell" paper
 
 impLevel, outerLevel :: ThLevel
 impLevel = 0    -- Imported things; they can be used inside a top level splice
 outerLevel = 1  -- Things defined outside brackets
--- NB: Things at level 0 are not *necessarily* imported.
---      eg  $( \b -> ... )   here b is bound at level 0
---
--- For example:
---      f = ...
---      g1 = $(map ...)         is OK
---      g2 = $(f ...)           is not OK; because we havn't compiled f yet
 
 thLevel :: ThStage -> ThLevel
-thLevel Splice        = 0
-thLevel Comp          = 1
-thLevel (Brack s _ _) = thLevel s + 1
+thLevel (Splice _)  = 0
+thLevel Comp        = 1
+thLevel (Brack s _) = thLevel s + 1
 
 ---------------------------
 -- Arrow-notation context
@@ -597,8 +643,7 @@ data TcTyThing
 
   | ATcId   {           -- Ids defined in this module; may not be fully zonked
         tct_id     :: TcId,
-        tct_closed :: TopLevelFlag,   -- See Note [Bindings with closed types]
-        tct_level  :: ThLevel }
+        tct_closed :: TopLevelFlag }   -- See Note [Bindings with closed types]
 
   | ATyVar  Name TcTyVar        -- The type variable to which the lexically scoped type
                                 -- variable is bound. We only need the Name
@@ -620,7 +665,7 @@ data PromotionErr
   | FamDataConPE     -- Data constructor for a data family
                      -- See Note [AFamDataCon: not promoting data family constructors] in TcRnDriver
 
-  | RecDataConPE     -- Data constructor in a reuursive loop
+  | RecDataConPE     -- Data constructor in a recursive loop
                      -- See Note [ARecDataCon: recusion and promoting data constructors] in TcTyClsDecls
   | NoDataKinds      -- -XDataKinds not enabled
 
@@ -629,8 +674,7 @@ instance Outputable TcTyThing where     -- Debugging only
    ppr elt@(ATcId {})   = text "Identifier" <>
                           brackets (ppr (tct_id elt) <> dcolon
                                  <> ppr (varType (tct_id elt)) <> comma
-                                 <+> ppr (tct_closed elt) <> comma
-                                 <+> ppr (tct_level elt))
+                                 <+> ppr (tct_closed elt))
    ppr (ATyVar n tv)    = text "Type variable" <+> quotes (ppr n) <+> equals <+> ppr tv
    ppr (AThing k)       = text "AThing" <+> ppr k
    ppr (APromotionErr err) = text "APromotionErr" <+> ppr err
@@ -746,7 +790,7 @@ data ImportAvails
           -- Used
           --
           --   (a) to help construct the usage information in the interface
-          --       file; if we import somethign we need to recompile if the
+          --       file; if we import something we need to recompile if the
           --       export version changes
           --
           --   (b) to specify what child modules to initialise
@@ -853,7 +897,7 @@ The @WhereFrom@ type controls where the renamer looks for an interface file
 data WhereFrom
   = ImportByUser IsBootInterface        -- Ordinary user import (perhaps {-# SOURCE #-})
   | ImportBySystem                      -- Non user import.
-  | ImportByPlugin                      -- Importing a plugin; 
+  | ImportByPlugin                      -- Importing a plugin;
                                         -- See Note [Care with plugin imports] in LoadIface
 
 instance Outputable WhereFrom where
@@ -891,19 +935,16 @@ data Ct
   = CDictCan {  -- e.g.  Num xi
       cc_ev :: CtEvidence,   -- See Note [Ct/evidence invariant]
       cc_class  :: Class,
-      cc_tyargs :: [Xi],
-
-      cc_loc  :: CtLoc
+      cc_tyargs :: [Xi]
     }
 
   | CIrredEvCan {  -- These stand for yet-unusable predicates
-      cc_ev :: CtEvidence,   -- See Note [Ct/evidence invariant]
-        -- The ctev_pred of the evidence is 
+      cc_ev :: CtEvidence   -- See Note [Ct/evidence invariant]
+        -- The ctev_pred of the evidence is
         -- of form   (tv xi1 xi2 ... xin)
         --      or   (tv1 ~ ty2)   where the CTyEqCan  kind invariant fails
         --      or   (F tys ~ ty)  where the CFunEqCan kind invariant fails
         -- See Note [CIrredEvCan constraints]
-      cc_loc :: CtLoc
     }
 
   | CTyEqCan {  -- tv ~ xi      (recall xi means function free)
@@ -914,8 +955,7 @@ data Ct
        --   * We prefer unification variables on the left *JUST* for efficiency
       cc_ev :: CtEvidence,    -- See Note [Ct/evidence invariant]
       cc_tyvar  :: TcTyVar,
-      cc_rhs    :: Xi,
-      cc_loc    :: CtLoc
+      cc_rhs    :: Xi
     }
 
   | CFunEqCan {  -- F xis ~ xi
@@ -925,21 +965,17 @@ data Ct
       cc_ev     :: CtEvidence,  -- See Note [Ct/evidence invariant]
       cc_fun    :: TyCon,       -- A type function
       cc_tyargs :: [Xi],        -- Either under-saturated or exactly saturated
-      cc_rhs    :: Xi,          --    *never* over-saturated (because if so
+      cc_rhs    :: Xi           --    *never* over-saturated (because if so
                                 --    we should have decomposed)
-
-      cc_loc  :: CtLoc
     }
 
   | CNonCanonical {        -- See Note [NonCanonical Semantics]
-      cc_ev  :: CtEvidence,
-      cc_loc :: CtLoc
+      cc_ev  :: CtEvidence
     }
 
   | CHoleCan {             -- Treated as an "insoluble" constraint
                            -- See Note [Insoluble constraints]
       cc_ev  :: CtEvidence,
-      cc_loc :: CtLoc,
       cc_occ :: OccName    -- The name of this hole
     }
 \end{code}
@@ -949,7 +985,7 @@ Note [Kind orientation for CTyEqCan]
 Given an equality  (t:* ~ s:Open), we absolutely want to re-orient it.
 We can't solve it by updating t:=s, ragardless of how touchable 't' is,
 because the kinds don't work.  Indeed we don't want to leave it with
-the orientation (t ~ s), becuase if that gets into the inert set we'll
+the orientation (t ~ s), because if that gets into the inert set we'll
 start replacing t's by s's, and that too is the wrong way round.
 
 Hence in a CTyEqCan, (t:k1 ~ xi:k2) we require that k2 is a subkind of k1.
@@ -964,7 +1000,7 @@ We can't require *equal* kinds, because
 
 Note [Kind orientation for CFunEqCan]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-For (F xis ~ rhs) we require that kind(rhs) is a subkind of kind(lhs).
+For (F xis ~ rhs) we require that kind(lhs) is a subkind of kind(rhs).
 This reallly only maters when rhs is an Open type variable (since only type
 variables have Open kinds):
    F ty ~ (a:Open)
@@ -977,14 +1013,14 @@ Eg wanted1 rewrites wanted2; if both were compatible kinds before,
    wanted2 will be afterwards.  Similarly givens.
 
 Caveat:
-  - Givens from higher-rank, such as: 
-          type family T b :: * -> * -> * 
-          type instance T Bool = (->) 
+  - Givens from higher-rank, such as:
+          type family T b :: * -> * -> *
+          type instance T Bool = (->)
 
-          f :: forall a. ((T a ~ (->)) => ...) -> a -> ... 
-          flop = f (...) True 
-     Whereas we would be able to apply the type instance, we would not be able to 
-     use the given (T Bool ~ (->)) in the body of 'flop' 
+          f :: forall a. ((T a ~ (->)) => ...) -> a -> ...
+          flop = f (...) True
+     Whereas we would be able to apply the type instance, we would not be able to
+     use the given (T Bool ~ (->)) in the body of 'flop'
 
 
 Note [CIrredEvCan constraints]
@@ -995,12 +1031,12 @@ CIrredEvCan constraints are used for constraints that are "stuck"
    - but they may become soluble if we substitute for some
      of the type variables in the constraint
 
-Example 1:  (c Int), where c :: * -> Constraint.  We can't do anything 
+Example 1:  (c Int), where c :: * -> Constraint.  We can't do anything
             with this yet, but if later c := Num, *then* we can solve it
 
 Example 2:  a ~ b, where a :: *, b :: k, where k is a kind variable
             We don't want to use this to substitute 'b' for 'a', in case
-            'k' is subequently unifed with (say) *->*, because then 
+            'k' is subequently unifed with (say) *->*, because then
             we'd have ill-kinded types floating about.  Rather we want
             to defer using the equality altogether until 'k' get resolved.
 
@@ -1017,21 +1053,24 @@ the evidence may *not* be fully zonked; we are careful not to look at it
 during constraint solving.  See Note [Evidence field of CtEvidence]
 
 \begin{code}
-mkNonCanonical :: CtLoc -> CtEvidence -> Ct
-mkNonCanonical loc ev = CNonCanonical { cc_ev = ev, cc_loc = loc }
+mkNonCanonical :: CtEvidence -> Ct
+mkNonCanonical ev = CNonCanonical { cc_ev = ev }
 
 mkNonCanonicalCt :: Ct -> Ct
-mkNonCanonicalCt ct = CNonCanonical { cc_ev = cc_ev ct, cc_loc = cc_loc ct }
+mkNonCanonicalCt ct = CNonCanonical { cc_ev = cc_ev ct }
 
 ctEvidence :: Ct -> CtEvidence
 ctEvidence = cc_ev
+
+ctLoc :: Ct -> CtLoc
+ctLoc = ctev_loc . cc_ev
 
 ctPred :: Ct -> PredType
 -- See Note [Ct/evidence invariant]
 ctPred ct = ctEvPred (cc_ev ct)
 
 dropDerivedWC :: WantedConstraints -> WantedConstraints
--- See Note [Insoluble derived constraints]
+-- See Note [Dropping derived constraints]
 dropDerivedWC wc@(WC { wc_flat = flats, wc_insol = insols })
   = wc { wc_flat  = filterBag isWantedCt          flats
        , wc_insol = filterBag (not . isDerivedCt) insols  }
@@ -1039,24 +1078,29 @@ dropDerivedWC wc@(WC { wc_flat = flats, wc_insol = insols })
     -- The implications are (recursively) already filtered
 \end{code}
 
-Note [Insoluble derived constraints]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Note [Dropping derived constraints]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 In general we discard derived constraints at the end of constraint solving;
-see dropDerivedWC.  For example, 
+see dropDerivedWC.  A consequence is that
+   we never report an error for a derived constraint,
+   and hence we do not need to take much care with their CtLoc
 
- * If we have an unsolved (Ord a), we don't want to complain about 
+For example,
+
+ * If we have an unsolved (Ord a), we don't want to complain about
    an unsolved (Eq a) as well.
- * If we have kind-incompatible (a::* ~ Int#::#) equality, we 
-   don't want to complain about the kind error twice.  
+ * If we have kind-incompatible (a::* ~ Int#::#) equality, we
+   don't want to complain about the kind error twice.
 
-Arguably, for *some* derived constraints we might want to report errors. 
-Notably, functional dependencies.  If we have  
+Arguably, for *some* derived constraints we might want to report errors.
+Notably, functional dependencies.  If we have
     class C a b | a -> b
 and we have
     [W] C a b, [W] C a c
-where a,b,c are all signature variables.  Then we could reasonably
-report an error unifying (b ~ c). But it's probably not worth it;
-after all, we also get an error because we can't discharge the constraint.
+where a,b,c are all signature variables.  Then we could imagine
+reporting an error unifying (b ~ c). But it's better to report that we can't
+solve (C a b) and (C a c) since those arose directly from something the
+programmer wrote.
 
 
 %************************************************************************
@@ -1126,8 +1170,18 @@ singleCt = unitBag
 andCts :: Cts -> Cts -> Cts
 andCts = unionBags
 
+listToCts :: [Ct] -> Cts
+listToCts = listToBag
+
+ctsElts :: Cts -> [Ct]
+ctsElts = bagToList
+
 extendCts :: Cts -> Ct -> Cts
 extendCts = snocBag
+
+extendCtsList :: Cts -> [Ct] -> Cts
+extendCtsList cts xs | null xs   = cts
+                     | otherwise = cts `unionBags` listToBag xs
 
 andManyCts :: [Cts] -> Cts
 andManyCts = unionManyBags
@@ -1228,11 +1282,14 @@ data Implication
       ic_info  :: SkolemInfo,    -- See Note [Skolems in an implication]
                                  -- See Note [Shadowing in a constraint]
 
-      ic_fsks  :: [TcTyVar],   -- Extra flatten-skolems introduced by the flattening
-                               -- done by canonicalisation.
-
       ic_given  :: [EvVar],      -- Given evidence variables
                                  --   (order does not matter)
+                                 -- See Invariant (GivenInv) in TcType
+
+      ic_fsks  :: [TcTyVar],     -- Extra flatten-skolems introduced by
+                                 -- by flattening the givens
+      ic_no_eqs :: Bool,         -- True  <=> ic_givens have no equalities, for sure
+                                 -- False <=> ic_givens might have equalities
 
       ic_env   :: TcLclEnv,      -- Gives the source location and error context
                                  -- for the implicatdion, and hence for all the
@@ -1247,13 +1304,14 @@ data Implication
 
 instance Outputable Implication where
   ppr (Implic { ic_untch = untch, ic_skols = skols, ic_fsks = fsks
-              , ic_given = given
+              , ic_given = given, ic_no_eqs = no_eqs
               , ic_wanted = wanted
               , ic_binds = binds, ic_info = info })
    = ptext (sLit "Implic") <+> braces
      (sep [ ptext (sLit "Untouchables =") <+> ppr untch
-          , ptext (sLit "Skolems =") <+> ppr skols
-          , ptext (sLit "Flatten-skolems =") <+> ppr fsks
+          , ptext (sLit "Skolems =") <+> pprTvBndrs skols
+          , ptext (sLit "Flatten-skolems =") <+> pprTvBndrs fsks
+          , ptext (sLit "No-eqs =") <+> ppr no_eqs
           , ptext (sLit "Given =") <+> pprEvVars given
           , ptext (sLit "Wanted =") <+> ppr wanted
           , ptext (sLit "Binds =") <+> ppr binds
@@ -1351,28 +1409,21 @@ may be un-zonked.
 \begin{code}
 data CtEvidence
   = CtGiven { ctev_pred :: TcPredType      -- See Note [Ct/evidence invariant]
-            , ctev_evtm :: EvTerm }        -- See Note [Evidence field of CtEvidence]
+            , ctev_evtm :: EvTerm          -- See Note [Evidence field of CtEvidence]
+            , ctev_loc  :: CtLoc }
     -- Truly given, not depending on subgoals
     -- NB: Spontaneous unifications belong here
 
   | CtWanted { ctev_pred :: TcPredType     -- See Note [Ct/evidence invariant]
-             , ctev_evar :: EvVar }        -- See Note [Evidence field of CtEvidence]
+             , ctev_evar :: EvVar          -- See Note [Evidence field of CtEvidence]
+             , ctev_loc  :: CtLoc }
     -- Wanted goal
 
-  | CtDerived { ctev_pred :: TcPredType }
+  | CtDerived { ctev_pred :: TcPredType
+              , ctev_loc  :: CtLoc }
     -- A goal that we don't really have to solve and can't immediately
     -- rewrite anything other than a derived (there's no evidence!)
     -- but if we do manage to solve it may help in solving other goals.
-
-data CtFlavour = Given | Wanted | Derived
-
-ctFlavour :: Ct -> CtFlavour
-ctFlavour ct = ctEvFlavour (cc_ev ct)
-
-ctEvFlavour :: CtEvidence -> CtFlavour
-ctEvFlavour (CtGiven {})   = Given
-ctEvFlavour (CtWanted {})  = Wanted
-ctEvFlavour (CtDerived {}) = Derived
 
 ctEvPred :: CtEvidence -> TcPredType
 -- The predicate of a flavor
@@ -1384,14 +1435,15 @@ ctEvTerm (CtWanted  { ctev_evar = ev }) = EvId ev
 ctEvTerm ctev@(CtDerived {}) = pprPanic "ctEvTerm: derived constraint cannot have id"
                                       (ppr ctev)
 
+-- | Checks whether the evidence can be used to solve a goal with the given minimum depth
+ctEvCheckDepth :: SubGoalDepth -> CtEvidence -> Bool
+ctEvCheckDepth _      (CtGiven {})   = True -- Given evidence has infinite depth
+ctEvCheckDepth min ev@(CtWanted {})  = min <= ctLocDepth (ctev_loc ev)
+ctEvCheckDepth _   ev@(CtDerived {}) = pprPanic "ctEvCheckDepth: cannot consider derived evidence" (ppr ev)
+
 ctEvId :: CtEvidence -> TcId
 ctEvId (CtWanted  { ctev_evar = ev }) = ev
 ctEvId ctev = pprPanic "ctEvId:" (ppr ctev)
-
-instance Outputable CtFlavour where
-  ppr Given   = ptext (sLit "[G]")
-  ppr Wanted  = ptext (sLit "[W]")
-  ppr Derived = ptext (sLit "[D]")
 
 instance Outputable CtEvidence where
   ppr fl = case fl of
@@ -1412,28 +1464,151 @@ isDerived :: CtEvidence -> Bool
 isDerived (CtDerived {}) = True
 isDerived _              = False
 
-canSolve :: CtFlavour -> CtFlavour -> Bool
--- canSolve ctid1 ctid2
--- The constraint ctid1 can be used to solve ctid2
--- "to solve" means a reaction where the active parts of the two constraints match.
---  active(F xis ~ xi) = F xis
---  active(tv ~ xi)    = tv
---  active(D xis)      = D xis
---  active(IP nm ty)   = nm
---
--- NB:  either (a `canSolve` b) or (b `canSolve` a) must hold
 -----------------------------------------
-canSolve Given   _       = True
-canSolve Wanted  Derived = True
-canSolve Wanted  Wanted  = True
-canSolve Derived Derived = True  -- Derived can't solve wanted/given
-canSolve _ _ = False                       -- No evidence for a derived, anyway
+canRewrite :: CtEvidence -> CtEvidence -> Bool
+-- Very important function!
+-- See Note [canRewrite and canRewriteOrSame]
+canRewrite (CtGiven {})   _              = True
+canRewrite (CtWanted {})  (CtDerived {}) = True
+canRewrite (CtDerived {}) (CtDerived {}) = True  -- Derived can't solve wanted/given
+canRewrite _ _ = False             -- No evidence for a derived, anyway
 
-canRewrite :: CtFlavour -> CtFlavour -> Bool
--- canRewrite ct1 ct2
--- The equality constraint ct1 can be used to rewrite inside ct2
-canRewrite = canSolve
+canRewriteOrSame :: CtEvidence -> CtEvidence -> Bool
+canRewriteOrSame (CtGiven {})   _              = True
+canRewriteOrSame (CtWanted {})  (CtWanted {})  = True
+canRewriteOrSame (CtWanted {})  (CtDerived {}) = True
+canRewriteOrSame (CtDerived {}) (CtDerived {}) = True
+canRewriteOrSame _ _ = False
 \end{code}
+
+See Note [canRewrite and canRewriteOrSame]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+(canRewrite ct1 ct2) holds if the constraint ct1 can be used to solve ct2.
+"To solve" means a reaction where the active parts of the two constraints match.
+   active(F xis ~ xi) = F xis
+   active(tv ~ xi)    = tv
+   active(D xis)      = D xis
+   active(IP nm ty)   = nm
+
+At the moment we don't allow Wanteds to rewrite Wanteds, because that can give
+rise to very confusing type error messages.  A good example is Trac #8450.
+Here's another
+   f :: a -> Bool
+   f x = ( [x,'c'], [x,True] ) `seq` True
+Here we get
+  [W] a ~ Char
+  [W] a ~ Bool
+but we do not want to complain about Bool ~ Char!
+
+NB:  either (a `canRewrite` b) or (b `canRewrite` a)
+         or a==b
+     must hold
+
+canRewriteOrSame is similar but returns True for Wanted/Wanted.
+See the call sites for explanations.
+
+%************************************************************************
+%*                                                                      *
+            SubGoalDepth
+%*                                                                      *
+%************************************************************************
+
+Note [SubGoalDepth]
+~~~~~~~~~~~~~~~~~~~
+The 'SubGoalCounter' takes care of stopping the constraint solver from looping.
+Because of the different use-cases of regular constaints and type function
+applications, there are two independent counters. Therefore, this datatype is
+abstract. See Note [WorkList]
+
+Each counter starts at zero and increases.
+
+* The "dictionary constraint counter" counts the depth of type class
+  instance declarations.  Example:
+     [W] d{7} : Eq [Int]
+  That is d's dictionary-constraint depth is 7.  If we use the instance
+     $dfEqList :: Eq a => Eq [a]
+  to simplify it, we get
+     d{7} = $dfEqList d'{8}
+  where d'{8} : Eq Int, and d' has dictionary-constraint depth 8.
+
+  For civilised (decidable) instance declarations, each increase of
+  depth removes a type constructor from the type, so the depth never
+  gets big; i.e. is bounded by the structural depth of the type.
+
+  The flag -fcontext-stack=n (not very well named!) fixes the maximium
+  level.
+
+* The "type function reduction counter" does the same thing when resolving
+* qualities involving type functions. Example:
+  Assume we have a wanted at depth 7:
+    [W] d{7} : F () ~ a
+  If thre is an type function equation "F () = Int", this would be rewritten to
+    [W] d{8} : Int ~ a
+  and remembered as having depth 8.
+
+  Again, without UndecidableInstances, this counter is bounded, but without it
+  can resolve things ad infinitum. Hence there is a maximum level. But we use a
+  different maximum, as we expect possibly many more type function reductions
+  in sensible programs than type class constraints.
+
+  The flag -ftype-function-depth=n fixes the maximium level.
+
+\begin{code}
+data SubGoalCounter = CountConstraints | CountTyFunApps
+
+data SubGoalDepth  -- See Note [SubGoalDepth]
+   = SubGoalDepth
+         {-# UNPACK #-} !Int      -- Dictionary constraints
+         {-# UNPACK #-} !Int      -- Type function reductions
+  deriving (Eq, Ord)
+
+instance Outputable SubGoalDepth where
+ ppr (SubGoalDepth c f) =  angleBrackets $
+        char 'C' <> colon <> int c <> comma <>
+        char 'F' <> colon <> int f
+
+initialSubGoalDepth :: SubGoalDepth
+initialSubGoalDepth = SubGoalDepth 0 0
+
+maxSubGoalDepth :: DynFlags -> SubGoalDepth
+maxSubGoalDepth dflags = SubGoalDepth (ctxtStkDepth dflags) (tyFunStkDepth dflags)
+
+bumpSubGoalDepth :: SubGoalCounter -> SubGoalDepth -> SubGoalDepth
+bumpSubGoalDepth CountConstraints (SubGoalDepth c f) = SubGoalDepth (c+1) f
+bumpSubGoalDepth CountTyFunApps   (SubGoalDepth c f) = SubGoalDepth c (f+1)
+
+subGoalCounterValue :: SubGoalCounter -> SubGoalDepth -> Int
+subGoalCounterValue CountConstraints (SubGoalDepth c _) = c
+subGoalCounterValue CountTyFunApps   (SubGoalDepth _ f) = f
+
+subGoalDepthExceeded :: SubGoalDepth -> SubGoalDepth -> Maybe SubGoalCounter
+subGoalDepthExceeded (SubGoalDepth mc mf) (SubGoalDepth c f)
+        | c > mc    = Just CountConstraints
+        | f > mf    = Just CountTyFunApps
+        | otherwise = Nothing
+\end{code}
+
+Note [Preventing recursive dictionaries]
+
+We have some classes where it is not very useful to build recursive
+dictionaries (Coercible, at the moment). So we need the constraint solver to
+prevent that. We conservatively ensure this property using the subgoal depth of
+the constraints: When solving a Coercible constraint at depth d, we do not
+consider evidence from a depth <= d as suitable.
+
+Therefore we need to record the minimum depth allowed to solve a CtWanted. This
+is done in the SubGoalDepth field of CtWanted. Most code now uses mkCtWanted,
+which initializes it to initialSubGoalDepth (i.e. 0); but when requesting a
+Coercible instance (requestCoercible in TcInteract), we bump the current depth
+by one and use that.
+
+There are two spots where wanted contraints attempted to be solved using
+existing constraints; doTopReactDict in TcInteract (in the general solver) and
+newWantedEvVarNonrec (only used by requestCoercible) in TcSMonad. Both use
+ctEvCheckDepth to make the check. That function ensures that a Given constraint
+can always be used to solve a goal (i.e. they are at depth infinity, for our
+purposes)
+
 
 %************************************************************************
 %*                                                                      *
@@ -1448,21 +1623,17 @@ type will evolve...
 
 \begin{code}
 data CtLoc = CtLoc { ctl_origin :: CtOrigin
-                   , ctl_env ::  TcLclEnv
-                   , ctl_depth :: SubGoalDepth }
+                   , ctl_env    :: TcLclEnv
+                   , ctl_depth  :: !SubGoalDepth }
   -- The TcLclEnv includes particularly
   --    source location:  tcl_loc   :: SrcSpan
   --    context:          tcl_ctxt  :: [ErrCtxt]
   --    binder stack:     tcl_bndrs :: [TcIdBinders]
 
-type SubGoalDepth = Int -- An ever increasing number used to restrict
-                        -- simplifier iterations. Bounded by -fcontext-stack.
-                        -- See Note [WorkList]
-
 mkGivenLoc :: SkolemInfo -> TcLclEnv -> CtLoc
 mkGivenLoc skol_info env = CtLoc { ctl_origin = GivenOrigin skol_info
                                  , ctl_env = env
-                                 , ctl_depth = 0 }
+                                 , ctl_depth = initialSubGoalDepth }
 
 ctLocEnv :: CtLoc -> TcLclEnv
 ctLocEnv = ctl_env
@@ -1476,8 +1647,8 @@ ctLocOrigin = ctl_origin
 ctLocSpan :: CtLoc -> SrcSpan
 ctLocSpan (CtLoc { ctl_env = lcl}) = tcl_loc lcl
 
-bumpCtLocDepth :: CtLoc -> CtLoc
-bumpCtLocDepth loc@(CtLoc { ctl_depth = d }) = loc { ctl_depth = d+1 }
+bumpCtLocDepth :: SubGoalCounter -> CtLoc -> CtLoc
+bumpCtLocDepth cnt loc@(CtLoc { ctl_depth = d }) = loc { ctl_depth = bumpSubGoalDepth cnt d }
 
 setCtLocOrigin :: CtLoc -> CtOrigin -> CtLoc
 setCtLocOrigin ctl orig = ctl { ctl_origin = orig }
@@ -1598,6 +1769,9 @@ pprSkolInfo UnkSkol = WARN( True, text "pprSkolInfo: UnkSkol" ) ptext (sLit "Unk
 \begin{code}
 data CtOrigin
   = GivenOrigin SkolemInfo
+  | FlatSkolOrigin              -- Flatten-skolems created for Givens
+                                -- Note [When does an implication have given equalities?]
+                                -- in TcSimplify
 
   -- All the others are for *wanted* constraints
   | OccurrenceOf Name           -- Occurrence of an overloaded identifier
@@ -1630,6 +1804,11 @@ data CtOrigin
 
   | ScOrigin            -- Typechecking superclasses of an instance declaration
   | DerivOrigin         -- Typechecking deriving
+  | DerivOriginDC DataCon Int
+                        -- Checking constraints arising from this data con and field index
+  | DerivOriginCoerce Id Type Type
+                        -- DerivOriginCoerce id ty1 ty2: Trying to coerce class method `id` from
+                        -- `ty1` to `ty2`.
   | StandAloneDerivOrigin -- Typechecking stand-alone deriving
   | DefaultOrigin       -- Typechecking a default decl
   | DoOrigin            -- Arising from a do expression
@@ -1641,17 +1820,18 @@ data CtOrigin
   | HoleOrigin
   | UnboundOccurrenceOf RdrName
   | ListOrigin          -- An overloaded list
-  
+
 pprO :: CtOrigin -> SDoc
 pprO (GivenOrigin sk)      = ppr sk
+pprO FlatSkolOrigin        = ptext (sLit "a given flatten-skolem")
 pprO (OccurrenceOf name)   = hsep [ptext (sLit "a use of"), quotes (ppr name)]
 pprO (OccurrenceOfRecSel name) = hsep [ptext (sLit "a use of the record selector"), quotes (ppr name)]
 pprO AppOrigin             = ptext (sLit "an application")
 pprO (SpecPragOrigin name) = hsep [ptext (sLit "a specialisation pragma for"), quotes (ppr name)]
 pprO (IPOccOrigin name)    = hsep [ptext (sLit "a use of implicit parameter"), quotes (ppr name)]
 pprO RecordUpdOrigin       = ptext (sLit "a record update")
-pprO (AmbigOrigin ctxt)    = ptext (sLit "the ambiguity check for") 
-                             <+> case ctxt of 
+pprO (AmbigOrigin ctxt)    = ptext (sLit "the ambiguity check for")
+                             <+> case ctxt of
                                     FunSigCtxt name -> quotes (ppr name)
                                     InfSigCtxt name -> quotes (ppr name)
                                     _               -> pprUserTypeCtxt ctxt
@@ -1668,6 +1848,14 @@ pprO TupleOrigin           = ptext (sLit "a tuple")
 pprO NegateOrigin          = ptext (sLit "a use of syntactic negation")
 pprO ScOrigin              = ptext (sLit "the superclasses of an instance declaration")
 pprO DerivOrigin           = ptext (sLit "the 'deriving' clause of a data type declaration")
+pprO (DerivOriginDC dc n)  = hsep [ ptext (sLit "the"), speakNth n,
+                                    ptext (sLit "field of"), quotes (ppr dc),
+                                    parens (ptext (sLit "type") <+> quotes (ppr ty)) ]
+    where ty = dataConOrigArgTys dc !! (n-1)
+pprO (DerivOriginCoerce meth ty1 ty2)
+                           = fsep [ ptext (sLit "the coercion"), ptext (sLit "of the method")
+                                  , quotes (ppr meth), ptext (sLit "from type"), quotes (ppr ty1)
+                                  , ptext (sLit "to type"), quotes (ppr ty2) ]
 pprO StandAloneDerivOrigin = ptext (sLit "a 'deriving' declaration")
 pprO DefaultOrigin         = ptext (sLit "a 'default' declaration")
 pprO DoOrigin              = ptext (sLit "a do statement")

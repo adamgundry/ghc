@@ -13,12 +13,12 @@ free variables.
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
---     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
+--     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
 {-# LANGUAGE ScopedTypeVariables #-}
 module RnPat (-- main entry points
-              rnPat, rnPats, rnBindPat,
+              rnPat, rnPats, rnBindPat, rnPatAndThen,
 
               NameMaker, applyNameMaker,     -- a utility for making names:
               localRecNameMaker, topRecNameMaker,  --   sometimes we want to make local names,
@@ -26,8 +26,11 @@ module RnPat (-- main entry points
 
               rnHsRecFields1, HsRecFieldContext(..),
 
+              -- CpsRn monad
+              CpsRn, liftCps,
+
               -- Literals
-              rnLit, rnOverLit,     
+              rnLit, rnOverLit,
 
              -- Pattern Error messages that are also used elsewhere
              checkTupSize, patSigErr
@@ -36,9 +39,8 @@ module RnPat (-- main entry points
 -- ENH: thin imports to only what is necessary for patterns
 
 import {-# SOURCE #-} RnExpr ( rnLExpr )
-#ifdef GHCI
+import {-# SOURCE #-} RnSplice ( rnSplicePat )
 import {-# SOURCE #-} TcSplice ( runQuasiQuotePat )
-#endif  /* GHCI */
 
 #include "HsVersions.h"
 
@@ -49,6 +51,9 @@ import RnEnv
 import RnTypes
 import DynFlags
 import PrelNames
+import TyCon               ( tyConName )
+import DataCon             ( dataConTyCon )
+import TypeRep             ( TyThing(..) )
 import Name
 import NameSet
 import RdrName
@@ -195,7 +200,7 @@ newPatName :: NameMaker -> Located RdrName -> CpsRn Name
 newPatName (LamMk report_unused) rdr_name
   = CpsRn (\ thing_inside -> 
         do { name <- newLocalBndrRn rdr_name
-           ; (res, fvs) <- bindLocalName name (thing_inside name)
+           ; (res, fvs) <- bindLocalNames [name] (thing_inside name)
            ; when report_unused $ warnUnusedMatches [name] fvs
            ; return (res, name `delFV` fvs) })
 
@@ -204,12 +209,12 @@ newPatName (LetMk is_top fix_env) rdr_name
         do { name <- case is_top of
                        NotTopLevel -> newLocalBndrRn rdr_name
                        TopLevel    -> newTopSrcBinder rdr_name
-           ; bindLocalName name $       -- Do *not* use bindLocalNameFV here
+           ; bindLocalNames [name] $       -- Do *not* use bindLocalNameFV here
                                         -- See Note [View pattern usage]
              addLocalFixities fix_env [name] $
              thing_inside name })
                           
-    -- Note: the bindLocalName is somewhat suspicious
+    -- Note: the bindLocalNames is somewhat suspicious
     --       because it binds a top-level name as a local name.
     --       however, this binding seems to work, and it only exists for
     --       the duration of the patterns and the continuation;
@@ -223,7 +228,7 @@ Consider
   let (r, (r -> x)) = x in ...
 Here the pattern binds 'r', and then uses it *only* in the view pattern.
 We want to "see" this use, and in let-bindings we collect all uses and
-report unused variables at the binding level. So we must use bindLocalName
+report unused variables at the binding level. So we must use bindLocalNames
 here, *not* bindLocalNameFV.  Trac #3943.
 
 %*********************************************************
@@ -418,16 +423,15 @@ rnPatAndThen mk (TuplePat pats boxed _)
        ; pats' <- rnLPatsAndThen mk pats
        ; return (TuplePat pats' boxed placeHolderType) }
 
-#ifndef GHCI
-rnPatAndThen _ p@(QuasiQuotePat {}) 
-  = pprPanic "Can't do QuasiQuotePat without GHCi" (ppr p)
-#else
+rnPatAndThen _ (SplicePat splice)
+  = do { -- XXX How to deal with free variables?
+       ; (pat, _) <- liftCps $ rnSplicePat splice
+       ; return pat }
 rnPatAndThen mk (QuasiQuotePat qq)
   = do { pat <- liftCps $ runQuasiQuotePat qq
          -- Wrap the result of the quasi-quoter in parens so that we don't
          -- lose the outermost location set by runQuasiQuote (#7918) 
        ; rnPatAndThen mk (ParPat pat) }
-#endif  /* GHCI */
 
 rnPatAndThen _ pat = pprPanic "rnLPatAndThen" (ppr pat)
 
@@ -616,9 +620,14 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
     -- That is, the parent of the data constructor.  
     -- That's the parent to use for looking up record fields.
     find_tycon env con 
-      = case lookupGRE_Name env con of
-          [GRE { gre_par = ParentIs p }] -> p
-          gres  -> pprPanic "find_tycon" (ppr con $$ ppr gres)
+      | Just (ADataCon dc) <- wiredInNameTyThing_maybe con
+      = tyConName (dataConTyCon dc)   -- Special case for [], which is built-in syntax
+                                      -- and not in the GlobalRdrEnv (Trac #8448)
+      | [GRE { gre_par = ParentIs p }] <- lookupGRE_Name env con
+      = p
+
+      | otherwise
+      = pprPanic "find_tycon" (ppr con $$ ppr (lookupGRE_Name env con))
 
     dup_flds :: [[RdrName]]
         -- Each list represents a RdrName that occurred more than once

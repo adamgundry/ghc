@@ -1,17 +1,16 @@
 module TcTypeNats
   ( typeNatTyCons
   , typeNatCoAxiomRules
-  , TcBuiltInSynFamily(..)
+  , BuiltInSynFamily(..)
   ) where
 
 import Type
 import Pair
-import TcType     ( TcType )
+import TcType     ( TcType, tcEqType )
 import TyCon      ( TyCon, SynTyConRhs(..), mkSynTyCon, TyConParent(..)  )
 import Coercion   ( Role(..) )
 import TcRnTypes  ( Xi )
-import TcEvidence ( mkTcAxiomRuleCo, TcCoercion, TcBuiltInSynFamily(..) )
-import CoAxiom    ( CoAxiomRule(..) )
+import CoAxiom    ( CoAxiomRule(..), BuiltInSynFamily(..) )
 import Name       ( Name, BuiltInSyntax(..) )
 import TysWiredIn ( typeNatKind, mkWiredInTyConName
                   , promotedBoolTyCon
@@ -44,7 +43,7 @@ typeNatTyCons =
 
 typeNatAddTyCon :: TyCon
 typeNatAddTyCon = mkTypeNatFunTyCon2 name
-  TcBuiltInSynFamily
+  BuiltInSynFamily
     { sfMatchFam      = matchFamAdd
     , sfInteractTop   = interactTopAdd
     , sfInteractInert = interactInertAdd
@@ -55,7 +54,7 @@ typeNatAddTyCon = mkTypeNatFunTyCon2 name
 
 typeNatSubTyCon :: TyCon
 typeNatSubTyCon = mkTypeNatFunTyCon2 name
-  TcBuiltInSynFamily
+  BuiltInSynFamily
     { sfMatchFam      = matchFamSub
     , sfInteractTop   = interactTopSub
     , sfInteractInert = interactInertSub
@@ -66,7 +65,7 @@ typeNatSubTyCon = mkTypeNatFunTyCon2 name
 
 typeNatMulTyCon :: TyCon
 typeNatMulTyCon = mkTypeNatFunTyCon2 name
-  TcBuiltInSynFamily
+  BuiltInSynFamily
     { sfMatchFam      = matchFamMul
     , sfInteractTop   = interactTopMul
     , sfInteractInert = interactInertMul
@@ -77,7 +76,7 @@ typeNatMulTyCon = mkTypeNatFunTyCon2 name
 
 typeNatExpTyCon :: TyCon
 typeNatExpTyCon = mkTypeNatFunTyCon2 name
-  TcBuiltInSynFamily
+  BuiltInSynFamily
     { sfMatchFam      = matchFamExp
     , sfInteractTop   = interactTopExp
     , sfInteractInert = interactInertExp
@@ -98,7 +97,7 @@ typeNatLeqTyCon =
   where
   name = mkWiredInTyConName UserSyntax gHC_TYPELITS (fsLit "<=?")
                 typeNatLeqTyFamNameKey typeNatLeqTyCon
-  ops = TcBuiltInSynFamily
+  ops = BuiltInSynFamily
     { sfMatchFam      = matchFamLeq
     , sfInteractTop   = interactTopLeq
     , sfInteractInert = interactInertLeq
@@ -106,7 +105,7 @@ typeNatLeqTyCon =
 
 
 -- Make a binary built-in constructor of kind: Nat -> Nat -> Nat
-mkTypeNatFunTyCon2 :: Name -> TcBuiltInSynFamily -> TyCon
+mkTypeNatFunTyCon2 :: Name -> BuiltInSynFamily -> TyCon
 mkTypeNatFunTyCon2 op tcb =
   mkSynTyCon op
     (mkArrowKinds [ typeNatKind, typeNatKind ] typeNatKind)
@@ -277,54 +276,54 @@ mkAxiom1 str f =
 Evaluation
 -------------------------------------------------------------------------------}
 
-matchFamAdd :: [Type] -> Maybe (TcCoercion, TcType)
+matchFamAdd :: [Type] -> Maybe (CoAxiomRule, [Type], Type)
 matchFamAdd [s,t]
-  | Just 0 <- mbX = Just (mkTcAxiomRuleCo axAdd0L [t] [], t)
-  | Just 0 <- mbY = Just (mkTcAxiomRuleCo axAdd0R [s] [], s)
+  | Just 0 <- mbX = Just (axAdd0L, [t], t)
+  | Just 0 <- mbY = Just (axAdd0R, [s], s)
   | Just x <- mbX, Just y <- mbY =
-    Just (mkTcAxiomRuleCo axAddDef [s,t] [], num (x + y))
+    Just (axAddDef, [s,t], num (x + y))
   where mbX = isNumLitTy s
         mbY = isNumLitTy t
 matchFamAdd _ = Nothing
 
-matchFamSub :: [Type] -> Maybe (TcCoercion, TcType)
+matchFamSub :: [Type] -> Maybe (CoAxiomRule, [Type], Type)
 matchFamSub [s,t]
-  | Just 0 <- mbY = Just (mkTcAxiomRuleCo axSub0R [s] [], s)
+  | Just 0 <- mbY = Just (axSub0R, [s], s)
   | Just x <- mbX, Just y <- mbY, Just z <- minus x y =
-    Just (mkTcAxiomRuleCo axSubDef [s,t] [], num z)
+    Just (axSubDef, [s,t], num z)
   where mbX = isNumLitTy s
         mbY = isNumLitTy t
 matchFamSub _ = Nothing
 
-matchFamMul :: [Xi] -> Maybe (TcCoercion, Xi)
+matchFamMul :: [Type] -> Maybe (CoAxiomRule, [Type], Type)
 matchFamMul [s,t]
-  | Just 0 <- mbX = Just (mkTcAxiomRuleCo axMul0L [t] [], num 0)
-  | Just 0 <- mbY = Just (mkTcAxiomRuleCo axMul0R [s] [], num 0)
-  | Just 1 <- mbX = Just (mkTcAxiomRuleCo axMul1L [t] [], t)
-  | Just 1 <- mbY = Just (mkTcAxiomRuleCo axMul1R [s] [], s)
+  | Just 0 <- mbX = Just (axMul0L, [t], num 0)
+  | Just 0 <- mbY = Just (axMul0R, [s], num 0)
+  | Just 1 <- mbX = Just (axMul1L, [t], t)
+  | Just 1 <- mbY = Just (axMul1R, [s], s)
   | Just x <- mbX, Just y <- mbY =
-    Just (mkTcAxiomRuleCo axMulDef [s,t] [], num (x * y))
+    Just (axMulDef, [s,t], num (x * y))
   where mbX = isNumLitTy s
         mbY = isNumLitTy t
 matchFamMul _ = Nothing
 
-matchFamExp :: [Xi] -> Maybe (TcCoercion, Xi)
+matchFamExp :: [Type] -> Maybe (CoAxiomRule, [Type], Type)
 matchFamExp [s,t]
-  | Just 0 <- mbY = Just (mkTcAxiomRuleCo axExp0R [s] [], num 1)
-  | Just 1 <- mbX = Just (mkTcAxiomRuleCo axExp1L [t] [], num 1)
-  | Just 1 <- mbY = Just (mkTcAxiomRuleCo axExp1R [s] [], s)
+  | Just 0 <- mbY = Just (axExp0R, [s], num 1)
+  | Just 1 <- mbX = Just (axExp1L, [t], num 1)
+  | Just 1 <- mbY = Just (axExp1R, [s], s)
   | Just x <- mbX, Just y <- mbY =
-    Just (mkTcAxiomRuleCo axExpDef [s,t] [], num (x ^ y))
+    Just (axExpDef, [s,t], num (x ^ y))
   where mbX = isNumLitTy s
         mbY = isNumLitTy t
 matchFamExp _ = Nothing
 
-matchFamLeq :: [Xi] -> Maybe (TcCoercion, Xi)
+matchFamLeq :: [Type] -> Maybe (CoAxiomRule, [Type], Type)
 matchFamLeq [s,t]
-  | Just 0 <- mbX = Just (mkTcAxiomRuleCo axLeq0L [t] [], bool True)
+  | Just 0 <- mbX = Just (axLeq0L, [t], bool True)
   | Just x <- mbX, Just y <- mbY =
-    Just (mkTcAxiomRuleCo axLeqDef [s,t] [], bool (x <= y))
-  | eqType s t  = Just (mkTcAxiomRuleCo axLeqRefl [s] [], bool True)
+    Just (axLeqDef, [s,t], bool (x <= y))
+  | tcEqType s t  = Just (axLeqRefl, [s], bool True)
   where mbX = isNumLitTy s
         mbY = isNumLitTy t
 matchFamLeq _ = Nothing
@@ -335,30 +334,62 @@ Interact with axioms
 
 interactTopAdd :: [Xi] -> Xi -> [Pair Type]
 interactTopAdd [s,t] r
-  | Just 0 <- mbZ = [ s === num 0, t === num 0 ]
-  | Just x <- mbX, Just z <- mbZ, Just y <- minus z x = [t === num y]
-  | Just y <- mbY, Just z <- mbZ, Just x <- minus z y = [s === num x]
+  | Just 0 <- mbZ = [ s === num 0, t === num 0 ]                          -- (s + t ~ 0) => (s ~ 0, t ~ 0)
+  | Just x <- mbX, Just z <- mbZ, Just y <- minus z x = [t === num y]     -- (5 + t ~ 8) => (t ~ 3)
+  | Just y <- mbY, Just z <- mbZ, Just x <- minus z y = [s === num x]     -- (s + 5 ~ 8) => (s ~ 3)
   where
   mbX = isNumLitTy s
   mbY = isNumLitTy t
   mbZ = isNumLitTy r
 interactTopAdd _ _ = []
 
+{-
+Note [Weakened interaction rule for subtraction]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A simpler interaction here might be:
+
+  `s - t ~ r` --> `t + r ~ s`
+
+This would enable us to reuse all the code for addition.
+Unfortunately, this works a little too well at the moment.
+Consider the following example:
+
+    0 - 5 ~ r --> 5 + r ~ 0 --> (5 = 0, r = 0)
+
+This (correctly) spots that the constraint cannot be solved.
+
+However, this may be a problem if the constraint did not
+need to be solved in the first place!  Consider the following example:
+
+f :: Proxy (If (5 <=? 0) (0 - 5) (5 - 0)) -> Proxy 5
+f = id
+
+Currently, GHC is strict while evaluating functions, so this does not
+work, because even though the `If` should evaluate to `5 - 0`, we
+also evaluate the "then" branch which generates the constraint `0 - 5 ~ r`,
+which fails.
+
+So, for the time being, we only add an improvement when the RHS is a constant,
+which happens to work OK for the moment, although clearly we need to do
+something more general.
+-}
 interactTopSub :: [Xi] -> Xi -> [Pair Type]
 interactTopSub [s,t] r
-  | Just 0 <- mbZ = [ s === t ]
-  | otherwise     = [ t .+. r === s ]
+  | Just z <- mbZ = [ s === (num z .+. t) ]         -- (s - t ~ 5) => (5 + t ~ s)
   where
   mbZ = isNumLitTy r
 interactTopSub _ _ = []
 
 
 
+
+
 interactTopMul :: [Xi] -> Xi -> [Pair Type]
 interactTopMul [s,t] r
-  | Just 1 <- mbZ = [ s === num 1, t === num 1 ]
-  | Just x <- mbX, Just z <- mbZ, Just y <- divide z x = [t === num y]
-  | Just y <- mbY, Just z <- mbZ, Just x <- divide z y = [s === num x]
+  | Just 1 <- mbZ = [ s === num 1, t === num 1 ]                        -- (s * t ~ 1)  => (s ~ 1, t ~ 1)
+  | Just x <- mbX, Just z <- mbZ, Just y <- divide z x = [t === num y]  -- (3 * t ~ 15) => (t ~ 5)
+  | Just y <- mbY, Just z <- mbZ, Just x <- divide z y = [s === num x]  -- (s * 3 ~ 15) => (s ~ 5)
   where
   mbX = isNumLitTy s
   mbY = isNumLitTy t
@@ -367,9 +398,9 @@ interactTopMul _ _ = []
 
 interactTopExp :: [Xi] -> Xi -> [Pair Type]
 interactTopExp [s,t] r
-  | Just 0 <- mbZ = [ s === num 0 ]
-  | Just x <- mbX, Just z <- mbZ, Just y <- logExact  z x = [t === num y]
-  | Just y <- mbY, Just z <- mbZ, Just x <- rootExact z y = [s === num x]
+  | Just 0 <- mbZ = [ s === num 0 ]                                       -- (s ^ t ~ 0) => (s ~ 0)
+  | Just x <- mbX, Just z <- mbZ, Just y <- logExact  z x = [t === num y] -- (2 ^ t ~ 8) => (t ~ 3)
+  | Just y <- mbY, Just z <- mbZ, Just x <- rootExact z y = [s === num x] -- (s ^ 2 ~ 9) => (s ~ 3)
   where
   mbX = isNumLitTy s
   mbY = isNumLitTy t
@@ -378,7 +409,7 @@ interactTopExp _ _ = []
 
 interactTopLeq :: [Xi] -> Xi -> [Pair Type]
 interactTopLeq [s,t] r
-  | Just 0 <- mbY, Just True <- mbZ = [ s === num 0 ]
+  | Just 0 <- mbY, Just True <- mbZ = [ s === num 0 ]                     -- (s <= 0) => (s ~ 0)
   where
   mbY = isNumLitTy t
   mbZ = isBoolLitTy r
@@ -392,40 +423,40 @@ Interaction with inerts
 
 interactInertAdd :: [Xi] -> Xi -> [Xi] -> Xi -> [Pair Type]
 interactInertAdd [x1,y1] z1 [x2,y2] z2
-  | sameZ && eqType x1 x2         = [ y1 === y2 ]
-  | sameZ && eqType y1 y2         = [ x1 === x2 ]
-  where sameZ = eqType z1 z2
+  | sameZ && tcEqType x1 x2         = [ y1 === y2 ]
+  | sameZ && tcEqType y1 y2         = [ x1 === x2 ]
+  where sameZ = tcEqType z1 z2
 interactInertAdd _ _ _ _ = []
 
-{- XXX: Should we add some rules here?
-When `interactTopSub` sees `x - y ~ z`, it generates `z + y ~ x`.
-Hopefully, this should interact further and generate all additional
-needed facts that we might need. -}
 interactInertSub :: [Xi] -> Xi -> [Xi] -> Xi -> [Pair Type]
+interactInertSub [x1,y1] z1 [x2,y2] z2
+  | sameZ && tcEqType x1 x2         = [ y1 === y2 ]
+  | sameZ && tcEqType y1 y2         = [ x1 === x2 ]
+  where sameZ = tcEqType z1 z2
 interactInertSub _ _ _ _ = []
 
 interactInertMul :: [Xi] -> Xi -> [Xi] -> Xi -> [Pair Type]
 interactInertMul [x1,y1] z1 [x2,y2] z2
-  | sameZ && known (/= 0) x1 && eqType x1 x2 = [ y1 === y2 ]
-  | sameZ && known (/= 0) y1 && eqType y1 y2 = [ x1 === x2 ]
-  where sameZ   = eqType z1 z2
+  | sameZ && known (/= 0) x1 && tcEqType x1 x2 = [ y1 === y2 ]
+  | sameZ && known (/= 0) y1 && tcEqType y1 y2 = [ x1 === x2 ]
+  where sameZ   = tcEqType z1 z2
 
 interactInertMul _ _ _ _ = []
 
 interactInertExp :: [Xi] -> Xi -> [Xi] -> Xi -> [Pair Type]
 interactInertExp [x1,y1] z1 [x2,y2] z2
-  | sameZ && known (> 1) x1 && eqType x1 x2 = [ y1 === y2 ]
-  | sameZ && known (> 0) y1 && eqType y1 y2 = [ x1 === x2 ]
-  where sameZ = eqType z1 z2
+  | sameZ && known (> 1) x1 && tcEqType x1 x2 = [ y1 === y2 ]
+  | sameZ && known (> 0) y1 && tcEqType y1 y2 = [ x1 === x2 ]
+  where sameZ = tcEqType z1 z2
 
 interactInertExp _ _ _ _ = []
 
 
 interactInertLeq :: [Xi] -> Xi -> [Xi] -> Xi -> [Pair Type]
 interactInertLeq [x1,y1] z1 [x2,y2] z2
-  | bothTrue && eqType x1 y2 && eqType y1 x2 = [ x1 === y1 ]
-  | bothTrue && eqType y1 x2                 = [ (x1 <== y2) === bool True ]
-  | bothTrue && eqType y2 x1                 = [ (x2 <== y1) === bool True ]
+  | bothTrue && tcEqType x1 y2 && tcEqType y1 x2 = [ x1 === y1 ]
+  | bothTrue && tcEqType y1 x2                 = [ (x1 <== y2) === bool True ]
+  | bothTrue && tcEqType y2 x1                 = [ (x2 <== y1) === bool True ]
   where bothTrue = isJust $ do True <- isBoolLitTy z1
                                True <- isBoolLitTy z2
                                return ()

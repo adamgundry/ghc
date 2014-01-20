@@ -13,7 +13,7 @@ mutable type variables
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
---     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
+--     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
 module TcMType (
@@ -36,7 +36,7 @@ module TcMType (
   newEvVar, newEvVars, newEq, newDict,
   newWantedEvVar, newWantedEvVars,
   newTcEvBinds, addTcEvBind,
-  newFlatWanteds,
+  newFlatWanted, newFlatWanteds,
 
   --------------------------------
   -- Instantiation
@@ -163,16 +163,17 @@ predTypeOccName ty = case classifyPredType ty of
 *********************************************************************************
 
 \begin{code}
+newFlatWanted :: CtOrigin -> PredType -> TcM Ct
+newFlatWanted orig pty
+  = do loc <- getCtLoc orig
+       v <- newWantedEvVar pty
+       return $ mkNonCanonical $
+            CtWanted { ctev_evar = v
+                     , ctev_pred = pty
+                     , ctev_loc = loc }
+
 newFlatWanteds :: CtOrigin -> ThetaType -> TcM [Ct]
-newFlatWanteds orig theta
-  = do { loc <- getCtLoc orig
-       ; mapM (inst_to_wanted loc) theta }
-  where 
-    inst_to_wanted loc pty 
-          = do { v <- newWantedEvVar pty 
-               ; return $ mkNonCanonical loc $
-                 CtWanted { ctev_evar = v
-                          , ctev_pred = pty } }
+newFlatWanteds orig = mapM (newFlatWanted orig)
 \end{code}
 
 %************************************************************************
@@ -808,7 +809,7 @@ zonkFlats binds_var untch cts
       , not (tv `elemVarSet` tyVarsOfType ty_lhs)   -- Do not construct an infinite type
       = ASSERT2( case tcSplitTyConApp_maybe ty_lhs of { Just (tc,_) -> isSynFamilyTyCon tc; _ -> False }, ppr orig_ct )
         do { writeMetaTyVar tv ty_lhs
-           ; let evterm = EvCoercion (mkTcReflCo ty_lhs)
+           ; let evterm = EvCoercion (mkTcNomReflCo ty_lhs)
                  evvar  = ctev_evar (cc_ev zct)
            ; when (isWantedCt orig_ct) $         -- Can be derived (Trac #8129)
              addTcEvBind binds_var evvar evterm
@@ -874,8 +875,7 @@ zonkCt ct@(CHoleCan { cc_ev = ev })
        ; return $ ct { cc_ev = ev' } }
 zonkCt ct
   = do { fl' <- zonkCtEvidence (cc_ev ct)
-       ; return (CNonCanonical { cc_ev = fl'
-                               , cc_loc = cc_loc ct }) }
+       ; return (mkNonCanonical fl') }
 
 zonkCtEvidence :: CtEvidence -> TcM CtEvidence
 zonkCtEvidence ctev@(CtGiven { ctev_pred = pred }) 

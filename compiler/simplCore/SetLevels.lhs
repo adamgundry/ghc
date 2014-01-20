@@ -46,7 +46,7 @@
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
---     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
+--     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
 module SetLevels (
@@ -815,7 +815,9 @@ lvlLamBndrs lvl bndrs
     new_lvl | any is_major bndrs = incMajorLvl lvl
             | otherwise          = incMinorLvl lvl
 
-    is_major bndr = isId bndr && not (isOneShotLambda bndr)
+    is_major bndr = isId bndr && not (isProbablyOneShotLambda bndr)
+       -- The "probably" part says "don't float things out of a
+       -- probable one-shot lambda"
 \end{code}
 
 \begin{code}

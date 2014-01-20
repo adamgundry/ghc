@@ -95,7 +95,10 @@ TargetElf = YES
 endif
 
 # Some platforms don't support shared libraries
-NoSharedLibsPlatformList = arm-unknown-linux powerpc-unknown-linux
+NoSharedLibsPlatformList = arm-unknown-linux \
+	powerpc-unknown-linux \
+	x86_64-unknown-mingw32 \
+	i386-unknown-mingw32
 
 ifeq "$(SOLARIS_BROKEN_SHLD)" "YES"
 NoSharedLibsPlatformList += i386-unknown-solaris2
@@ -134,6 +137,7 @@ DYNAMIC_TOO = YES
 ifeq "$(TargetOS_CPP)" "mingw32"
 # This doesn't work on Windows yet
 DYNAMIC_GHC_PROGRAMS = NO
+DYNAMIC_TOO=NO
 else ifeq "$(TargetOS_CPP)" "freebsd"
 # FreeBSD cannot do proper resolution for $ORIGIN (due to a bug in
 # rtld(1)), so disable it by default (see #7819).

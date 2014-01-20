@@ -257,7 +257,7 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
              ; return (InstInfo cls_inst inst_bind) }
       where
         args = [t, n, mkTyVarTy b]
-        inst_bind = VanillaInst bind [] True
+        inst_bind = InstBindings bind [] True
           where
             bind  = unitBag $ noLoc $ (mkTopFunBind (noLoc getFieldName) [match])
                                           { bind_fvs = placeHolderNames }
@@ -289,7 +289,7 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
                ; return $ mkSimpleMatch [nlWildPat, nlConVarPat con_name vars, nlVarPat x]
                                         (nlHsVarApps con_name vars') }
 
-        inst_bind matches = VanillaInst bind [] True
+        inst_bind matches = InstBindings bind [] True
           where
             bind = unitBag $ noLoc $ (mkTopFunBind (noLoc setFieldName) all_matches)
                                          { bind_fvs = placeHolderNames }

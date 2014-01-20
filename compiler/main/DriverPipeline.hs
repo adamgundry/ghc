@@ -137,8 +137,16 @@ compileOne' m_tc_result mHscMessage
        location    = ms_location summary
        input_fn    = expectJust "compile:hs" (ml_hs_file location)
        input_fnpp  = ms_hspp_file summary
+       mod_graph   = hsc_mod_graph hsc_env0
+       needsTH     = any (xopt Opt_TemplateHaskell . ms_hspp_opts) mod_graph
+       isDynWay    = any (== WayDyn) (ways dflags0)
+   -- #8180 - when using TemplateHaskell, switch on -dynamic-too so
+   -- the linker can correctly load the object files.
+   let dflags1 = if needsTH && dynamicGhc && not isDynWay
+                  then gopt_set dflags0 Opt_BuildDynamicToo
+                  else dflags0
 
-   debugTraceMsg dflags0 2 (text "compile: input file" <+> text input_fnpp)
+   debugTraceMsg dflags1 2 (text "compile: input file" <+> text input_fnpp)
 
    let basename = dropExtension input_fn
 
@@ -146,8 +154,8 @@ compileOne' m_tc_result mHscMessage
   -- This is needed when we try to compile the .hc file later, if it
   -- imports a _stub.h file that we created here.
    let current_dir = takeDirectory basename
-       old_paths   = includePaths dflags0
-       dflags      = dflags0 { includePaths = current_dir : old_paths }
+       old_paths   = includePaths dflags1
+       dflags      = dflags1 { includePaths = current_dir : old_paths }
        hsc_env     = hsc_env0 {hsc_dflags = dflags}
 
    -- Figure out what lang we're generating
@@ -468,7 +476,7 @@ compileFile hsc_env stop_phase (src, mb_phase) = do
         throwGhcExceptionIO (CmdLineError ("does not exist: " ++ src))
 
    let
-        dflags = hsc_dflags hsc_env
+        dflags    = hsc_dflags hsc_env
         split     = gopt Opt_SplitObjs dflags
         mb_o_file = outputFile dflags
         ghc_link  = ghcLink dflags      -- Set by -c or -no-link
@@ -588,14 +596,16 @@ runPipeline stop_phase hsc_env0 (input_fn, mb_phase)
          -- -dynamic-too, but couldn't do the -dynamic-too fast
          -- path, then rerun the pipeline for the dyn way
          let dflags = extractDynFlags hsc_env
-         when isHaskellishFile $ whenCannotGenerateDynamicToo dflags $ do
-             debugTraceMsg dflags 4
-                 (text "Running the pipeline again for -dynamic-too")
-             let dflags' = dynamicTooMkDynamicDynFlags dflags
-             hsc_env' <- newHscEnv dflags'
-             _ <- runPipeline' start_phase hsc_env' env input_fn
-                               maybe_loc maybe_stub_o
-             return ()
+         -- NB: Currently disabled on Windows (ref #7134, #8228, and #5987)
+         when (not $ platformOS (targetPlatform dflags) == OSMinGW32) $ do
+           when isHaskellishFile $ whenCannotGenerateDynamicToo dflags $ do
+               debugTraceMsg dflags 4
+                   (text "Running the pipeline again for -dynamic-too")
+               let dflags' = dynamicTooMkDynamicDynFlags dflags
+               hsc_env' <- newHscEnv dflags'
+               _ <- runPipeline' start_phase hsc_env' env input_fn
+                                 maybe_loc maybe_stub_o
+               return ()
          return r
 
 runPipeline'
@@ -1790,7 +1800,16 @@ linkBinary' staticLink dflags o_files dep_packages = do
                                  -- HS packages, because libtool doesn't accept other options.
                                  -- In the case of iOS these need to be added by hand to the
                                  -- final link in Xcode.
-            else package_hs_libs ++ extra_libs ++ other_flags
+            else other_flags ++ package_hs_libs ++ extra_libs -- -Wl,-u,<sym> contained in other_flags
+                                                              -- needs to be put before -l<package>,
+                                                              -- otherwise Solaris linker fails linking
+                                                              -- a binary with unresolved symbols in RTS
+                                                              -- which are defined in base package
+                                                              -- the reason for this is a note in ld(1) about
+                                                              -- '-u' option: "The placement of this option
+                                                              -- on the command line is significant.
+                                                              -- This option must be placed before the library
+                                                              -- that defines the symbol."
 
     pkg_framework_path_opts <-
         if platformUsesFrameworks platform
@@ -1898,6 +1917,13 @@ linkBinary' staticLink dflags o_files dep_packages = do
                              platformArch platform == ArchX86 &&
                              not staticLink
                           then ["-Wl,-read_only_relocs,suppress"]
+                          else [])
+
+                      ++ (if platformOS platform == OSDarwin &&
+                             not staticLink &&
+                             not (gopt Opt_Static dflags) &&
+                             gopt Opt_RPath dflags
+                          then ["-Wl,-rpath","-Wl," ++ topDir dflags]
                           else [])
 
                       ++ o_files
@@ -2079,7 +2105,9 @@ doCpp dflags raw input_fn output_fn = do
 getBackendDefs :: DynFlags -> IO [String]
 getBackendDefs dflags | hscTarget dflags == HscLlvm = do
     llvmVer <- figureLlvmVersion dflags
-    return [ "-D__GLASGOW_HASKELL_LLVM__="++show llvmVer ]
+    return $ case llvmVer of
+               Just n -> [ "-D__GLASGOW_HASKELL_LLVM__="++show n ]
+               _      -> []
 
 getBackendDefs _ =
     return []
@@ -2096,11 +2124,12 @@ joinObjectFiles :: DynFlags -> [FilePath] -> FilePath -> IO ()
 joinObjectFiles dflags o_files output_fn = do
   let mySettings = settings dflags
       ldIsGnuLd = sLdIsGnuLd mySettings
-      ld_r args = SysTools.runLink dflags ([
+      ld_r args ccInfo = SysTools.runLink dflags ([
                             SysTools.Option "-nostdlib",
-                            SysTools.Option "-nodefaultlibs",
                             SysTools.Option "-Wl,-r"
                             ]
+                         ++ (if ccInfo == Clang then []
+                              else [SysTools.Option "-nodefaultlibs"])
                             -- gcc on sparc sets -Wl,--relax implicitly, but
                             -- -r and --relax are incompatible for ld, so
                             -- disable --relax explicitly.
@@ -2119,19 +2148,20 @@ joinObjectFiles dflags o_files output_fn = do
       ld_build_id | sLdSupportsBuildId mySettings = ["-Wl,--build-id=none"]
                   | otherwise                     = []
 
+  ccInfo <- getCompilerInfo dflags
   if ldIsGnuLd
      then do
           script <- newTempName dflags "ldscript"
           writeFile script $ "INPUT(" ++ unwords o_files ++ ")"
-          ld_r [SysTools.FileOption "" script]
+          ld_r [SysTools.FileOption "" script] ccInfo
      else if sLdSupportsFilelist mySettings
      then do
           filelist <- newTempName dflags "filelist"
           writeFile filelist $ unlines o_files
           ld_r [SysTools.Option "-Wl,-filelist",
-                SysTools.FileOption "-Wl," filelist]
+                SysTools.FileOption "-Wl," filelist] ccInfo
      else do
-          ld_r (map (SysTools.FileOption "") o_files)
+          ld_r (map (SysTools.FileOption "") o_files) ccInfo
 
 -- -----------------------------------------------------------------------------
 -- Misc.

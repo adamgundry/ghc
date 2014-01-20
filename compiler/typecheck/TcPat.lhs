@@ -10,7 +10,7 @@ TcPat: Typechecking patterns
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
---     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
+--     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
 module TcPat ( tcLetPat, TcSigFun, TcSigInfo(..), TcPragFun 
@@ -220,11 +220,11 @@ tcPatBndr (PE { pe_ctxt = LetPat lookup_sig no_gen}) bndr_name pat_ty
   | otherwise 
   = do { bndr_id <- newNoSigLetBndr no_gen bndr_name pat_ty
        ; traceTc "tcPatBndr(no-sig)" (ppr bndr_id $$ ppr (idType bndr_id))
-       ; return (mkTcReflCo pat_ty, bndr_id) }
+       ; return (mkTcNomReflCo pat_ty, bndr_id) }
 
 tcPatBndr (PE { pe_ctxt = _lam_or_proc }) bndr_name pat_ty
   = do { bndr <- mkLocalBinder bndr_name pat_ty
-       ; return (mkTcReflCo pat_ty, bndr) }
+       ; return (mkTcNomReflCo pat_ty, bndr) }
 
 ------------
 newNoSigLetBndr :: LetBndrSpec -> Name -> TcType -> TcM TcId
@@ -774,7 +774,7 @@ matchExpectedConTy data_tc pat_ty
        ; co1 <- unifyType (mkTyConApp fam_tc (substTys subst fam_args)) pat_ty
        	     -- co1 : T (ty1,ty2) ~ pat_ty
 
-       ; let co2 = mkTcUnbranchedAxInstCo co_tc tys
+       ; let co2 = mkTcUnbranchedAxInstCo Nominal co_tc tys
        	     -- co2 : T (ty1,ty2) ~ T7 ty1 ty2
 
        ; return (mkTcSymCo co2 `mkTcTransCo` co1, tys) }
@@ -853,19 +853,15 @@ tcConArgs data_con arg_tys (RecCon (HsRecFields rpats dd)) penv thing_inside
 	= case [ty | (fl, ty) <- field_tys, flLabel fl == lbl] of
 
 		-- No matching field; chances are this field label comes from some
-		-- other record type (or maybe none).  As well as reporting an
-		-- error we still want to typecheck the pattern, principally to
-		-- make sure that all the variables it binds are put into the
-		-- environment, else the type checker crashes later:
+		-- other record type (or maybe none).  If this happens, just fail,
+                -- otherwise we get crashes later (Trac #8570), and similar:
 		--	f (R { foo = (a,b) }) = a+b
 		-- If foo isn't one of R's fields, we don't want to crash when
 		-- typechecking the "a+b".
-	   [] -> do { addErrTc (badFieldCon data_con lbl)
-		    ; bogus_ty <- newFlexiTyVarTy liftedTypeKind
-		    ; return bogus_ty }
+           [] -> failWith (badFieldCon data_con lbl)
 
 		-- The normal case, when the field comes from the right constructor
-	   (pat_ty : extras) -> 
+	   (pat_ty : extras) ->
 		ASSERT( null extras )
 		return pat_ty
 

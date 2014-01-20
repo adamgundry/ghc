@@ -47,6 +47,11 @@ module BasicTypes(
         TupleSort(..), tupleSortBoxity, boxityNormalTupleSort,
         tupleParens,
 
+        -- ** The OneShotInfo type
+        OneShotInfo(..),
+        noOneShotInfo, hasNoOneShotInfo, isOneShotInfo,
+        bestOneShot, worstOneShot,
+
         OccInfo(..), seqOccInfo, zapFragileOcc, isOneOcc,
         isDeadOcc, isStrongLoopBreaker, isWeakLoopBreaker, isNoOcc,
         strongLoopBreaker, weakLoopBreaker,
@@ -58,7 +63,7 @@ module BasicTypes(
         EP(..),
 
         DefMethSpec(..),
-        SwapFlag(..), flipSwap, unSwap,
+        SwapFlag(..), flipSwap, unSwap, isSwapped,
 
         CompilerPhase(..), PhaseNum,
         Activation(..), isActive, isActiveIn,
@@ -136,6 +141,56 @@ type Alignment = Int -- align to next N-byte boundary (N must be a power of 2).
 
 %************************************************************************
 %*                                                                      *
+         One-shot information
+%*                                                                      *
+%************************************************************************
+
+\begin{code}
+-- | If the 'Id' is a lambda-bound variable then it may have lambda-bound
+-- variable info. Sometimes we know whether the lambda binding this variable
+-- is a \"one-shot\" lambda; that is, whether it is applied at most once.
+--
+-- This information may be useful in optimisation, as computations may
+-- safely be floated inside such a lambda without risk of duplicating
+-- work.
+data OneShotInfo = NoOneShotInfo -- ^ No information
+                 | ProbOneShot   -- ^ The lambda is probably applied at most once
+                 | OneShotLam    -- ^ The lambda is applied at most once.
+
+-- | It is always safe to assume that an 'Id' has no lambda-bound variable information
+noOneShotInfo :: OneShotInfo
+noOneShotInfo = NoOneShotInfo
+
+isOneShotInfo, hasNoOneShotInfo :: OneShotInfo -> Bool
+isOneShotInfo OneShotLam = True
+isOneShotInfo _          = False
+
+hasNoOneShotInfo NoOneShotInfo = True
+hasNoOneShotInfo _             = False
+
+worstOneShot, bestOneShot :: OneShotInfo -> OneShotInfo -> OneShotInfo
+worstOneShot NoOneShotInfo _             = NoOneShotInfo
+worstOneShot ProbOneShot   NoOneShotInfo = NoOneShotInfo
+worstOneShot ProbOneShot   _             = ProbOneShot
+worstOneShot OneShotLam    os            = os
+
+bestOneShot NoOneShotInfo os         = os
+bestOneShot ProbOneShot   OneShotLam = OneShotLam
+bestOneShot ProbOneShot   _          = ProbOneShot
+bestOneShot OneShotLam    _          = OneShotLam
+
+pprOneShotInfo :: OneShotInfo -> SDoc
+pprOneShotInfo NoOneShotInfo = empty
+pprOneShotInfo ProbOneShot   = ptext (sLit "ProbOneShot")
+pprOneShotInfo OneShotLam    = ptext (sLit "OneShot")
+
+instance Outputable OneShotInfo where
+    ppr = pprOneShotInfo
+\end{code}
+
+
+%************************************************************************
+%*                                                                      *
            Swap flag
 %*                                                                      *
 %************************************************************************
@@ -152,6 +207,10 @@ instance Outputable SwapFlag where
 flipSwap :: SwapFlag -> SwapFlag
 flipSwap IsSwapped  = NotSwapped
 flipSwap NotSwapped = IsSwapped
+
+isSwapped :: SwapFlag -> Bool
+isSwapped IsSwapped  = True
+isSwapped NotSwapped = False
 
 unSwap :: SwapFlag -> (a->a->b) -> a -> a -> b
 unSwap NotSwapped f a b = f a b

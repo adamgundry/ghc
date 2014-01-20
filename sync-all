@@ -163,14 +163,14 @@ sub getrepo {
         my $git_dir = $bare_flag ? "ghc.git" : ".";
         my $branch = &readgit($git_dir, "rev-parse", "--abbrev-ref", "HEAD");
         die "Bad branch: $branch"
-            unless $branch =~ m!^[a-zA-Z][a-zA-Z0-9.-/]*$!;
+            unless $branch =~ m!^[a-zA-Z][a-zA-Z0-9./-]*$!;
         my $remote = &readgit($git_dir, "config", "branch.$branch.remote");
         if ($remote eq "") {
             # remotes are not mandatory for branches (e.g. not recorded by default for bare repos)
             $remote = "origin";
         }
         die "Bad remote: $remote"
-            unless $remote =~ m!^[a-zA-Z][a-zA-Z0-9.-/]*$!;
+            unless $remote =~ m!^[a-zA-Z][a-zA-Z0-9./-]*$!;
         $repo = &readgit($git_dir, "config", "remote.$remote.url");
     }
 
@@ -405,7 +405,7 @@ sub gitall {
                 my $myhead = &readgit('.', 'rev-parse', '--verify', 'HEAD');
 
                 if (not defined($remote_heads{$myhead})) {
-                    die "Sub module $localpath needs to be pushed; see http://hackage.haskell.org/trac/ghc/wiki/Repositories/Upstream";
+                    die "Sub module $localpath needs to be pushed; see http://ghc.haskell.org/trac/ghc/wiki/Repositories/Upstream";
                 }
                 
                 chdir($initial_working_directory);
@@ -415,7 +415,7 @@ sub gitall {
             # We don't automatically push to the submodules. If you want
             # to push to them then you need to use a special command, as
             # described on
-            # http://hackage.haskell.org/trac/ghc/wiki/Repositories/Upstream
+            # http://ghc.haskell.org/trac/ghc/wiki/Repositories/Upstream
             if ($remotepath ne "-") {
                 &git($localpath, "push", @args);
             }
@@ -541,7 +541,7 @@ sub gitall {
             print (' ' x (40 - length($localpath)));
             my $branch = &readgit($localpath, "rev-parse", "--abbrev-ref", "HEAD");
             die "Bad branch: $branch"
-                unless $branch =~ m!^[a-zA-Z][a-zA-Z0-9.-/]*$!;
+                unless $branch =~ m!^[a-zA-Z][a-zA-Z0-9./-]*$!;
             my $us   = &readgit(".", "ls-remote", $localpath, "refs/heads/$branch");
             my $them = &readgit(".", "ls-remote", $compareto, "refs/heads/$branch");
             $us   =~ s/[[:space:]].*//;
@@ -639,9 +639,9 @@ get
     before "get" that enable extra repositories. The full list is
     given at the end of this help. For example:
 
-    ./sync-all --testsuite get
+    ./sync-all --nofib get
 
-    would get the testsuite repository in addition to the usual set of
+    would get the nofib repository in addition to the usual set of
     subrepositories.
 
 remote add <remote-name>
@@ -725,8 +725,6 @@ Flags given *after* the command are passed to git.
         --bare:        describes the layout of the local repository tree.
 
   --nofib also clones the nofib benchmark suite
-
-  --testsuite also clones the ghc testsuite 
 
   --extra also clone some extra library packages
 
@@ -867,7 +865,7 @@ sub main {
     if ($bare_flag && ! $bare_found && ! $defaultrepo) {
         die "error: bare repository ghc.git not found.\n"
           . "       Either clone a bare ghc repo first or specify the repo location. E.g.:\n"
-          . "       ./sync-all --bare [--testsuite --nofib --extra] -r http://git.haskell.org get\n"
+          . "       ./sync-all --bare [--nofib --extra] -r http://git.haskell.org get\n"
     }
     elsif ($bare_found) {
         $bare_flag = "--bare";
@@ -935,6 +933,22 @@ BEGIN {
         checkCurrentBranchIsMaster();
     }
     $initial_working_directory = getcwd();
+
+    #message "== Checking for left-over testsuite/.git folder";
+    if (-d "testsuite/.git") {
+        print <<EOF;
+============================
+ATTENTION!
+
+You have a left-over testsuite/.git folder in your GHC tree!
+
+Please backup or remove it (e.g. "rm -r testsuite/.git") before
+proceeding as the testsuite Git repository is now tracked as part of
+the ghc Git repository (see #8545 for more details)
+============================
+EOF
+        die "detected obsolete testsuite/.git folder"
+    }
 }
 
 END {

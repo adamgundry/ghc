@@ -1,5 +1,0 @@
-\begin{code}
-module TcEvidence where
-
-data TcBuiltInSynFamily
-\end{code}

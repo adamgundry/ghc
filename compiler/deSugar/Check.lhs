@@ -152,6 +152,7 @@ untidy b (L loc p) = L loc (untidy' b p)
     untidy' _ (BangPat {})           = panic "Check.untidy: BangPat"
     untidy' _ (ConPatOut {})         = panic "Check.untidy: ConPatOut"
     untidy' _ (ViewPat {})           = panic "Check.untidy: ViewPat"
+    untidy' _ (SplicePat {})         = panic "Check.untidy: SplicePat"
     untidy' _ (QuasiQuotePat {})     = panic "Check.untidy: QuasiQuotePat"
     untidy' _ (NPat {})              = panic "Check.untidy: NPat"
     untidy' _ (NPlusKPat {})         = panic "Check.untidy: NPlusKPat"
@@ -544,7 +545,7 @@ You can see if one constructor is infix with this clearer code :-))))))))))
 
 
 We don't mind the @nilDataCon@ because it doesn't change the way to
-print the messsage, we are searching only for things like: @[1,2,3]@,
+print the message, we are searching only for things like: @[1,2,3]@,
 not @x:xs@ ....
 
 In @reconstruct_pat@ we want to ``undo'' the work
@@ -713,6 +714,7 @@ tidy_pat (NPat lit mb_neg eq) = tidyNPat tidy_lit_pat lit mb_neg eq
 tidy_pat (LitPat lit)         = tidy_lit_pat lit
 
 tidy_pat (ConPatIn {})        = panic "Check.tidy_pat: ConPatIn"
+tidy_pat (SplicePat {})       = panic "Check.tidy_pat: SplicePat"
 tidy_pat (QuasiQuotePat {})   = panic "Check.tidy_pat: QuasiQuotePat"
 tidy_pat (SigPatIn {})        = panic "Check.tidy_pat: SigPatIn"
 

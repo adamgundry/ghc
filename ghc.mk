@@ -5,8 +5,8 @@
 # This file is part of the GHC build system.
 #
 # To understand how the build system works and how to modify it, see
-#      http://hackage.haskell.org/trac/ghc/wiki/Building/Architecture
-#      http://hackage.haskell.org/trac/ghc/wiki/Building/Modifying
+#      http://ghc.haskell.org/trac/ghc/wiki/Building/Architecture
+#      http://ghc.haskell.org/trac/ghc/wiki/Building/Modifying
 #
 # -----------------------------------------------------------------------------
 
@@ -42,7 +42,7 @@
 #
 # The actual build order is defined by dependencies, and the phase
 # ordering used to ensure correct ordering of makefile-generation; see
-#    http://hackage.haskell.org/trac/ghc/wiki/Building/Architecture/Idiom/PhaseOrdering
+#    http://ghc.haskell.org/trac/ghc/wiki/Building/Architecture/Idiom/PhaseOrdering
 #
 #     * With bootstrapping compiler:
 #           o Build utils/ghc-cabal
@@ -97,7 +97,7 @@ endif
 ifeq      "$(MAKE_RESTARTS)" ""
 else ifeq "$(MAKE_RESTARTS)" "1"
 else
-$(error Make has restarted itself $(MAKE_RESTARTS) times; is there a makefile bug? See http://hackage.haskell.org/trac/ghc/wiki/Building/Troubleshooting#Makehasrestarteditself3timesisthereamakefilebug for details)
+$(error Make has restarted itself $(MAKE_RESTARTS) times; is there a makefile bug? See http://ghc.haskell.org/trac/ghc/wiki/Building/Troubleshooting#Makehasrestarteditself3timesisthereamakefilebug for details)
 endif
 
 ifneq "$(CLEANING)" "YES"
@@ -1136,8 +1136,6 @@ sdist-ghc-prep :
 	$(call sdist_ghc_file,utils/hpc,dist-install,,,HpcParser,y)
 	$(call sdist_ghc_file,utils/genprimopcode,dist,,,Lexer,x)
 	$(call sdist_ghc_file,utils/genprimopcode,dist,,,Parser,y)
-	$(call sdist_ghc_file,utils/haddock,dist,src,Haddock,Lex,x)
-	$(call sdist_ghc_file,utils/haddock,dist,src,Haddock,Parse,y)
 	cd $(SRC_DIST_GHC_DIR) && "$(FIND)" $(SRC_DIST_GHC_DIRS) \( -name .git -o -name "autom4te*" -o -name "*~" -o -name "\#*" -o -name ".\#*" -o -name "log" -o -name "*-SAVE" -o -name "*.orig" -o -name "*.rej" \) -print | "$(XARGS)" $(XARGS_OPTS) "$(RM)" $(RM_OPTS_REC)
 
 .PHONY: sdist-windows-tarballs-prep
@@ -1220,7 +1218,7 @@ clean_libraries: $(patsubst %,clean_libraries/%_dist-boot,$(PACKAGES_STAGE0))
 
 clean_libraries:
 	$(call removeTrees,$(patsubst %, libraries/%/dist, $(PACKAGES_STAGE1) $(PACKAGES_STAGE2)))
-	$(call removeFiles,$(wildcard $(patsubst %, libraries/%/*.buildinfo, $(PACKAGES_STAGE1) $(PACKAGES_STAGE2))))
+	$(call removeFiles,$(wildcard $(patsubst %.in, %, $(wildcard $(patsubst %, libraries/%/*.buildinfo.in, $(PACKAGES_STAGE1) $(PACKAGES_STAGE2))))))
 	$(call removeFiles,$(patsubst %, libraries/%/config.log, $(PACKAGES_STAGE1) $(PACKAGES_STAGE2)))
 	$(call removeFiles,$(patsubst %, libraries/%/config.status, $(PACKAGES_STAGE1) $(PACKAGES_STAGE2)))
 	$(call removeFiles,$(wildcard $(patsubst %, libraries/%/include/Hs*Config.h, $(PACKAGES_STAGE1) $(PACKAGES_STAGE2))))

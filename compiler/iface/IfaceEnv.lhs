@@ -5,7 +5,7 @@
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
---     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
+--     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
 module IfaceEnv (
@@ -110,12 +110,14 @@ allocateGlobalBinder name_supply mod occ loc
         -- 	      Their wired-in-ness is in their NameSort
         --	      and their Module is correct.
 
-        Just name | isWiredInName name -> (name_supply, name)
-                  | mod /= iNTERACTIVE -> (new_name_supply, name')
-                     -- Note [interactive name cache]
+        Just name | isWiredInName name
+                  -> (name_supply, name)
+                  | otherwise
+                  -> (new_name_supply, name')
                   where
                     uniq            = nameUnique name
                     name'           = mkExternalName uniq mod occ loc
+                                      -- name' is like name, but with the right SrcSpan
                     new_cache       = extendNameCache (nsNames name_supply) mod occ name'
                     new_name_supply = name_supply {nsNames = new_cache}
 
@@ -127,16 +129,6 @@ allocateGlobalBinder name_supply mod occ loc
                     name            = mkExternalName uniq mod occ loc
                     new_cache       = extendNameCache (nsNames name_supply) mod occ name
                     new_name_supply = name_supply {nsUniqs = us', nsNames = new_cache}
-
-{- Note [interactive name cache]
-
-In GHCi we always create Names with the same Module, ":Interactive".
-However, we want to be able to shadow older declarations with newer
-ones, and we don't want the Name cache giving us back the same Unique
-for the new Name as for the old, hence this special case.
-
-See also Note [Outputable Orig RdrName] in HscTypes.
--}
 
 newImplicitBinder :: Name			-- Base name
 	          -> (OccName -> OccName) 	-- Occurrence name modifier
@@ -235,7 +227,7 @@ updNameCache upd_fn = do
 -- | A function that atomically updates the name cache given a modifier
 -- function.  The second result of the modifier function will be the result
 -- of the IO action.
-data NameCacheUpdater = NCU { updateNameCache :: forall c. (NameCache -> (NameCache, c)) -> IO c }
+newtype NameCacheUpdater = NCU { updateNameCache :: forall c. (NameCache -> (NameCache, c)) -> IO c }
 
 -- | Return a function to atomically update the name cache.
 mkNameCacheUpdater :: TcRnIf a b NameCacheUpdater

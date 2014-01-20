@@ -120,15 +120,15 @@ emitCallWithExtraStack (callConv, retConv) fun args extra_stack
 
 
 adjustHpBackwards :: FCode ()
--- This function adjusts and heap pointers just before a tail call or
+-- This function adjusts the heap pointer just before a tail call or
 -- return.  At a call or return, the virtual heap pointer may be less
 -- than the real Hp, because the latter was advanced to deal with
 -- the worst-case branch of the code, and we may be in a better-case
 -- branch.  In that case, move the real Hp *back* and retract some
 -- ticky allocation count.
 --
--- It *does not* deal with high-water-mark adjustment.
--- That's done by functions which allocate heap.
+-- It *does not* deal with high-water-mark adjustment.  That's done by
+-- functions which allocate heap.
 adjustHpBackwards
   = do  { hp_usg <- getHpUsage
         ; let rHp = realHp hp_usg
@@ -138,9 +138,9 @@ adjustHpBackwards
 
         ; emit (if adjust_words == 0
                 then mkNop
-                else mkAssign hpReg new_hp)        -- Generates nothing when vHp==rHp
+                else mkAssign hpReg new_hp) -- Generates nothing when vHp==rHp
 
-        ; tickyAllocHeap False adjust_words                -- ...ditto
+        ; tickyAllocHeap False adjust_words -- ...ditto
 
         ; setRealHp vHp
         }
@@ -176,16 +176,88 @@ directCall conv lbl arity stg_args
 slowCall :: CmmExpr -> [StgArg] -> FCode ReturnKind
 -- (slowCall fun args) applies fun to args, returning the results to Sequel
 slowCall fun stg_args
-  = do  { dflags <- getDynFlags
-        ; argsreps <- getArgRepsAmodes stg_args
-        ; let (rts_fun, arity) = slowCallPattern (map fst argsreps)
-        ; r <- direct_call "slow_call" NativeNodeCall
+  = do  dflags <- getDynFlags
+        argsreps <- getArgRepsAmodes stg_args
+        let (rts_fun, arity) = slowCallPattern (map fst argsreps)
+
+        (r, slow_code) <- getCodeR $ do
+           r <- direct_call "slow_call" NativeNodeCall
                  (mkRtsApFastLabel rts_fun) arity ((P,Just fun):argsreps)
-        ; emitComment $ mkFastString ("slow_call for " ++
+           emitComment $ mkFastString ("slow_call for " ++
                                       showSDoc dflags (ppr fun) ++
                                       " with pat " ++ unpackFS rts_fun)
-        ; return r
-        }
+           return r
+
+        -- Note [avoid intermediate PAPs]
+        let n_args = length stg_args
+        if n_args > arity && optLevel dflags >= 2
+           then do
+             funv <- (CmmReg . CmmLocal) `fmap` assignTemp fun
+             fun_iptr <- (CmmReg . CmmLocal) `fmap`
+                    assignTemp (closureInfoPtr dflags (cmmUntag dflags funv))
+
+             -- ToDo: we could do slightly better here by reusing the
+             -- continuation from the slow call, which we have in r.
+             -- Also we'd like to push the continuation on the stack
+             -- before the branch, so that we only get one copy of the
+             -- code that saves all the live variables across the
+             -- call, but that might need some improvements to the
+             -- special case in the stack layout code to handle this
+             -- (see Note [diamond proc point]).
+
+             fast_code <- getCode $
+                emitCall (NativeNodeCall, NativeReturn)
+                  (entryCode dflags fun_iptr)
+                  (nonVArgs ((P,Just funv):argsreps))
+
+             slow_lbl <- newLabelC
+             fast_lbl <- newLabelC
+             is_tagged_lbl <- newLabelC
+             end_lbl <- newLabelC
+
+             let correct_arity = cmmEqWord dflags (funInfoArity dflags fun_iptr)
+                                                  (mkIntExpr dflags n_args)
+
+             emit (mkCbranch (cmmIsTagged dflags funv) is_tagged_lbl slow_lbl
+                   <*> mkLabel is_tagged_lbl
+                   <*> mkCbranch correct_arity fast_lbl slow_lbl
+                   <*> mkLabel fast_lbl
+                   <*> fast_code
+                   <*> mkBranch end_lbl
+                   <*> mkLabel slow_lbl
+                   <*> slow_code
+                   <*> mkLabel end_lbl)
+             return r
+
+           else do
+             emit slow_code
+             return r
+
+
+-- Note [avoid intermediate PAPs]
+--
+-- A slow call which needs multiple generic apply patterns will be
+-- almost guaranteed to create one or more intermediate PAPs when
+-- applied to a function that takes the correct number of arguments.
+-- We try to avoid this situation by generating code to test whether
+-- we are calling a function with the correct number of arguments
+-- first, i.e.:
+--
+--   if (TAG(f) != 0} {  // f is not a thunk
+--      if (f->info.arity == n) {
+--         ... make a fast call to f ...
+--      }
+--   }
+--   ... otherwise make the slow call ...
+--
+-- We *only* do this when the call requires multiple generic apply
+-- functions, which requires pushing extra stack frames and probably
+-- results in intermediate PAPs.  (I say probably, because it might be
+-- that we're over-applying a function, but that seems even less
+-- likely).
+--
+-- This very rarely applies, but if it does happen in an inner loop it
+-- can have a severe impact on performance (#6084).
 
 
 --------------

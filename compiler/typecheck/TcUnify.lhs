@@ -10,7 +10,7 @@ Type subsumption and unification
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
---     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
+--     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
 module TcUnify (
@@ -131,7 +131,7 @@ matchExpectedFunTys herald arity orig_ty
     -- then   co : ty ~ t1 -> .. -> tn -> ty_r
 
     go n_req ty
-      | n_req == 0 = return (mkTcReflCo ty, [], ty)
+      | n_req == 0 = return (mkTcNomReflCo ty, [], ty)
 
     go n_req ty
       | Just ty' <- tcView ty = go n_req ty'
@@ -139,7 +139,7 @@ matchExpectedFunTys herald arity orig_ty
     go n_req (FunTy arg_ty res_ty)
       | not (isPredTy arg_ty)
       = do { (co, tys, ty_r) <- go (n_req-1) res_ty
-           ; return (mkTcFunCo (mkTcReflCo arg_ty) co, arg_ty:tys, ty_r) }
+           ; return (mkTcFunCo Nominal (mkTcNomReflCo arg_ty) co, arg_ty:tys, ty_r) }
 
     go n_req ty@(TyVarTy tv)
       | ASSERT( isTcTyVar tv) isMetaTyVar tv
@@ -222,7 +222,7 @@ matchExpectedTyConApp tc orig_ty
 
     go ty@(TyConApp tycon args) 
        | tc == tycon  -- Common case
-       = return (mkTcReflCo ty, args)
+       = return (mkTcNomReflCo ty, args)
 
     go (TyVarTy tv)
        | ASSERT( isTcTyVar tv) isMetaTyVar tv
@@ -267,7 +267,7 @@ matchExpectedAppTy orig_ty
       | Just ty' <- tcView ty = go ty'
 
       | Just (fun_ty, arg_ty) <- tcSplitAppTy_maybe ty
-      = return (mkTcReflCo orig_ty, (fun_ty, arg_ty))
+      = return (mkTcNomReflCo orig_ty, (fun_ty, arg_ty))
 
     go (TyVarTy tv)
       | ASSERT( isTcTyVar tv) isMetaTyVar tv
@@ -440,17 +440,15 @@ newImplication :: SkolemInfo -> [TcTyVar]
 newImplication skol_info skol_tvs given thing_inside
   = ASSERT2( all isTcTyVar skol_tvs, ppr skol_tvs )
     ASSERT2( all isSkolemTyVar skol_tvs, ppr skol_tvs )
-    do { let no_equalities = not (hasEqualities given)
-       ; ((result, untch), wanted) <- captureConstraints  $ 
+    do { ((result, untch), wanted) <- captureConstraints  $ 
                                       captureUntouchables $
                                       thing_inside
 
-       ; if isEmptyWC wanted && no_equalities
-       	    -- Optimisation : if there are no wanteds, and the givens
-       	    -- are sufficiently simple, don't generate an implication
-       	    -- at all.  Reason for the hasEqualities test:
-	    -- we don't want to lose the "inaccessible alternative"
-	    -- error check
+       ; if isEmptyWC wanted && null given
+       	    -- Optimisation : if there are no wanteds, and no givens
+       	    -- don't generate an implication at all.
+            -- Reason for the (null given): we don't want to lose 
+            -- the "inaccessible alternative" error check
          then 
             return (emptyTcEvBinds, result)
          else do
@@ -459,6 +457,7 @@ newImplication skol_info skol_tvs given thing_inside
        ; emitImplication $ Implic { ic_untch = untch
              		     	  , ic_skols = skol_tvs
                                   , ic_fsks  = []
+                                  , ic_no_eqs = False
                              	  , ic_given = given
                                   , ic_wanted = wanted
                                   , ic_insol  = insolubleWC wanted
@@ -539,9 +538,10 @@ uType, uType_defer
 uType_defer origin ty1 ty2
   = do { eqv <- newEq ty1 ty2
        ; loc <- getCtLoc origin
-       ; let ctev = CtWanted { ctev_evar = eqv
-                             , ctev_pred = mkTcEqPred ty1 ty2 }
-       ; emitFlat $ mkNonCanonical loc ctev 
+       ; emitFlat $ mkNonCanonical $
+             CtWanted { ctev_evar = eqv
+                      , ctev_pred = mkTcEqPred ty1 ty2
+                      , ctev_loc = loc }
 
        -- Error trace only
        -- NB. do *not* call mkErrInfo unless tracing is on, because
@@ -603,7 +603,7 @@ uType origin orig_ty1 orig_ty2
     go (FunTy fun1 arg1) (FunTy fun2 arg2)
       = do { co_l <- uType origin fun1 fun2
            ; co_r <- uType origin arg1 arg2
-           ; return $ mkTcFunCo co_l co_r }
+           ; return $ mkTcFunCo Nominal co_l co_r }
 
         -- Always defer if a type synonym family (type function)
       	-- is involved.  (Data families behave rigidly.)
@@ -616,11 +616,11 @@ uType origin orig_ty1 orig_ty2
       -- See Note [Mismatched type lists and application decomposition]
       | tc1 == tc2, length tys1 == length tys2
       = do { cos <- zipWithM (uType origin) tys1 tys2
-           ; return $ mkTcTyConAppCo tc1 cos }
+           ; return $ mkTcTyConAppCo Nominal tc1 cos }
 
     go (LitTy m) ty@(LitTy n)
       | m == n
-      = return $ mkTcReflCo ty
+      = return $ mkTcNomReflCo ty
 
 	-- See Note [Care with type applications]
         -- Do not decompose FunTy against App; 
@@ -768,7 +768,7 @@ uUnfilledVar :: CtOrigin
 
 uUnfilledVar origin swapped tv1 details1 (TyVarTy tv2)
   | tv1 == tv2  -- Same type variable => no-op
-  = return (mkTcReflCo (mkTyVarTy tv1))
+  = return (mkTcNomReflCo (mkTyVarTy tv1))
 
   | otherwise  -- Distinct type variables
   = do  { lookup2 <- lookupTcTyVar tv2
@@ -1043,7 +1043,7 @@ lookupTcTyVar tyvar
 updateMeta :: TcTyVar -> TcRef MetaDetails -> TcType -> TcM TcCoercion
 updateMeta tv1 ref1 ty2
   = do { writeMetaTyVarRef tv1 ref1 ty2
-       ; return (mkTcReflCo ty2) }
+       ; return (mkTcNomReflCo ty2) }
 \end{code}
 
 Note [Unifying untouchables]

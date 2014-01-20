@@ -14,36 +14,38 @@ module Demand (
         mkProdDmd, mkOnceUsedDmd, mkManyUsedDmd, mkHeadStrict, oneifyDmd,
         getUsage, toCleanDmd, 
         absDmd, topDmd, botDmd, seqDmd,
-        lubDmd, bothDmd,
+        lubDmd, bothDmd, apply1Dmd, apply2Dmd, 
         isTopDmd, isBotDmd, isAbsDmd, isSeqDmd, 
         peelUseCall, cleanUseDmd_maybe, strictenDmd, bothCleanDmd,
 
-        DmdType(..), dmdTypeDepth, lubDmdType, bothDmdEnv, bothDmdType,
-        topDmdType, botDmdType, mkDmdType, mkTopDmdType, 
+        DmdType(..), dmdTypeDepth, lubDmdType, bothDmdType,
+        nopDmdType, botDmdType, mkDmdType,
+        addDemand,
+        BothDmdArg, mkBothDmdArg, toBothDmdArg,
 
         DmdEnv, emptyDmdEnv,
+        peelFV,
 
         DmdResult, CPRResult,
-        isBotRes, isTopRes, resTypeArgDmd, 
-        topRes, botRes, cprProdRes, cprSumRes,
+        isBotRes, isTopRes,
+        topRes, botRes, cprProdRes, vanillaCprProdRes, cprSumRes,
         appIsBottom, isBottomingSig, pprIfaceStrictSig, 
-        returnsCPR, returnsCPRProd, returnsCPR_maybe,
-        StrictSig(..), mkStrictSig, topSig, botSig, cprProdSig,
-        isTopSig, splitStrictSig, increaseStrictSigArity,
-       
+        trimCPRInfo, returnsCPR_maybe,
+        StrictSig(..), mkStrictSig, mkClosedStrictSig, nopSig, botSig, cprProdSig,
+        isNopSig, splitStrictSig, increaseStrictSigArity,
+
         seqDemand, seqDemandList, seqDmdType, seqStrictSig, 
 
         evalDmd, cleanEvalDmd, cleanEvalProdDmd, isStrictDmd, 
         splitDmdTy, splitFVs,
-        deferDmd, deferType, deferAndUse, deferEnv, modifyEnv,
+        deferAfterIO,
+        postProcessUnsat, postProcessDmdTypeM,
 
         splitProdDmd, splitProdDmd_maybe, peelCallDmd, mkCallDmd,
         dmdTransformSig, dmdTransformDataConSig, dmdTransformDictSelSig,
         argOneShots, argsOneShots,
 
-        isSingleUsed, useType, useEnv, zapDemand, zapStrictSig,
-
-        worthSplittingFun, worthSplittingThunk,
+        isSingleUsed, reuseEnv, zapDemand, zapStrictSig,
 
         strictifyDictDmd
 
@@ -54,12 +56,13 @@ module Demand (
 import StaticFlags
 import DynFlags
 import Outputable
+import Var ( Var )
 import VarEnv
 import UniqFM
 import Util
 import BasicTypes
 import Binary
-import Maybes           ( isJust, expectJust )
+import Maybes           ( orElse )
 
 import Type            ( Type )
 import TyCon           ( isNewTyCon, isClassTyCon )
@@ -86,6 +89,7 @@ import DataCon         ( splitDataProductType_maybe )
 data StrDmd
   = HyperStr             -- Hyper-strict 
                          -- Bottom of the lattice
+                         -- Note [HyperStr and Use demands]
 
   | SCall StrDmd         -- Call demand
                          -- Used only for values of function type
@@ -395,23 +399,25 @@ Compare with: (C) making Used win for both, but UProd win for lub
 
 
 \begin{code}
-markAsUsedDmd :: MaybeUsed -> MaybeUsed
-markAsUsedDmd Abs         = Abs
-markAsUsedDmd (Use _ a)   = Use Many (markUsed a)
+-- If a demand is used multiple times (i.e. reused), than any use-once
+-- mentioned there, that is not protected by a UCall, can happen many times.
+markReusedDmd :: MaybeUsed -> MaybeUsed
+markReusedDmd Abs         = Abs
+markReusedDmd (Use _ a)   = Use Many (markReused a)
 
-markUsed :: UseDmd -> UseDmd
-markUsed (UCall _ u)      = UCall Many u   -- No need to recurse here
-markUsed (UProd ux)       = UProd (map markAsUsedDmd ux)
-markUsed u                = u
+markReused :: UseDmd -> UseDmd
+markReused (UCall _ u)      = UCall Many u   -- No need to recurse here
+markReused (UProd ux)       = UProd (map markReusedDmd ux)
+markReused u                = u
 
 isUsedMU :: MaybeUsed -> Bool
--- True <=> markAsUsedDmd d = d
+-- True <=> markReusedDmd d = d
 isUsedMU Abs          = True
 isUsedMU (Use One _)  = False
 isUsedMU (Use Many u) = isUsedU u
 
 isUsedU :: UseDmd -> Bool
--- True <=> markUsed d = d
+-- True <=> markReused d = d
 isUsedU Used           = True
 isUsedU UHead          = True
 isUsedU (UProd us)     = all isUsedMU us
@@ -436,7 +442,7 @@ seqMaybeUsed _          = ()
 splitUseProdDmd :: Int -> UseDmd -> [MaybeUsed]
 splitUseProdDmd n Used          = replicate n useTop
 splitUseProdDmd n UHead         = replicate n Abs
-splitUseProdDmd n (UProd ds)    = ASSERT( ds `lengthIs` n ) ds
+splitUseProdDmd n (UProd ds)    = ASSERT2( ds `lengthIs` n, ppr n $$ ppr ds ) ds
 splitUseProdDmd _ d@(UCall _ _) = pprPanic "attempt to prod-split usage call demand" (ppr d)
 \end{code}
   
@@ -464,6 +470,11 @@ mkJointDmds ss as = zipWithEqual "mkJointDmds" mkJointDmd ss as
      
 absDmd :: JointDmd
 absDmd = mkJointDmd Lazy Abs
+
+apply1Dmd, apply2Dmd :: Demand
+-- C1(U), C1(C1(U)) respectively
+apply1Dmd = JD { strd = Lazy, absd = Use Many (UCall One Used) }
+apply2Dmd = JD { strd = Lazy, absd = Use Many (UCall One (UCall One Used)) }
 
 topDmd :: JointDmd
 topDmd = mkJointDmd Lazy useTop
@@ -506,9 +517,6 @@ seqDemandList :: [JointDmd] -> ()
 seqDemandList [] = ()
 seqDemandList (d:ds) = seqDemand d `seq` seqDemandList ds
 
-deferDmd :: JointDmd -> JointDmd
-deferDmd (JD {absd = a}) = mkJointDmd Lazy a 
-
 isStrictDmd :: Demand -> Bool
 -- See Note [Strict demands]
 isStrictDmd (JD {absd = Abs})  = False
@@ -517,9 +525,6 @@ isStrictDmd _                  = True
 
 isWeakDmd :: Demand -> Bool
 isWeakDmd (JD {strd = s, absd = a}) = isLazy s && isUsedMU a
-
-useDmd :: JointDmd -> JointDmd
-useDmd (JD {strd=d, absd=a}) = mkJointDmd d (markAsUsedDmd a)
 
 cleanUseDmd_maybe :: JointDmd -> Maybe UseDmd
 cleanUseDmd_maybe (JD { absd = Use _ ud }) = Just ud
@@ -621,30 +626,6 @@ mkCallDmd :: CleanDemand -> CleanDemand
 mkCallDmd (CD {sd = d, ud = u}) 
   = mkCleanDmd (mkSCall d) (mkUCall One u)
 
--- Returns result demand * strictness flag * one-shotness of the call 
-peelCallDmd :: CleanDemand 
-            -> ( CleanDemand
-               , Bool      -- True <=> had to strengthen from HeadStr
-                           --          hence defer results
-               , Count)    -- Call count
-
--- Exploiting the fact that 
--- on the strictness side      C(B) = B
--- and on the usage side       C(U) = U 
-peelCallDmd (CD {sd = s, ud = u}) 
-  = let (s', b) = peel_s s
-        (u', c) = peel_u u
-    in  (mkCleanDmd s' u', b, c)
-  where
-    peel_s (SCall s)   = (s,        False)
-    peel_s HyperStr    = (HyperStr, False)
-    peel_s _           = (HeadStr,  True)
-
-    peel_u (UCall c u) = (u,       c)
-    peel_u _           = (Used, Many)
-       -- The last case includes UHead which seems a bit wrong
-       -- because the body isn't used at all!
-
 cleanEvalDmd :: CleanDemand
 cleanEvalDmd = mkCleanDmd HeadStr Used
 
@@ -702,144 +683,165 @@ splitProdDmd_maybe (JD {strd = s, absd = u})
 
 %************************************************************************
 %*                                                                      *
-\subsection{Demand results}
+                   Demand results
 %*                                                                      *
 %************************************************************************
+
+
+DmdResult:     Dunno CPRResult
+               /
+        Diverges
+
+
+CPRResult:         NoCPR
+                   /    \
+            RetProd    RetSum ConTag
+
+
+Product contructors return (Dunno (RetProd rs))
+In a fixpoint iteration, start from Diverges
+We have lubs, but not glbs; but that is ok.
+
 
 \begin{code}
 ------------------------------------------------------------------------
 -- Constructed Product Result                                             
 ------------------------------------------------------------------------
 
-data CPRResult = NoCPR              -- Top of the lattice
-               | RetProd            -- Returns a constructor from a product type
-               | RetSum ConTag      -- Returns a constructor from a sum type with this tag
-               | BotCPR             -- Returns a constructor with any tag
-                                    -- Bottom of the domain
+data Termination r = Diverges    -- Definitely diverges
+                   | Dunno r     -- Might diverge or converge
+               deriving( Eq, Show )
+
+type DmdResult = Termination CPRResult
+
+data CPRResult = NoCPR          -- Top of the lattice
+               | RetProd        -- Returns a constructor from a product type
+               | RetSum ConTag  -- Returns a constructor from a data type
                deriving( Eq, Show )
 
 lubCPR :: CPRResult -> CPRResult -> CPRResult
-lubCPR BotCPR      r           = r
-lubCPR RetProd     BotCPR      = RetProd
-lubCPR (RetSum t)  BotCPR      = RetSum t
 lubCPR (RetSum t1) (RetSum t2) 
-  | t1 == t2                   = RetSum t1
+  | t1 == t2                       = RetSum t1
 lubCPR RetProd     RetProd     = RetProd
 lubCPR _ _                     = NoCPR
 
-bothCPR :: CPRResult -> CPRResult -> CPRResult
+lubDmdResult :: DmdResult -> DmdResult -> DmdResult
+lubDmdResult Diverges       r              = r
+lubDmdResult (Dunno c1)     Diverges       = Dunno c1
+lubDmdResult (Dunno c1)     (Dunno c2)     = Dunno (c1 `lubCPR` c2)
+-- This needs to commute with defaultDmd, i.e.
+-- defaultDmd (r1 `lubDmdResult` r2) = defaultDmd r1 `lubDmd` defaultDmd r2
+-- (See Note [Default demand on free variables] for why)
+
+bothDmdResult :: DmdResult -> Termination () -> DmdResult
 -- See Note [Asymmetry of 'both' for DmdType and DmdResult]
-bothCPR _ BotCPR = BotCPR   -- If either diverges, we diverge
-bothCPR r _      = r
+bothDmdResult _              Diverges   = Diverges
+bothDmdResult r              _          = r
+-- This needs to commute with defaultDmd, i.e.
+-- defaultDmd (r1 `bothDmdResult` r2) = defaultDmd r1 `bothDmd` defaultDmd r2
+-- (See Note [Default demand on free variables] for why)
 
 instance Outputable DmdResult where
-  ppr RetProd    = char 'm' 
-  ppr (RetSum n) = char 'm' <> int n  
-  ppr BotCPR     = char 'b'   
-  ppr NoCPR      = empty   -- Keep these distinct from Demand letters
+  ppr Diverges      = char 'b'
+  ppr (Dunno c)     = ppr c
+
+instance Outputable CPRResult where
+  ppr NoCPR        = empty
+  ppr (RetSum n)   = char 'm' <> int n
+  ppr RetProd      = char 'm'
+
+seqDmdResult :: DmdResult -> ()
+seqDmdResult Diverges = ()
+seqDmdResult (Dunno c)     = seqCPRResult c
+
+seqCPRResult :: CPRResult -> ()
+seqCPRResult NoCPR        = ()
+seqCPRResult (RetSum n)   = n `seq` ()
+seqCPRResult RetProd      = ()
+
 
 ------------------------------------------------------------------------
 -- Combined demand result                                             --
 ------------------------------------------------------------------------
-type DmdResult = CPRResult
-
-lubDmdResult :: DmdResult -> DmdResult -> DmdResult
-lubDmdResult = lubCPR
-
-bothDmdResult :: DmdResult -> DmdResult -> DmdResult
-bothDmdResult = bothCPR
-
-seqDmdResult :: DmdResult -> ()
-seqDmdResult r = r `seq` ()
 
 -- [cprRes] lets us switch off CPR analysis
 -- by making sure that everything uses TopRes
 topRes, botRes :: DmdResult
-topRes = NoCPR
-botRes = BotCPR
+topRes = Dunno NoCPR
+botRes = Diverges
 
 cprSumRes :: ConTag -> DmdResult
 cprSumRes tag | opt_CprOff = topRes
-              | otherwise  = RetSum tag
-cprProdRes :: DmdResult
-cprProdRes | opt_CprOff = topRes
-           | otherwise  = RetProd
+              | otherwise  = Dunno $ RetSum tag
+
+cprProdRes :: [DmdType] -> DmdResult
+cprProdRes _arg_tys
+  | opt_CprOff = topRes
+  | otherwise  = Dunno $ RetProd
+
+vanillaCprProdRes :: Arity -> DmdResult
+vanillaCprProdRes _arity
+  | opt_CprOff = topRes
+  | otherwise  = Dunno $ RetProd
 
 isTopRes :: DmdResult -> Bool
-isTopRes NoCPR  = True
-isTopRes _      = False
+isTopRes (Dunno NoCPR) = True
+isTopRes _             = False
 
 isBotRes :: DmdResult -> Bool
-isBotRes BotCPR = True
-isBotRes _      = False
+isBotRes Diverges = True
+isBotRes _        = False
 
-returnsCPR :: DmdResult -> Bool
-returnsCPR dr = isJust (returnsCPR_maybe dr)
+trimCPRInfo :: Bool -> Bool -> DmdResult -> DmdResult
+trimCPRInfo trim_all trim_sums res
+  = trimR res
+  where
+    trimR (Dunno c)     = Dunno (trimC c)
+    trimR Diverges      = Diverges
 
-returnsCPRProd :: DmdResult -> Bool
-returnsCPRProd RetProd = True
-returnsCPRProd _       = False
+    trimC (RetSum n)   | trim_all || trim_sums = NoCPR
+                       | otherwise             = RetSum n
+    trimC RetProd      | trim_all  = NoCPR
+                       | otherwise = RetProd
+    trimC NoCPR = NoCPR
 
 returnsCPR_maybe :: DmdResult -> Maybe ConTag
-returnsCPR_maybe (RetSum t) = Just t
-returnsCPR_maybe (RetProd)  = Just fIRST_TAG
-returnsCPR_maybe _          = Nothing
+returnsCPR_maybe (Dunno c)     = retCPR_maybe c
+returnsCPR_maybe Diverges      = Nothing
+
+retCPR_maybe :: CPRResult -> Maybe ConTag
+retCPR_maybe (RetSum t)  = Just t
+retCPR_maybe RetProd     = Just fIRST_TAG
+retCPR_maybe NoCPR       = Nothing
+
+-- See Notes [Default demand on free variables]
+-- and [defaultDmd vs. resTypeArgDmd]
+defaultDmd :: Termination r -> JointDmd
+defaultDmd Diverges = botDmd
+defaultDmd _        = absDmd
 
 resTypeArgDmd :: DmdResult -> JointDmd
 -- TopRes and BotRes are polymorphic, so that
 --      BotRes === Bot -> BotRes === ...
 --      TopRes === Top -> TopRes === ...
 -- This function makes that concrete
+-- Also see Note [defaultDmd vs. resTypeArgDmd]
 resTypeArgDmd r | isBotRes r = botDmd
 resTypeArgDmd _              = topDmd
 \end{code}
 
-%************************************************************************
-%*                                                                      *
-            Whether a demand justifies a w/w split
-%*                                                                      *
-%************************************************************************
+Note [defaultDmd and resTypeArgDmd]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-\begin{code}
-worthSplittingFun :: [JointDmd] -> DmdResult -> Bool
-                -- True <=> the wrapper would not be an identity function
-worthSplittingFun ds res
-  = any worth_it ds || returnsCPR res
-        -- worthSplitting returns False for an empty list of demands,
-        -- and hence do_strict_ww is False if arity is zero and there is no CPR
-  where
-    worth_it (JD {absd=Abs})                             = True      -- Absent arg
-
-    -- See Note [Worker-wrapper for bottoming functions]
-    worth_it (JD {strd=Str HyperStr, absd=Use _ (UProd _)}) = True
-
-    -- See Note [Worthy functions for Worker-Wrapper split]    
-    worth_it (JD {strd=Str (SProd {})})                   = True  -- Product arg to evaluate
-    worth_it (JD {strd=Str HeadStr, absd=Use _ (UProd _)}) = True  -- Strictly used product arg
-    worth_it (JD {strd=Str HeadStr, absd=Use _ UHead})     = True 
-    worth_it _                                            = False
-
-worthSplittingThunk :: JointDmd         -- Demand on the thunk
-                    -> DmdResult        -- CPR info for the thunk
-                    -> Bool
-worthSplittingThunk dmd res
-  = worth_it dmd || returnsCPR res
-  where
-        -- Split if the thing is unpacked
-    worth_it (JD {strd=Str (SProd {}), absd=Use _ a})   = some_comp_used a
-    worth_it (JD {strd=Str HeadStr, absd=Use _ UProd {}}) = True   
-        -- second component points out that at least some of     
-    worth_it _                                      = False
-
-    some_comp_used Used       = True
-    some_comp_used (UProd _ ) = True
-    some_comp_used _          = False
-
-
-\end{code}
+These functions are similar: They express the demand on something not
+explicitly mentioned in the environment resp. the argument list. Yet they are
+different:
+ * Variables not mentioned in the free variables environment are definitely
+   unused, so we can use absDmd there.
+ * Further arguments *can* be used, of course. Hence topDmd is used.
 
 Note [Worthy functions for Worker-Wrapper split]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 For non-bottoming functions a worker-wrapper transformation takes into
 account several possibilities to decide if the function is worthy for
 splitting:
@@ -866,7 +868,7 @@ usage information: if the function uses its product argument's
 components, the WW split can be beneficial. Example:
 
 g :: Bool -> (Int, Int) -> Int
-g c p = case p of (a,b) -> 
+g c p = case p of (a,b) ->
           if c then a else b
 
 The function g is strict in is argument p and lazy in its
@@ -908,7 +910,7 @@ masssive tuple which is barely used.  Example:
         f g pr = error (g pr)
 
         main = print (f fst (1, error "no"))
-          
+
 Here, f does not take 'pr' apart, and it's stupid to do so.
 Imagine that it had millions of fields. This actually happened
 in GHC itself where the tuple was DynFlags
@@ -923,7 +925,7 @@ in GHC itself where the tuple was DynFlags
 \begin{code}
 type Demand = JointDmd
 
-type DmdEnv = VarEnv Demand
+type DmdEnv = VarEnv Demand   -- See Note [Default demand on free variables]
 
 data DmdType = DmdType 
                   DmdEnv        -- Demand on explicitly-mentioned 
@@ -969,8 +971,13 @@ Similarly with
 we get dt_scrut from the scrutinee and dt_rhs from the RHS, and then
 compute (dt_rhs `bothType` dt_scrut).
 
-We take the CPR info from FIRST argument, but combine both to get
-termination info.
+We
+ 1. combine the information on the free variables,
+ 2. take the demand on arguments from the first argument
+ 3. combine the termination results, but
+ 4. take CPR info from the first argument.
+
+3 and 4 are implementd in bothDmdResult.
 
 
 \begin{code}
@@ -982,39 +989,34 @@ instance Eq DmdType where
 
 lubDmdType :: DmdType -> DmdType -> DmdType
 lubDmdType (DmdType fv1 ds1 r1) (DmdType fv2 ds2 r2)
-  = DmdType lub_fv2 (lub_ds ds1 ds2) (r1 `lubDmdResult` r2)
+  = DmdType lub_fv (lub_ds ds1 ds2) (r1 `lubDmdResult` r2)
   where
-    absLub  = lubDmd absDmd
-    lub_fv  = plusVarEnv_C lubDmd fv1 fv2
-    -- Consider (if x then y else []) with demand V
-    -- Then the first branch gives {y->V} and the second
-    -- *implicitly* has {y->A}.  So we must put {y->(V `lub` A)}
-    -- in the result env.
-    lub_fv1 = modifyEnv (not (isBotRes r1)) absLub fv2 fv1 lub_fv
-    lub_fv2 = modifyEnv (not (isBotRes r2)) absLub fv1 fv2 lub_fv1
-      -- lub is the identity for Bot
+    lub_fv  = plusVarEnv_CD lubDmd fv1 (defaultDmd r1) fv2 (defaultDmd r2)
 
-      -- Extend the shorter argument list to match the longer
-    lub_ds (d1:ds1) (d2:ds2) = lubDmd d1 d2 : lub_ds ds1 ds2
-    lub_ds []     []       = []
-    lub_ds ds1    []       = map (`lubDmd` resTypeArgDmd r2) ds1
-    lub_ds []     ds2      = map (resTypeArgDmd r1 `lubDmd`) ds2
- 
-bothDmdType :: DmdType -> DmdType -> DmdType
-bothDmdType (DmdType fv1 ds1 r1) (DmdType fv2 _ r2)
+    -- Extend the shorter argument list to match the longer, using resTypeArgDmd
+    lub_ds (d1:ds1) (d2:ds2) = lubDmd d1 d2                   : lub_ds ds1 ds2
+    lub_ds (d1:ds1) []       = (d1 `lubDmd` resTypeArgDmd r2) : lub_ds ds1 []
+    lub_ds []       (d2:ds2) = (resTypeArgDmd r1 `lubDmd` d2) : lub_ds [] ds2
+    lub_ds []       []       = []
+
+type BothDmdArg = (DmdEnv, Termination ())
+
+mkBothDmdArg :: DmdEnv -> BothDmdArg
+mkBothDmdArg env = (env, Dunno ())
+
+toBothDmdArg :: DmdType -> BothDmdArg
+toBothDmdArg (DmdType fv _ r) = (fv, go r)
+  where
+  go (Dunno {})     = Dunno ()
+  go Diverges       = Diverges
+
+bothDmdType :: DmdType -> BothDmdArg -> DmdType
+bothDmdType (DmdType fv1 ds1 r1) (fv2, t2)
     -- See Note [Asymmetry of 'both' for DmdType and DmdResult]
     -- 'both' takes the argument/result info from its *first* arg,
     -- using its second arg just for its free-var info.
-    -- NB: Don't forget about r2!  It might be BotRes, which is
-    -- a bottom demand on all the in-scope variables.
-  = DmdType both_fv2 ds1 (r1 `bothDmdResult` r2)
-  where
-    both_fv  = plusVarEnv_C bothDmd fv1 fv2
-    both_fv1 = modifyEnv (isBotRes r1) (`bothDmd` botDmd) fv2 fv1 both_fv
-    both_fv2 = modifyEnv (isBotRes r2) (`bothDmd` botDmd) fv1 fv2 both_fv1
-
-bothDmdEnv :: DmdEnv -> DmdEnv -> DmdEnv
-bothDmdEnv = plusVarEnv_C bothDmd
+  = DmdType both_fv ds1 (r1 `bothDmdResult` t2)
+  where both_fv = plusVarEnv_CD bothDmd fv1 (defaultDmd r1) fv2 (defaultDmd t2)
 
 instance Outputable DmdType where
   ppr (DmdType fv ds res) 
@@ -1029,23 +1031,25 @@ instance Outputable DmdType where
 emptyDmdEnv :: VarEnv Demand
 emptyDmdEnv = emptyVarEnv
 
-topDmdType, botDmdType :: DmdType
-topDmdType = DmdType emptyDmdEnv [] topRes
+-- nopDmdType is the demand of doing nothing
+-- (lazy, absent, no CPR information, no termination information).
+-- Note that it is ''not'' the top of the lattice (which would be "may use everything"),
+-- so it is (no longer) called topDmd
+nopDmdType, botDmdType :: DmdType
+nopDmdType = DmdType emptyDmdEnv [] topRes
 botDmdType = DmdType emptyDmdEnv [] botRes
 
-cprProdDmdType :: DmdType
-cprProdDmdType = DmdType emptyDmdEnv [] cprProdRes
+cprProdDmdType :: Arity -> DmdType
+cprProdDmdType _arity
+  = DmdType emptyDmdEnv [] (Dunno RetProd)
 
-isTopDmdType :: DmdType -> Bool
-isTopDmdType (DmdType env [] res)
+isNopDmdType :: DmdType -> Bool
+isNopDmdType (DmdType env [] res)
   | isTopRes res && isEmptyVarEnv env = True
-isTopDmdType _                        = False
+isNopDmdType _                        = False
 
 mkDmdType :: DmdEnv -> [Demand] -> DmdResult -> DmdType
 mkDmdType fv ds res = DmdType fv ds res
-
-mkTopDmdType :: [Demand] -> DmdResult -> DmdType
-mkTopDmdType ds res = DmdType emptyDmdEnv ds res
 
 dmdTypeDepth :: DmdType -> Arity
 dmdTypeDepth (DmdType _ ds _) = length ds
@@ -1061,43 +1065,21 @@ splitDmdTy :: DmdType -> (Demand, DmdType)
 splitDmdTy (DmdType fv (dmd:dmds) res_ty) = (dmd, DmdType fv dmds res_ty)
 splitDmdTy ty@(DmdType _ [] res_ty)       = (resTypeArgDmd res_ty, ty)
 
-deferAndUse :: Bool    -- Lazify (defer) the type
-            -> Count   -- Many => manify the type
-            -> DmdType -> DmdType
-deferAndUse True  Many ty = deferType (useType ty)
-deferAndUse False Many ty = useType ty
-deferAndUse True  One  ty = deferType ty
-deferAndUse False One  ty = ty
-
-deferType :: DmdType -> DmdType
--- deferType ty1 ==  ty1 `lubType` DT { v -> <L,A> } [] top }
--- Ie it might be used, or not 
-deferType (DmdType fv _ _) = DmdType (deferEnv fv) [] topRes
-
-deferEnv :: DmdEnv -> DmdEnv
-deferEnv fv = mapVarEnv deferDmd fv
-
-useType :: DmdType -> DmdType
--- useType ty1 == ty1 `bothType` ty1
--- NB that bothType is assymetrical, so no-op on argument demands
-useType (DmdType fv ds res_ty) = DmdType (useEnv fv) ds res_ty
-
-useEnv :: DmdEnv -> DmdEnv
-useEnv fv = mapVarEnv useDmd fv
-
-modifyEnv :: Bool                       -- No-op if False
-          -> (Demand -> Demand)         -- The zapper
-          -> DmdEnv -> DmdEnv           -- Env1 and Env2
-          -> DmdEnv -> DmdEnv           -- Transform this env
-        -- Zap anything in Env1 but not in Env2
-        -- Assume: dom(env) includes dom(Env1) and dom(Env2)
-modifyEnv need_to_modify zapper env1 env2 env
-  | need_to_modify = foldr zap env (varEnvKeys (env1 `minusUFM` env2))
-  | otherwise      = env
+-- When e is evaluated after executing an IO action, and d is e's demand, then
+-- what of this demand should we consider, given that the IO action can cleanly
+-- exit?
+-- * We have to kill all strictness demands (i.e. lub with a lazy demand)
+-- * We can keep demand information (i.e. lub with an absent deman)
+-- * We have to kill definite divergence
+-- * We can keep CPR information.
+-- See Note [IO hack in the demand analyser]
+deferAfterIO :: DmdType -> DmdType
+deferAfterIO d@(DmdType _ _ res) =
+    case d `lubDmdType` nopDmdType of
+        DmdType fv ds _ -> DmdType fv ds (defer_res res)
   where
-    zap uniq env = addToUFM_Directly env uniq (zapper current_val)
-                 where
-                   current_val = expectJust "modifyEnv" (lookupUFM_Directly env uniq)
+  defer_res Diverges      = topRes
+  defer_res r             = r
 
 strictenDmd :: JointDmd -> CleanDemand
 strictenDmd (JD {strd = s, absd = u})
@@ -1107,21 +1089,165 @@ strictenDmd (JD {strd = s, absd = u})
     poke_s (Str s)   = s
     poke_u Abs       = UHead
     poke_u (Use _ u) = u
-
-toCleanDmd :: (CleanDemand -> e -> (DmdType, e))
-           -> Demand
-           -> e -> (DmdType, e)
--- See Note [Analyzing with lazy demand and lambdas]
-toCleanDmd anal (JD { strd = s, absd = u }) e
-  = case (s,u) of
-      (_, Abs) -> mf (const topDmdType) (anal (CD { sd = HeadStr, ud = Used }) e)
-                  --  See Note [Always analyse in virgin pass]
-             
-      (Str s', Use c u') -> mf (deferAndUse False c) (anal (CD { sd = s',      ud = u' }) e)
-      (Lazy,   Use c u') -> mf (deferAndUse True c)  (anal (CD { sd = HeadStr, ud = u' }) e)
-  where
-    mf f (a,b) = (f a, b)
 \end{code}
+
+Deferring and peeeling
+
+\begin{code}
+type DeferAndUse   -- Describes how to degrade a result type
+   =( Bool        -- Lazify (defer) the type
+    , Count)      -- Many => manify the type
+
+type DeferAndUseM = Maybe DeferAndUse
+  -- Nothing <=> absent-ify the result type; it will never be used
+
+toCleanDmd :: Demand -> (CleanDemand, DeferAndUseM)
+-- See Note [Analyzing with lazy demand and lambdas]
+toCleanDmd (JD { strd = s, absd = u })
+  = case (s,u) of
+      (Str s', Use c u') -> (CD { sd = s',      ud = u' },   Just (False, c))
+      (Lazy,   Use c u') -> (CD { sd = HeadStr, ud = u' },   Just (True,  c))
+      (_,      Abs)      -> (CD { sd = HeadStr, ud = Used }, Nothing)
+
+-- This is used in dmdAnalStar when post-processing
+-- a function's argument demand. So we only care about what
+-- does to free variables, and whether it terminates.
+postProcessDmdTypeM :: DeferAndUseM -> DmdType -> BothDmdArg
+postProcessDmdTypeM Nothing   _  = (emptyDmdEnv, Dunno ())
+  -- Incoming demand was Absent, so just discard all usage information
+  -- We only processed the thing at all to analyse the body
+  -- See Note [Always analyse in virgin pass]
+postProcessDmdTypeM (Just du) (DmdType fv _ res_ty)
+    = (postProcessDmdEnv du fv, postProcessDmdResult du res_ty)
+
+postProcessDmdResult :: DeferAndUse -> DmdResult -> Termination ()
+postProcessDmdResult (True,_)  _          = Dunno ()
+postProcessDmdResult (False,_) (Dunno {}) = Dunno ()
+postProcessDmdResult (False,_) Diverges   = Diverges
+
+postProcessDmdEnv :: DeferAndUse -> DmdEnv -> DmdEnv
+postProcessDmdEnv (True,  Many) env = deferReuseEnv env
+postProcessDmdEnv (False, Many) env = reuseEnv env
+postProcessDmdEnv (True,  One)  env = deferEnv env
+postProcessDmdEnv (False, One)  env = env
+
+
+postProcessUnsat :: DeferAndUse -> DmdType -> DmdType
+postProcessUnsat (True,  Many) ty = deferReuse ty
+postProcessUnsat (False, Many) ty = reuseType ty
+postProcessUnsat (True,  One)  ty = deferType ty
+postProcessUnsat (False, One)  ty = ty
+
+deferType, reuseType, deferReuse :: DmdType -> DmdType
+deferType  (DmdType fv ds _)      = DmdType (deferEnv fv)      (map deferDmd ds)      topRes
+reuseType  (DmdType fv ds res_ty) = DmdType (reuseEnv fv)      (map reuseDmd ds)      res_ty
+deferReuse (DmdType fv ds _)      = DmdType (deferReuseEnv fv) (map deferReuseDmd ds) topRes
+
+deferEnv, reuseEnv, deferReuseEnv :: DmdEnv -> DmdEnv
+deferEnv      fv = mapVarEnv deferDmd fv
+reuseEnv      fv = mapVarEnv reuseDmd fv
+deferReuseEnv fv = mapVarEnv deferReuseDmd fv
+
+deferDmd, reuseDmd, deferReuseDmd :: JointDmd -> JointDmd
+deferDmd      (JD {strd=_, absd=a}) = mkJointDmd Lazy a
+reuseDmd      (JD {strd=d, absd=a}) = mkJointDmd d    (markReusedDmd a)
+deferReuseDmd (JD {strd=_, absd=a}) = mkJointDmd Lazy (markReusedDmd a)
+
+-- Peels one call level from the demand, and also returns
+-- whether it was unsaturated (separately for strictness and usage)
+peelCallDmd :: CleanDemand -> (CleanDemand, DeferAndUse)
+-- Exploiting the fact that
+-- on the strictness side      C(B) = B
+-- and on the usage side       C(U) = U
+peelCallDmd (CD {sd = s, ud = u})
+  = case (s, u) of
+      (SCall s', UCall c u') -> (CD { sd = s',       ud = u' },   (False, c))
+      (SCall s', _)          -> (CD { sd = s',       ud = Used }, (False, Many))
+      (HyperStr, UCall c u') -> (CD { sd = HyperStr, ud = u' },   (False, c))
+      (HyperStr, _)          -> (CD { sd = HyperStr, ud = Used }, (False, Many))
+      (_,        UCall c u') -> (CD { sd = HeadStr,  ud = u' },   (True,  c))
+      (_,        _)          -> (CD { sd = HeadStr,  ud = Used }, (True,  Many))
+       -- The _ cases for usage includes UHead which seems a bit wrong
+       -- because the body isn't used at all!
+       -- c.f. the Abs case in toCleanDmd
+
+-- Peels that multiple nestings of calls clean demand and also returns
+-- whether it was unsaturated (separately for strictness and usage
+-- see Note [Demands from unsaturated function calls]
+peelManyCalls :: Int -> CleanDemand -> DeferAndUse
+peelManyCalls n (CD { sd = str, ud = abs })
+  = (go_str n str, go_abs n abs)
+  where
+    go_str :: Int -> StrDmd -> Bool  -- True <=> unsaturated, defer
+    go_str 0 _          = False
+    go_str _ HyperStr   = False -- == go_str (n-1) HyperStr, as HyperStr = Call(HyperStr)
+    go_str n (SCall d') = go_str (n-1) d'
+    go_str _ _          = True
+
+    go_abs :: Int -> UseDmd -> Count -- Many <=> unsaturated, or at least
+    go_abs 0 _              = One    --          one UCall Many in the demand
+    go_abs n (UCall One d') = go_abs (n-1) d'
+    go_abs _ _              = Many
+\end{code}
+
+Note [Demands from unsaturated function calls]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Consider a demand transformer d1 -> d2 -> r for f.
+If a sufficiently detailed demand is fed into this transformer,
+e.g <C(C(S)), C1(C1(S))> arising from "f x1 x2" in a strict, use-once context,
+then d1 and d2 is precisely the demand unleashed onto x1 and x2 (similar for
+the free variable environment) and furthermore the result information r is the
+one we want to use.
+
+But the demand fed into f might be less than <C(C(S)), C1(C1(S))>. There are a few cases:
+ * Not enough demand on the strictness side:
+   - In that case, we need to zap all strictness in the demand on arguments and
+     free variables.
+   - Furthermore, we need to remove CPR information (after all, "f x1" surely
+     does not return a constructor).
+   - And finally, if r said that f would (possible or definitely) diverge when
+     called with two arguments, then "f x1" may diverge. So we use topRes here.
+     (We could return "Converges NoCPR" if f would converge for sure, but that
+     information would currently not be useful in any way.)
+ * Not enough demand from the usage side: The missing usage can be expanded
+   using UCall Many, therefore this is subsumed by the third case:
+ * At least one of the uses has a cardinality of Many.
+   - Even if f puts a One demand on any of its argument or free variables, if
+     we call f multiple times, we may evaluate this argument or free variable
+     multiple times. So forget about any occurrence of "One" in the demand.
+
+In dmdTransformSig, we call peelManyCalls to find out if we are in any of these
+cases, and then call postProcessUnsat to reduce the demand appropriately.
+
+Similarly, dmdTransformDictSelSig and dmdAnal, when analyzing a Lambda, use
+peelCallDmd, which peels only one level, but also returns the demand put on the
+body of the function.
+
+\begin{code}
+peelFV :: DmdType -> Var -> (DmdType, Demand)
+peelFV (DmdType fv ds res) id = -- pprTrace "rfv" (ppr id <+> ppr dmd $$ ppr fv)
+                               (DmdType fv' ds res, dmd)
+  where
+  fv' = fv `delVarEnv` id
+  -- See note [Default demand on free variables]
+  dmd  = lookupVarEnv fv id `orElse` defaultDmd res
+
+addDemand :: Demand -> DmdType -> DmdType
+addDemand dmd (DmdType fv ds res) = DmdType fv (dmd:ds) res
+\end{code}
+
+Note [Default demand on free variables]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+If the variable is not mentioned in the environment of a demand type,
+its demand is taken to be a result demand of the type.
+    For the stricness component,
+     if the result demand is a Diverges, then we use HyperStr
+                                         else we use Lazy
+    For the usage component, we use Absent.
+So we use either absDmd or botDmd.
+
+Also note the equations for lubDmdResult (resp. bothDmdResult) noted there.
 
 Note [Always analyse in virgin pass]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1214,6 +1340,9 @@ instance Outputable StrictSig where
 mkStrictSig :: DmdType -> StrictSig
 mkStrictSig dmd_ty = StrictSig dmd_ty
 
+mkClosedStrictSig :: [Demand] -> DmdResult -> StrictSig
+mkClosedStrictSig ds res = mkStrictSig (DmdType emptyDmdEnv ds res)
+
 splitStrictSig :: StrictSig -> ([Demand], DmdResult)
 splitStrictSig (StrictSig (DmdType _ dmds res)) = (dmds, res)
 
@@ -1222,74 +1351,53 @@ increaseStrictSigArity :: Int -> StrictSig -> StrictSig
 increaseStrictSigArity arity_increase (StrictSig (DmdType env dmds res))
   = StrictSig (DmdType env (replicate arity_increase topDmd ++ dmds) res)
 
-isTopSig :: StrictSig -> Bool
-isTopSig (StrictSig ty) = isTopDmdType ty
+isNopSig :: StrictSig -> Bool
+isNopSig (StrictSig ty) = isNopDmdType ty
 
 isBottomingSig :: StrictSig -> Bool
 isBottomingSig (StrictSig (DmdType _ _ res)) = isBotRes res
 
-topSig, botSig :: StrictSig
-topSig = StrictSig topDmdType
+nopSig, botSig :: StrictSig
+nopSig = StrictSig nopDmdType
 botSig = StrictSig botDmdType
 
-cprProdSig :: StrictSig
-cprProdSig = StrictSig cprProdDmdType
+cprProdSig :: Arity -> StrictSig
+cprProdSig arity = StrictSig (cprProdDmdType arity)
 
-argsOneShots :: StrictSig -> Arity -> [[Bool]]
+argsOneShots :: StrictSig -> Arity -> [[OneShotInfo]]
 argsOneShots (StrictSig (DmdType _ arg_ds _)) n_val_args
-  | arg_ds `lengthExceeds` n_val_args
-  = []   -- Too few arguments
-  | otherwise
   = go arg_ds
   where
+    good_one_shot
+      | arg_ds `lengthExceeds` n_val_args = ProbOneShot
+      | otherwise                         = OneShotLam
+
     go []               = []
-    go (arg_d : arg_ds) = argOneShots arg_d `cons` go arg_ds
-    
+    go (arg_d : arg_ds) = argOneShots good_one_shot arg_d `cons` go arg_ds
+
     cons [] [] = []
     cons a  as = a:as
 
-argOneShots :: JointDmd -> [Bool]
-argOneShots (JD { absd = usg })
+argOneShots :: OneShotInfo -> JointDmd -> [OneShotInfo]
+argOneShots one_shot_info (JD { absd = usg })
   = case usg of
       Use _ arg_usg -> go arg_usg
       _             -> []
   where
-    go (UCall One  u) = True  : go u
-    go (UCall Many u) = False : go u
+    go (UCall One  u) = one_shot_info : go u
+    go (UCall Many u) = NoOneShotInfo : go u
     go _              = []
 
 dmdTransformSig :: StrictSig -> CleanDemand -> DmdType
 -- (dmdTransformSig fun_sig dmd) considers a call to a function whose
 -- signature is fun_sig, with demand dmd.  We return the demand
 -- that the function places on its context (eg its args)
-dmdTransformSig (StrictSig dmd_ty@(DmdType _ arg_ds _)) 
-                (CD { sd = str, ud = abs })
-  = dmd_ty2
-  where
-    dmd_ty1 | str_sat   = dmd_ty
-            | otherwise = deferType dmd_ty
-    dmd_ty2 | abs_sat   = dmd_ty1
-            | otherwise = useType dmd_ty1
-
-    str_sat = go_str arg_ds str
-    abs_sat = go_abs arg_ds abs
-
-    go_str [] _              = True
-    go_str (_:_)  HyperStr   = True         -- HyperStr = Call(HyperStr)
-    go_str (_:as) (SCall d') = go_str as d'
-    go_str _      _          = False
-
-    go_abs []      _             = True
-    go_abs (_:as) (UCall One d') = go_abs as d'
-    go_abs _      _              = False
-
-    -- NB: it's important to use deferType, and not just return topDmdType
-    -- Consider     let { f x y = p + x } in f 1
-    -- The application isn't saturated, but we must nevertheless propagate 
-    --      a lazy demand for p!  
+dmdTransformSig (StrictSig dmd_ty@(DmdType _ arg_ds _)) cd
+  = postProcessUnsat (peelManyCalls (length arg_ds) cd) dmd_ty
+    -- see Note [Demands from unsaturated function calls]
 
 dmdTransformDataConSig :: Arity -> StrictSig -> CleanDemand -> DmdType
--- Same as dmdTranformSig but for a data constructor (worker), 
+-- Same as dmdTransformSig but for a data constructor (worker), 
 -- which has a special kind of demand transformer.
 -- If the constructor is saturated, we feed the demand on 
 -- the result into the constructor arguments.
@@ -1301,12 +1409,13 @@ dmdTransformDataConSig arity (StrictSig (DmdType _ _ con_res))
                 -- Must remember whether it's a product, hence con_res, not TopRes
 
   | otherwise   -- Not saturated
-  = topDmdType
+  = nopDmdType
   where
     go_str 0 dmd        = Just (splitStrProdDmd arity dmd)
     go_str n (SCall s') = go_str (n-1) s'
+    go_str n HyperStr   = go_str (n-1) HyperStr
     go_str _ _          = Nothing
-   
+
     go_abs 0 dmd            = Just (splitUseProdDmd arity dmd)
     go_abs n (UCall One u') = go_abs (n-1) u'
     go_abs _ _              = Nothing
@@ -1316,16 +1425,41 @@ dmdTransformDictSelSig :: StrictSig -> CleanDemand -> DmdType
 -- for dictionary selectors.  If the selector is saturated (ie has one
 -- argument: the dictionary), we feed the demand on the result into
 -- the indicated dictionary component.
-dmdTransformDictSelSig (StrictSig (DmdType _ [dictJd] _)) cd
-  = case peelCallDmd cd of
-      (cd',False,_) -> case splitProdDmd_maybe dictJd of
-        Just jds -> DmdType emptyDmdEnv [mkManyUsedDmd $ mkProdDmd $ map enhance jds] topRes
-          where enhance old | isAbsDmd old = old
-                            | otherwise    = mkManyUsedDmd cd'
-        Nothing   -> panic "dmdTransformDictSelSig: split failed"
-      _ -> topDmdType
+dmdTransformDictSelSig (StrictSig (DmdType _ [dict_dmd] _)) cd
+   | (cd',defer_use) <- peelCallDmd cd
+   , Just jds <- splitProdDmd_maybe dict_dmd
+   = postProcessUnsat defer_use $
+     DmdType emptyDmdEnv [mkOnceUsedDmd $ mkProdDmd $ map (enhance cd') jds] topRes
+   | otherwise
+   = nopDmdType              -- See Note [Demand transformer for a dictionary selector]
+  where
+    enhance cd old | isAbsDmd old = old
+                   | otherwise    = mkOnceUsedDmd cd  -- This is the one!
+
 dmdTransformDictSelSig _ _ = panic "dmdTransformDictSelSig: no args"
 \end{code}
+
+Note [Demand transformer for a dictionary selector]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+If we evaluate (op dict-expr) under demand 'd', then we can push the demand 'd'
+into the appropriate field of the dictionary. What *is* the appropriate field?
+We just look at the strictness signature of the class op, which will be
+something like: U(AAASAAAAA).  Then replace the 'S' by the demand 'd'.
+
+For single-method classes, which are represented by newtypes the signature 
+of 'op' won't look like U(...), so the splitProdDmd_maybe will fail.
+That's fine: if we are doing strictness analysis we are also doing inling,
+so we'll have inlined 'op' into a cast.  So we can bale out in a conservative
+way, returning nopDmdType.
+
+It is (just.. Trac #8329) possible to be running strictness analysis *without*
+having inlined class ops from single-method classes.  Suppose you are using
+ghc --make; and the first module has a local -O0 flag.  So you may load a class
+without interface pragmas, ie (currently) without an unfolding for the class
+ops.   Now if a subsequent module in the --make sweep has a local -O flag
+you might do strictness analysis, but there is no inlining for the class op.
+This is weird, so I'm not worried about whether this optimises brilliantly; but
+it should not fall over.
 
 Note [Non-full application] 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
@@ -1425,6 +1559,19 @@ strictifyDictDmd ty dmd = case absd dmd of
              -- the superclass dicts are always a prefix
   _ -> dmd -- unused or not a dictionary
 \end{code}
+
+Note [HyperStr and Use demands]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The information "HyperStr" needs to be in the strictness signature, and not in
+the demand signature, because we still want to know about the demand on things. Consider
+
+    f (x,y) True  = error (show x)
+    f (x,y) False = x+1
+
+The signature of f should be <S(SL),1*U(1*U(U),A)><S,1*U>m. If we were not
+distinguishing the uses on x and y in the True case, we could either not figure
+out how deeply we can unpack x, or that we do not have to pass y.
 
 
 %************************************************************************
@@ -1539,17 +1686,24 @@ instance Binary DmdType where
            dr <- get bh 
            return (DmdType emptyDmdEnv ds dr)
 
+instance Binary DmdResult where
+  put_ bh (Dunno c)     = do { putByte bh 0; put_ bh c }
+  put_ bh Diverges      = putByte bh 2
+
+  get bh = do { h <- getByte bh
+              ; case h of
+                  0 -> do { c <- get bh; return (Dunno c) }
+                  _ -> return Diverges }
+
 instance Binary CPRResult where
     put_ bh (RetSum n)   = do { putByte bh 0; put_ bh n }
     put_ bh RetProd      = putByte bh 1
     put_ bh NoCPR        = putByte bh 2
-    put_ bh BotCPR       = putByte bh 3
 
     get  bh = do
             h <- getByte bh
             case h of 
               0 -> do { n <- get bh; return (RetSum n) }
               1 -> return RetProd
-              2 -> return NoCPR
-              _ -> return BotCPR
+              _ -> return NoCPR
 \end{code}

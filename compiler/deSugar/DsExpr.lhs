@@ -21,6 +21,7 @@ import DsMonad
 import Name
 import NameEnv
 import RdrName
+import FamInstEnv( topNormaliseType )
 
 #ifdef GHCI
         -- Template Haskell stuff iff bootstrapped
@@ -32,6 +33,7 @@ import HsSyn
 -- NB: The desugarer, which straddles the source and Core worlds, sometimes
 --     needs to see source types
 import TcType
+import Coercion ( Role(..) )
 import TcEvidence
 import TcRnMonad
 import Type
@@ -533,11 +535,11 @@ dsExpr expr@(RecordUpd record_expr (HsRecFields { rec_flds = fields })
 
                         -- Tediously wrap the application in a cast
                         -- Note [Update for GADTs]
-                 wrap_co = mkTcTyConAppCo tycon
+                 wrap_co = mkTcTyConAppCo Nominal tycon
                                 [ lookup tv ty | (tv,ty) <- univ_tvs `zip` out_inst_tys ]
                  lookup univ_tv ty = case lookupVarEnv wrap_subst univ_tv of
                                         Just co' -> co'
-                                        Nothing  -> mkTcReflCo ty
+                                        Nothing  -> mkTcReflCo Nominal ty
                  wrap_subst = mkVarEnv [ (tv, mkTcSymCo (mkTcCoVarCo eq_var))
                                        | ((tv,_),eq_var) <- eq_spec `zip` eqs_vars ]
 
@@ -547,7 +549,7 @@ dsExpr expr@(RecordUpd record_expr (HsRecFields { rec_flds = fields })
                                          , pat_args = PrefixCon $ map nlVarPat arg_ids
                                          , pat_ty = in_ty }
            ; let wrapped_rhs | null eq_spec = rhs
-                             | otherwise    = mkLHsWrap (WpCast wrap_co) rhs
+                             | otherwise    = mkLHsWrap (mkWpCast (mkTcSubCo wrap_co)) rhs
            ; return (mkSimpleMatch [pat] wrapped_rhs) }
 
 \end{code}
@@ -557,12 +559,13 @@ Here is where we desugar the Template Haskell brackets and escapes
 \begin{code}
 -- Template Haskell stuff
 
+dsExpr (HsRnBracketOut _ _) = panic "dsExpr HsRnBracketOut"
 #ifdef GHCI
-dsExpr (HsBracketOut x ps) = dsBracket x ps
+dsExpr (HsTcBracketOut x ps) = dsBracket x ps
 #else
-dsExpr (HsBracketOut _ _) = panic "dsExpr HsBracketOut"
+dsExpr (HsTcBracketOut _ _) = panic "dsExpr HsBracketOut"
 #endif
-dsExpr (HsSpliceE s)       = pprPanic "dsExpr:splice" (ppr s)
+dsExpr (HsSpliceE _ s)      = pprPanic "dsExpr:splice" (ppr s)
 
 -- Arrow notation extension
 dsExpr (HsProc pat cmd) = dsProcExpr pat cmd
@@ -826,31 +829,36 @@ mk_fail_msg dflags pat = "Pattern match failure in do expression at " ++
 warnDiscardedDoBindings :: LHsExpr Id -> Type -> DsM ()
 warnDiscardedDoBindings rhs rhs_ty
   | Just (m_ty, elt_ty) <- tcSplitAppTy_maybe rhs_ty
-  = do {  -- Warn about discarding non-() things in 'monadic' binding
-       ; warn_unused <- woptM Opt_WarnUnusedDoBind
-       ; if warn_unused && not (isUnitTy elt_ty)
-         then warnDs (unusedMonadBind rhs elt_ty)
-         else 
-         -- Warn about discarding m a things in 'monadic' binding of the same type,
-         -- but only if we didn't already warn due to Opt_WarnUnusedDoBind
-    do { warn_wrong <- woptM Opt_WarnWrongDoBind
-       ; case tcSplitAppTy_maybe elt_ty of
-           Just (elt_m_ty, _) | warn_wrong, m_ty `eqType` elt_m_ty
-                              -> warnDs (wrongMonadBind rhs elt_ty)
-           _ -> return () } }
+  = do { warn_unused <- woptM Opt_WarnUnusedDoBind
+       ; warn_wrong <- woptM Opt_WarnWrongDoBind
+       ; when (warn_unused || warn_wrong) $
+    do { fam_inst_envs <- dsGetFamInstEnvs
+       ; let norm_elt_ty = topNormaliseType fam_inst_envs elt_ty
 
-  | otherwise   -- RHS does have type of form (m ty), which is wierd
+           -- Warn about discarding non-() things in 'monadic' binding
+       ; if warn_unused && not (isUnitTy norm_elt_ty)
+         then warnDs (badMonadBind rhs elt_ty
+                           (ptext (sLit "-fno-warn-unused-do-bind")))
+         else
+
+           -- Warn about discarding m a things in 'monadic' binding of the same type,
+           -- but only if we didn't already warn due to Opt_WarnUnusedDoBind
+           when warn_wrong $
+                do { case tcSplitAppTy_maybe norm_elt_ty of
+                         Just (elt_m_ty, _)
+                            | m_ty `eqType` topNormaliseType fam_inst_envs elt_m_ty
+                            -> warnDs (badMonadBind rhs elt_ty
+                                           (ptext (sLit "-fno-warn-wrong-do-bind")))
+                         _ -> return () } } }
+
+  | otherwise   -- RHS does have type of form (m ty), which is weird
   = return ()   -- but at lesat this warning is irrelevant
 
-unusedMonadBind :: LHsExpr Id -> Type -> SDoc
-unusedMonadBind rhs elt_ty
-  = ptext (sLit "A do-notation statement discarded a result of type") <+> ppr elt_ty <> dot $$
-    ptext (sLit "Suppress this warning by saying \"_ <- ") <> ppr rhs <> ptext (sLit "\",") $$
-    ptext (sLit "or by using the flag -fno-warn-unused-do-bind")
-
-wrongMonadBind :: LHsExpr Id -> Type -> SDoc
-wrongMonadBind rhs elt_ty
-  = ptext (sLit "A do-notation statement discarded a result of type") <+> ppr elt_ty <> dot $$
-    ptext (sLit "Suppress this warning by saying \"_ <- ") <> ppr rhs <> ptext (sLit "\",") $$
-    ptext (sLit "or by using the flag -fno-warn-wrong-do-bind")
+badMonadBind :: LHsExpr Id -> Type -> SDoc -> SDoc
+badMonadBind rhs elt_ty flag_doc
+  = vcat [ hang (ptext (sLit "A do-notation statement discarded a result of type"))
+              2 (quotes (ppr elt_ty))
+         , hang (ptext (sLit "Suppress this warning by saying"))
+              2 (quotes $ ptext (sLit "_ <-") <+> ppr rhs)
+         , ptext (sLit "or by using the flag") <+>  flag_doc ]
 \end{code}

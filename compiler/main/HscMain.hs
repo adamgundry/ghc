@@ -73,7 +73,10 @@ module HscMain
     -- * Low-level exports for hooks
     , hscCompileCoreExpr'
 #endif
+      -- We want to make sure that we export enough to be able to redefine
+      -- hscFileFrontEnd in client code
     , hscParse', hscSimplify', hscDesugar', tcRnModule'
+    , getHscEnv
     , hscSimpleIface', hscNormalIface'
     , oneShotMsg
     , hscFileFrontEnd, genericHscFrontend, dumpIfaceStats
@@ -280,15 +283,15 @@ hscTcRcLookupName hsc_env0 name = runInteractiveHsc hsc_env0 $ do
       -- is used to indicate that.
 
 hscTcRnGetInfo :: HscEnv -> Name -> IO (Maybe (TyThing, Fixity, [ClsInst], [FamInst]))
-hscTcRnGetInfo hsc_env0 name = runInteractiveHsc hsc_env0 $ do
-  hsc_env <- getHscEnv
-  ioMsgMaybe' $ tcRnGetInfo hsc_env name
+hscTcRnGetInfo hsc_env0 name
+  = runInteractiveHsc hsc_env0 $
+    do { hsc_env <- getHscEnv
+       ; ioMsgMaybe' $ tcRnGetInfo hsc_env name }
 
 #ifdef GHCI
 hscIsGHCiMonad :: HscEnv -> String -> IO Name
-hscIsGHCiMonad hsc_env name =
-    let icntxt   = hsc_IC hsc_env
-    in runHsc hsc_env $ ioMsgMaybe $ isGHCiMonad hsc_env icntxt name
+hscIsGHCiMonad hsc_env name
+  = runHsc hsc_env $ ioMsgMaybe $ isGHCiMonad hsc_env name
 
 hscGetModuleInterface :: HscEnv -> Module -> IO ModIface
 hscGetModuleInterface hsc_env0 mod = runInteractiveHsc hsc_env0 $ do
@@ -634,6 +637,9 @@ hscCompileOneShot' hsc_env extCore_filename mod_summary src_changed
                            liftIO $ hscWriteIface dflags iface changed mod_summary
                            return $ HscRecomp cgguts mod_summary
 
+        -- XXX This is always False, because in one-shot mode the
+        -- concept of stability does not exist.  The driver never
+        -- passes SourceUnmodifiedAndStable in here.
         stable = case src_changed of
                      SourceUnmodifiedAndStable -> True
                      _                         -> False
@@ -852,7 +858,7 @@ checkSafeImports dflags tcg_env
               (text $ "is imported both as a safe and unsafe import!"))
         | otherwise
         = return v1
-    
+
     -- easier interface to work with
     checkSafe (_, _, False) = return Nothing
     checkSafe (m, l, True ) = fst `fmap` hscCheckSafe' dflags m l
@@ -879,7 +885,7 @@ hscGetSafe hsc_env m l = runHsc hsc_env $ do
     let pkgs' | Just p <- self = p:pkgs
               | otherwise      = pkgs
     return (good, pkgs')
- 
+
 -- | Is a module trusted? If not, throw or log errors depending on the type.
 -- Return (regardless of trusted or not) if the trust type requires the modules
 -- own package be trusted and a list of other packages required to be trusted
@@ -963,7 +969,7 @@ hscCheckSafe' dflags m l = do
             Just _  -> return iface
             Nothing -> snd `fmap` (liftIO $ getModuleInterface hsc_env m)
         return iface'
-#else 
+#else
         return iface
 #endif
 
@@ -1280,12 +1286,8 @@ tryNewCodeGen hsc_env this_mod data_tycons
 
       | otherwise
         = {-# SCC "cmmPipeline" #-}
-          let initTopSRT = initUs_ us emptySRT in
-  
-          let run_pipeline topSRT cmmgroup = do
-                (topSRT, cmmgroup) <- cmmPipeline hsc_env topSRT cmmgroup
-                return (topSRT,cmmgroup)
-  
+          let initTopSRT = initUs_ us emptySRT
+              run_pipeline = cmmPipeline hsc_env
           in do topSRT <- Stream.mapAccumL run_pipeline initTopSRT ppr_stream1
                 Stream.yield (srtToData topSRT)
 
@@ -1326,7 +1328,7 @@ you run it you get a list of HValues that should be the same length as the list
 of names; add them to the ClosureEnv.
 
 A naked expression returns a singleton Name [it]. The stmt is lifted into the
-IO monad as explained in Note [Interactively-bound Ids in GHCi] in TcRnDriver
+IO monad as explained in Note [Interactively-bound Ids in GHCi] in HscTypes
 -}
 
 #ifdef GHCI
@@ -1348,29 +1350,29 @@ hscStmtWithLocation :: HscEnv
                     -> IO (Maybe ([Id], IO [HValue], FixityEnv))
 hscStmtWithLocation hsc_env0 stmt source linenumber =
  runInteractiveHsc hsc_env0 $ do
-    hsc_env <- getHscEnv
     maybe_stmt <- hscParseStmtWithLocation source linenumber stmt
     case maybe_stmt of
         Nothing -> return Nothing
 
         Just parsed_stmt -> do
-            let icntxt   = hsc_IC hsc_env
-                rdr_env  = ic_rn_gbl_env icntxt
-                type_env = mkTypeEnvWithImplicits (ic_tythings icntxt)
-                src_span = srcLocSpan interactiveSrcLoc
-
             -- Rename and typecheck it
-            -- Here we lift the stmt into the IO monad, see Note
-            -- [Interactively-bound Ids in GHCi] in TcRnDriver
-            (ids, tc_expr, fix_env) <- ioMsgMaybe $ tcRnStmt hsc_env icntxt parsed_stmt
+            hsc_env <- getHscEnv
+            let interactive_hsc_env = setInteractivePackage hsc_env
+                  -- Bindings created here belong to the interactive package
+                  -- See Note [The interactive package] in HscTypes
+                  -- (NB: maybe not necessary, since Stmts bind only Ids)
+            (ids, tc_expr, fix_env) <- ioMsgMaybe $ tcRnStmt interactive_hsc_env parsed_stmt
 
             -- Desugar it
-            ds_expr <- ioMsgMaybe $
-                       deSugarExpr hsc_env iNTERACTIVE rdr_env type_env tc_expr
+            ds_expr <- ioMsgMaybe $ deSugarExpr hsc_env tc_expr
             liftIO (lintInteractiveExpr "desugar expression" hsc_env ds_expr)
             handleWarnings
 
             -- Then code-gen, and link it
+            -- It's important NOT to have package 'interactive' as thisPackageId
+            -- for linking, else we try to link 'main' and can't find it.
+            -- Whereas the linker already knows to ignore 'interactive'
+            let  src_span     = srcLocSpan interactiveSrcLoc
             hval <- liftIO $ hscCompileCoreExpr hsc_env src_span ds_expr
             let hval_io = unsafeCoerce# hval :: IO [HValue]
 
@@ -1390,13 +1392,15 @@ hscDeclsWithLocation :: HscEnv
                      -> IO ([TyThing], InteractiveContext)
 hscDeclsWithLocation hsc_env0 str source linenumber =
  runInteractiveHsc hsc_env0 $ do
-    hsc_env <- getHscEnv
     L _ (HsModule{ hsmodDecls = decls }) <-
         hscParseThingWithLocation source linenumber parseModule str
 
     {- Rename and typecheck it -}
-    let icontext = hsc_IC hsc_env
-    tc_gblenv <- ioMsgMaybe $ tcRnDeclsi hsc_env icontext decls
+    hsc_env <- getHscEnv
+    let interactive_hsc_env = setInteractivePackage hsc_env
+            -- Bindings created here belong to the interactive package
+            -- See Note [The interactive package] in HscTypes
+    tc_gblenv <- ioMsgMaybe $ tcRnDeclsi interactive_hsc_env decls
 
     {- Grab the new instances -}
     -- We grab the whole environment because of the overlapping that may have
@@ -1438,31 +1442,27 @@ hscDeclsWithLocation hsc_env0 str source linenumber =
                                 prepd_binds data_tycons mod_breaks
 
     let src_span = srcLocSpan interactiveSrcLoc
-    hsc_env <- getHscEnv
     liftIO $ linkDecls hsc_env src_span cbc
 
-    let tcs         = filter (not . isImplicitTyCon) $ (mg_tcs simpl_mg)
+    let tcs = filterOut isImplicitTyCon (mg_tcs simpl_mg)
 
-        ext_vars = filter (isExternalName . idName) $
-                      bindersOfBinds core_binds
+        ext_ids = [ id | id <- bindersOfBinds core_binds
+                       , isExternalName (idName id)
+                       , not (isDFunId id || isImplicitId id) ]
+            -- We only need to keep around the external bindings
+            -- (as decided by TidyPgm), since those are the only ones
+            -- that might be referenced elsewhere.
+            -- The DFunIds are in 'insts' (see Note [ic_tythings] in HscTypes
+            -- Implicit Ids are implicit in tcs
 
-        (sys_vars, user_vars) = partition is_sys_var ext_vars
-        is_sys_var id =  isDFunId id
-                      || isRecordSelector id
-                      || isJust (isClassOpId_maybe id)
-                   -- we only need to keep around the external bindings
-                   -- (as decided by TidyPgm), since those are the only ones
-                   -- that might be referenced elsewhere.
-
-        tythings =  map AnId user_vars
-                 ++ map ATyCon tcs
+        tythings =  map AnId ext_ids ++ map ATyCon tcs
                  ++ map ACoAxiom axioms
 
-    let ictxt1 = extendInteractiveContext icontext tythings
-        ictxt  = ictxt1 { ic_sys_vars  = sys_vars ++ ic_sys_vars ictxt1,
-                          ic_instances = (insts, finsts),
-                          ic_axioms    = axioms,
-                          ic_default   = defaults }
+    let icontext = hsc_IC hsc_env
+        ictxt1   = extendInteractiveContext icontext tythings
+        ictxt    = ictxt1 { ic_instances = (insts, finsts),
+                            ic_axioms    = axioms,
+                            ic_default   = defaults }
 
     return (tythings, ictxt)
 
@@ -1486,7 +1486,7 @@ hscTcExpr hsc_env0 expr = runInteractiveHsc hsc_env0 $ do
     maybe_stmt <- hscParseStmt expr
     case maybe_stmt of
         Just (L _ (BodyStmt expr _ _ _)) ->
-            ioMsgMaybe $ tcRnExpr hsc_env (hsc_IC hsc_env) expr
+            ioMsgMaybe $ tcRnExpr hsc_env expr
         _ ->
             throwErrors $ unitBag $ mkPlainErrMsg (hsc_dflags hsc_env) noSrcSpan
                 (text "not an expression:" <+> quotes (text expr))
@@ -1501,7 +1501,7 @@ hscKcType
 hscKcType hsc_env0 normalise str = runInteractiveHsc hsc_env0 $ do
     hsc_env <- getHscEnv
     ty <- hscParseType str
-    ioMsgMaybe $ tcRnType hsc_env (hsc_IC hsc_env) normalise ty
+    ioMsgMaybe $ tcRnType hsc_env normalise ty
 
 hscParseStmt :: String -> Hsc (Maybe (GhciLStmt RdrName))
 hscParseStmt = hscParseThing parseStmt
@@ -1620,10 +1620,10 @@ hscCompileCoreExpr' hsc_env srcspan ds_expr
          ; prepd_expr <- corePrepExpr dflags hsc_env tidy_expr
 
            {- Lint if necessary -}
-         ; lintInteractiveExpr "hscCompileExpr" hsc_env prepd_expr 
+         ; lintInteractiveExpr "hscCompileExpr" hsc_env prepd_expr
 
            {- Convert to BCOs -}
-         ; bcos <- coreExprToBCOs dflags iNTERACTIVE prepd_expr
+         ; bcos <- coreExprToBCOs dflags (icInteractiveModule (hsc_IC hsc_env)) prepd_expr
 
            {- link it -}
          ; hval <- linkExpr hsc_env srcspan bcos
@@ -1662,4 +1662,3 @@ showModuleIndex (i,n) = "[" ++ padded ++ " of " ++ n_str ++ "] "
     n_str = show n
     i_str = show i
     padded = replicate (length n_str - length i_str) ' ' ++ i_str
-

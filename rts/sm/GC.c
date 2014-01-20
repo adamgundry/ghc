@@ -7,7 +7,7 @@
  * Documentation on the architecture of the Garbage Collector can be
  * found in the online commentary:
  *
- *   http://hackage.haskell.org/trac/ghc/wiki/Commentary/Rts/Storage/GC
+ *   http://ghc.haskell.org/trac/ghc/wiki/Commentary/Rts/Storage/GC
  *
  * ---------------------------------------------------------------------------*/
 
@@ -156,7 +156,7 @@ static void shutdown_gc_threads     (nat me);
 static void collect_gct_blocks      (void);
 static void collect_pinned_object_blocks (void);
 
-#if 0 && defined(DEBUG)
+#if defined(DEBUG)
 static void gcCAFs                  (void);
 #endif
 
@@ -662,14 +662,14 @@ GarbageCollect (nat collect_gen,
 
   resetNurseries();
 
+ // mark the garbage collected CAFs as dead
+#if defined(DEBUG)
+  if (major_gc) { gcCAFs(); }
+#endif
+
   if (major_gc) {
       checkUnload (gct->scavenged_static_objects);
   }
-
- // mark the garbage collected CAFs as dead
-#if 0 && defined(DEBUG) // doesn't work at the moment
-  if (major_gc) { gcCAFs(); }
-#endif
 
 #ifdef PROFILING
   // resetStaticObjectForRetainerProfiling() must be called before
@@ -801,6 +801,7 @@ new_gc_thread (nat n, gc_thread *t)
     initSpinLock(&t->gc_spin);
     initSpinLock(&t->mut_spin);
     ACQUIRE_SPIN_LOCK(&t->gc_spin);
+    ACQUIRE_SPIN_LOCK(&t->mut_spin);
     t->wakeup = GC_THREAD_INACTIVE;  // starts true, so we can wait for the
                           // thread to start up, see wakeup_gc_threads
 #endif
@@ -1181,7 +1182,10 @@ shutdown_gc_threads (nat me USED_IF_THREADS)
 
     for (i=0; i < n_gc_threads; i++) {
         if (i == me || gc_threads[i]->idle) continue;
-        while (gc_threads[i]->wakeup != GC_THREAD_WAITING_TO_CONTINUE) { write_barrier(); }
+        while (gc_threads[i]->wakeup != GC_THREAD_WAITING_TO_CONTINUE) {
+            busy_wait_nop();
+            write_barrier();
+        }
     }
 #endif
 }
@@ -1731,41 +1735,39 @@ resize_nursery (void)
    time.
    -------------------------------------------------------------------------- */
 
-#if 0 && defined(DEBUG)
+#if defined(DEBUG)
 
-static void
-gcCAFs(void)
+static void gcCAFs(void)
 {
-  StgClosure*  p;
-  StgClosure** pp;
-  const StgInfoTable *info;
-  nat i;
+    StgIndStatic *p, *prev;
 
-  i = 0;
-  p = caf_list;
-  pp = &caf_list;
+    const StgInfoTable *info;
+    nat i;
 
-  while (p != NULL) {
+    i = 0;
+    p = debug_caf_list;
+    prev = NULL;
 
-    info = get_itbl(p);
+    for (p = debug_caf_list; p != (StgIndStatic*)END_OF_STATIC_LIST;
+         p = (StgIndStatic*)p->saved_info) {
 
-    ASSERT(info->type == IND_STATIC);
+        info = get_itbl((StgClosure*)p);
+        ASSERT(info->type == IND_STATIC);
 
-    if (STATIC_LINK(info,p) == NULL) {
-	debugTrace(DEBUG_gccafs, "CAF gc'd at 0x%04lx", (long)p);
-	// black hole it
-	SET_INFO(p,&stg_BLACKHOLE_info);
-	p = STATIC_LINK2(info,p);
-	*pp = p;
+        if (p->static_link == NULL) {
+            debugTrace(DEBUG_gccafs, "CAF gc'd at 0x%p", p);
+            SET_INFO((StgClosure*)p,&stg_GCD_CAF_info); // stub it
+            if (prev == NULL) {
+                debug_caf_list = (StgIndStatic*)p->saved_info;
+            } else {
+                prev->saved_info = p->saved_info;
+            }
+        } else {
+            prev = p;
+            i++;
+        }
     }
-    else {
-      pp = &STATIC_LINK2(info,p);
-      p = *pp;
-      i++;
-    }
 
-  }
-
-  debugTrace(DEBUG_gccafs, "%d CAFs live", i);
+    debugTrace(DEBUG_gccafs, "%d CAFs live", i);
 }
 #endif

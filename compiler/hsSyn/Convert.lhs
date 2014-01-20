@@ -277,7 +277,7 @@ cvtDec (ClosedTypeFamilyD tc tyvars mkind eqns)
 cvtDec (TH.RoleAnnotD tc roles)
   = do { tc' <- tconNameL tc
        ; let roles' = map (noLoc . cvtRole) roles
-       ; return $ noLoc $ Hs.RoleAnnotD (RoleAnnotDecl tc' roles') }
+       ; returnL $ Hs.RoleAnnotD (RoleAnnotDecl tc' roles') }
 ----------------
 cvtTySynEqn :: Located RdrName -> TySynEqn -> CvtM (LTyFamInstEqn RdrName)
 cvtTySynEqn tc (TySynEqn lhs rhs)
@@ -485,6 +485,19 @@ cvtPragmaD (RuleP nm bndrs lhs rhs phases)
        ; returnL $ Hs.RuleD $ HsRule nm' act bndrs'
                                      lhs' placeHolderNames
                                      rhs' placeHolderNames
+       }
+
+cvtPragmaD (AnnP target exp)
+  = do { exp' <- cvtl exp
+       ; target' <- case target of
+         ModuleAnnotation  -> return ModuleAnnProvenance
+         TypeAnnotation n  -> do
+           n' <- tconName n
+           return (TypeAnnProvenance  n')
+         ValueAnnotation n -> do
+           n' <- if isVarName n then vName n else cName n
+           return (ValueAnnProvenance n')
+       ; returnL $ Hs.AnnD $ HsAnnotation target' exp'
        }
 
 dfltActivation :: TH.Inline -> Activation
@@ -908,7 +921,7 @@ cvtTypeKind ty_str ty
              | length tys' == n         -- Saturated
              -> if n==1 then return (head tys') -- Singleton tuples treated
                                                 -- like nothing (ie just parens)
-                        else returnL (HsTupleTy HsBoxedTuple tys')
+                        else returnL (HsTupleTy HsBoxedOrConstraintTuple tys')
              | n == 1
              -> failWith (ptext (sLit ("Illegal 1-tuple " ++ ty_str ++ " constructor")))
              | otherwise
@@ -1063,8 +1076,11 @@ cvtName ctxt_ns (TH.Name occ flavour)
 okOcc :: OccName.NameSpace -> String -> Bool
 okOcc _  []      = False
 okOcc ns str@(c:_)
-  | OccName.isVarNameSpace ns = startsVarId c || startsVarSym c
-  | otherwise                 = startsConId c || startsConSym c || str == "[]"
+  | OccName.isVarNameSpace ns     = startsVarId c || startsVarSym c
+  | OccName.isDataConNameSpace ns = startsConId c || startsConSym c || str == "[]"
+  | otherwise                     = startsConId c || startsConSym c ||
+                                    startsVarSym c || str == "[]" || str == "->"
+                                     -- allow type operators like "+"
 
 -- Determine the name space of a name in a type
 --

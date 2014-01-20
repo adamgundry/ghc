@@ -21,7 +21,7 @@ import StgCmmEnv
 import StgCmmCon
 import StgCmmHeap
 import StgCmmProf (curCCS, ldvEnterClosure, enterCostCentreFun, enterCostCentreThunk,
-                   initUpdFrameProf, costCentreFrom)
+                   initUpdFrameProf)
 import StgCmmTicky
 import StgCmmLayout
 import StgCmmUtils
@@ -31,7 +31,6 @@ import StgCmmForeign    (emitPrimCall)
 import MkGraph
 import CoreSyn          ( AltCon(..) )
 import SMRep
-import BlockId
 import Cmm
 import CmmInfo
 import CmmUtils
@@ -477,13 +476,12 @@ closureCodeBody top_lvl bndr cl_info cc args arity body fv_details
                 ; dflags <- getDynFlags
                 ; let node_points = nodeMustPointToIt dflags lf_info
                       node' = if node_points then Just node else Nothing
-                ; when node_points (ldvEnterClosure cl_info)
                 -- Emit new label that might potentially be a header
                 -- of a self-recursive tail call. See Note
                 -- [Self-recursive tail calls] in StgCmmExpr
-                ; u <- newUnique
-                ; let loop_header_id = mkBlockId u
+                ; loop_header_id <- newLabelC
                 ; emitLabel loop_header_id
+                ; when node_points (ldvEnterClosure cl_info (CmmLocal node))
                 -- Extend reader monad with information that
                 -- self-recursive tail calls can be optimized into local
                 -- jumps
@@ -495,7 +493,7 @@ closureCodeBody top_lvl bndr cl_info cc args arity body fv_details
                   tickyEnterFun cl_info
                 ; enterCostCentreFun cc
                     (CmmMachOp (mo_wordSub dflags)
-                         [ CmmReg nodeReg
+                         [ CmmReg (CmmLocal node) -- See [NodeReg clobbered with loopification]
                          , mkIntExpr dflags (funTag dflags cl_info) ])
                 ; fv_bindings <- mapM bind_fv fv_details
                 -- Load free vars out of closure *after*
@@ -505,6 +503,18 @@ closureCodeBody top_lvl bndr cl_info cc args arity body fv_details
                 }}}
 
   }
+
+-- Note [NodeReg clobbered with loopification]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+--
+-- Previously we used to pass nodeReg (aka R1) here. With profiling, upon
+-- entering a closure, enterFunCCS was called with R1 passed to it. But since R1
+-- may get clobbered inside the body of a closure, and since a self-recursive
+-- tail call does not restore R1, a subsequent call to enterFunCCS received a
+-- possibly bogus value from R1. The solution is to not pass nodeReg (aka R1) to
+-- enterFunCCS. Instead, we pass node, the callee-saved temporary that stores
+-- the original value of R1. This way R1 may get modified but loopification will
+-- not care.
 
 -- A function closure pointer may be tagged, so we
 -- must take it into account when accessing the free variables.
@@ -551,7 +561,7 @@ thunkCode cl_info fv_details _cc node arity body
   = do { dflags <- getDynFlags
        ; let node_points = nodeMustPointToIt dflags (closureLFInfo cl_info)
              node'       = if node_points then Just node else Nothing
-        ; ldvEnterClosure cl_info -- NB: Node always points when profiling
+        ; ldvEnterClosure cl_info (CmmLocal node) -- NB: Node always points when profiling
 
         -- Heap overflow check
         ; entryHeapCheck cl_info node' arity [] $ do
@@ -685,81 +695,34 @@ emitUpdateFrame dflags frame lbl updatee = do
 -----------------------------------------------------------------------------
 -- Entering a CAF
 --
--- When a CAF is first entered, it creates a black hole in the heap,
--- and updates itself with an indirection to this new black hole.
---
--- We update the CAF with an indirection to a newly-allocated black
--- hole in the heap.  We also set the blocking queue on the newly
--- allocated black hole to be empty.
---
--- Why do we make a black hole in the heap when we enter a CAF?
---
---     - for a  generational garbage collector, which needs a fast
---       test for whether an updatee is in an old generation or not
---
---     - for the parallel system, which can implement updates more
---       easily if the updatee is always in the heap. (allegedly).
---
--- When debugging, we maintain a separate CAF list so we can tell when
--- a CAF has been garbage collected.
-
--- newCAF must be called before the itbl ptr is overwritten, since
--- newCAF records the old itbl ptr in order to do CAF reverting
--- (which Hugs needs to do in order that combined mode works right.)
---
-
--- ToDo [Feb 04]  This entire link_caf nonsense could all be moved
--- into the "newCAF" RTS procedure, which we call anyway, including
--- the allocation of the black-hole indirection closure.
--- That way, code size would fall, the CAF-handling code would
--- be closer together, and the compiler wouldn't need to know
--- about off_indirectee etc.
+-- See Note [CAF management] in rts/sm/Storage.c
 
 link_caf :: LocalReg           -- pointer to the closure
          -> Bool               -- True <=> updatable, False <=> single-entry
          -> FCode CmmExpr      -- Returns amode for closure to be updated
--- To update a CAF we must allocate a black hole, link the CAF onto the
--- CAF list, then update the CAF to point to the fresh black hole.
 -- This function returns the address of the black hole, so it can be
--- updated with the new value when available.  The reason for all of this
--- is that we only want to update dynamic heap objects, not static ones,
--- so that generational GC is easier.
+-- updated with the new value when available.
 link_caf node _is_upd = do
   { dflags <- getDynFlags
-    -- Alloc black hole specifying CC_HDR(Node) as the cost centre
-  ; let use_cc   = costCentreFrom dflags (CmmReg nodeReg)
-        blame_cc = use_cc
-        tso      = CmmReg (CmmGlobal CurrentTSO)
-
-  ; hp_rel <- allocDynClosureCmm Nothing cafBlackHoleInfoTable mkLFBlackHole
-                                         use_cc blame_cc [(tso,fixedHdrSize dflags)]
-        -- small optimisation: we duplicate the hp_rel expression in
-        -- both the newCAF call and the value returned below.
-        -- If we instead used allocDynClosureReg which assigns it to a reg,
-        -- then the reg is live across the newCAF call and gets spilled,
-        -- which is stupid.  Really we should have an optimisation pass to
-        -- fix this, but we don't yet. --SDM
-
-        -- Call the RTS function newCAF to add the CAF to the CafList
-        -- so that the garbage collector can find them
-        -- This must be done *before* the info table pointer is overwritten,
-        -- because the old info table ptr is needed for reversion
-  ; ret <- newTemp (bWord dflags)
-  ; emitRtsCallGen [(ret,NoHint)] (mkForeignLabel (fsLit "newCAF") Nothing ForeignLabelInExternalPackage IsFunction)
+        -- Call the RTS function newCAF, returning the newly-allocated
+        -- blackhole indirection closure
+  ; let newCAF_lbl = mkForeignLabel (fsLit "newCAF") Nothing
+                                    ForeignLabelInExternalPackage IsFunction
+  ; bh <- newTemp (bWord dflags)
+  ; emitRtsCallGen [(bh,AddrHint)] newCAF_lbl
       [ (CmmReg (CmmGlobal BaseReg),  AddrHint),
-        (CmmReg (CmmLocal node), AddrHint),
-        (hp_rel, AddrHint) ]
+        (CmmReg (CmmLocal node), AddrHint) ]
       False
 
   -- see Note [atomic CAF entry] in rts/sm/Storage.c
   ; updfr  <- getUpdFrameOff
+  ; let target = entryCode dflags (closureInfoPtr dflags (CmmReg (CmmLocal node)))
   ; emit =<< mkCmmIfThen
-      (CmmMachOp (mo_wordEq dflags) [ CmmReg (CmmLocal ret), CmmLit (zeroCLit dflags)])
+      (cmmEqWord dflags (CmmReg (CmmLocal bh)) (zeroExpr dflags))
         -- re-enter the CAF
-       (let target = entryCode dflags (closureInfoPtr dflags (CmmReg (CmmLocal node))) in
-        mkJump dflags NativeNodeCall target [] updfr)
+       (mkJump dflags NativeNodeCall target [] updfr)
 
-  ; return hp_rel }
+  ; return (CmmReg (CmmLocal bh)) }
 
 ------------------------------------------------------------------------
 --              Profiling
@@ -782,4 +745,3 @@ closureDescription dflags mod_name name
                       else pprModule mod_name <> char '.' <> ppr name) <>
                     char '>')
    -- showSDocDump, because we want to see the unique on the Name.
-

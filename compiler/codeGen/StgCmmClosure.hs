@@ -23,7 +23,6 @@ module StgCmmClosure (
         StandardFormInfo,        -- ...ditto...
         mkLFThunk, mkLFReEntrant, mkConLFInfo, mkSelectorLFInfo,
         mkApLFInfo, mkLFImported, mkLFArgument, mkLFLetNoEscape,
-        mkLFBlackHole,
         lfDynTag,
         maybeIsLFCon, isLFThunk, isLFReEntrant, lfUpdatable,
 
@@ -123,9 +122,10 @@ isKnownFun _ = False
 
 -- Why are these here?
 
--- NB: this is reliable because by StgCmm no Ids have unboxed tuple type
 idPrimRep :: Id -> PrimRep
 idPrimRep id = typePrimRep (idType id)
+    -- NB: typePrimRep fails on unboxed tuples,
+    --     but by StgCmm no Ids have unboxed tuple type
 
 addIdReps :: [Id] -> [(PrimRep, Id)]
 addIdReps ids = [(idPrimRep id, id) | id <- ids]
@@ -135,14 +135,6 @@ addArgReps args = [(argPrimRep arg, arg) | arg <- args]
 
 argPrimRep :: StgArg -> PrimRep
 argPrimRep arg = typePrimRep (stgArgType arg)
-
-isVoidRep :: PrimRep -> Bool
-isVoidRep VoidRep = True
-isVoidRep _other  = False
-
-isGcPtrRep :: PrimRep -> Bool
-isGcPtrRep PtrRep = True
-isGcPtrRep _      = False
 
 
 -----------------------------------------------------------------------------
@@ -186,13 +178,6 @@ data LambdaFormInfo
                         -- always a value, needs evaluation
 
   | LFLetNoEscape       -- See LetNoEscape module for precise description
-
-  | LFBlackHole                -- Used for the closures allocated to hold the result
-                        -- of a CAF.  We want the target of the update frame to
-                        -- be in the heap, so we make a black hole to hold it.
-
-                        -- XXX we can very nearly get rid of this, but
-                        -- allocDynClosure needs a LambdaFormInfo
 
 
 -------------------------
@@ -301,10 +286,6 @@ mkLFImported id
   where
     arity = idRepArity id
 
-------------
-mkLFBlackHole :: LambdaFormInfo
-mkLFBlackHole = LFBlackHole
-
 -----------------------------------------------------
 --                Dynamic pointer tagging
 -----------------------------------------------------
@@ -368,10 +349,6 @@ maybeIsLFCon _ = Nothing
 ------------
 isLFThunk :: LambdaFormInfo -> Bool
 isLFThunk (LFThunk {})  = True
-isLFThunk LFBlackHole   = True
-        -- return True for a blackhole: this function is used to determine
-        -- whether to use the thunk header in SMP mode, and a blackhole
-        -- must have one.
 isLFThunk _ = False
 
 isLFReEntrant :: LambdaFormInfo -> Bool
@@ -446,7 +423,6 @@ nodeMustPointToIt _ (LFCon _) = True
 
 nodeMustPointToIt _ (LFUnknown _)   = True
 nodeMustPointToIt _ LFUnLifted      = False
-nodeMustPointToIt _ LFBlackHole     = True    -- BH entry may require Node to point
 nodeMustPointToIt _ LFLetNoEscape   = False
 
 {- Note [GC recovery]
@@ -585,11 +561,6 @@ getCallMethod _ _name _ (LFUnknown True) _n_arg _cg_locs _self_loop_info
 getCallMethod _ name _ (LFUnknown False) n_args _cg_loc _self_loop_info
   = ASSERT2( n_args == 0, ppr name <+> ppr n_args )
     EnterIt -- Not a function
-
-getCallMethod _ _name _ LFBlackHole _n_args _cg_loc _self_loop_info
-  = SlowCall    -- Presumably the black hole has by now
-                -- been updated, but we don't know with
-                -- what, so we slow call it
 
 getCallMethod _ _name _ LFLetNoEscape _n_args (LneLoc blk_id lne_regs) _self_loop_info
   = JumpToIt blk_id lne_regs
@@ -794,9 +765,6 @@ closureUpdReqd ClosureInfo{ closureLFInfo = lf_info } = lfUpdatable lf_info
 
 lfUpdatable :: LambdaFormInfo -> Bool
 lfUpdatable (LFThunk _ _ upd _ _)  = upd
-lfUpdatable LFBlackHole            = True
-        -- Black-hole closures are allocated to receive the results of an
-        -- alg case with a named default... so they need to be updated.
 lfUpdatable _ = False
 
 closureSingleEntry :: ClosureInfo -> Bool
@@ -843,8 +811,6 @@ closureLocalEntryLabel dflags
 mkClosureInfoTableLabel :: Id -> LambdaFormInfo -> CLabel
 mkClosureInfoTableLabel id lf_info
   = case lf_info of
-        LFBlackHole -> mkCAFBlackHoleInfoTableLabel
-
         LFThunk _ _ upd_flag (SelectorThunk offset) _
                       -> mkSelectorInfoLabel upd_flag offset
 

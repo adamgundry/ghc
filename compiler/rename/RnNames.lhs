@@ -33,6 +33,7 @@ import RdrName
 import Outputable
 import Maybes
 import SrcLoc
+import BasicTypes      ( TopLevelFlag(..) )
 import ErrUtils
 import Util
 import FastString
@@ -146,8 +147,8 @@ rnImports imports = do
     this_mod <- getModule
     let (source, ordinary) = partition is_source_import imports
         is_source_import d = ideclSource (unLoc d)
-    stuff1 <- mapM (rnImportDecl this_mod) ordinary
-    stuff2 <- mapM (rnImportDecl this_mod) source
+    stuff1 <- mapAndReportM (rnImportDecl this_mod) ordinary
+    stuff2 <- mapAndReportM (rnImportDecl this_mod) source
     -- Safe Haskell: See Note [Tracking Trust Transitively]
     let (decls, rdr_env, imp_avails, hpc_usage) = combine (stuff1 ++ stuff2)
     return (decls, rdr_env, imp_avails, hpc_usage)
@@ -350,6 +351,8 @@ created by its bindings.
 
 Note [Top-level Names in Template Haskell decl quotes]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+See also: Note [Interactively-bound Ids in GHCi] in HscTypes
+
 Consider a Template Haskell declaration quotation like this:
       module M where
         f x = h [d| f = 3 |]
@@ -401,75 +404,54 @@ extendGlobalRdrEnvRn avails new_fixities
   = do  { (gbl_env, lcl_env) <- getEnvs
         ; stage <- getStage
         ; isGHCi <- getIsGHCi
-        ; let rdr_env = tcg_rdr_env gbl_env
-              fix_env = tcg_fix_env gbl_env
+        ; let rdr_env  = tcg_rdr_env gbl_env
+              fix_env  = tcg_fix_env gbl_env
+              th_bndrs = tcl_th_bndrs lcl_env
+              th_lvl   = thLevel stage
 
               -- Delete new_occs from global and local envs
               -- If we are in a TemplateHaskell decl bracket,
               --    we are going to shadow them
               -- See Note [Top-level Names in Template Haskell decl quotes]
-              shadowP  = isBrackStage stage
-              new_occs = map nameOccName (concatMap availNames avails)
-              rdr_env_TH = transformGREs qual_gre new_occs rdr_env
-              rdr_env_GHCi = delListFromOccEnv rdr_env new_occs
+              inBracket = isBrackStage stage
+              lcl_env_TH = lcl_env { tcl_rdr = delLocalRdrEnvList (tcl_rdr lcl_env) new_occs }
 
-              lcl_env1 = lcl_env { tcl_rdr = delLocalRdrEnvList (tcl_rdr lcl_env) new_occs }
-              (rdr_env2, lcl_env2) | shadowP   = (rdr_env_TH,   lcl_env1)
-                                   | isGHCi    = (rdr_env_GHCi, lcl_env1)
-                                   | otherwise = (rdr_env,      lcl_env)
+              lcl_env2 | inBracket = lcl_env_TH
+                       | otherwise = lcl_env
 
-              rdr_env3 = foldl extendGlobalRdrEnv rdr_env2 gres
-              fix_env' = foldl extend_fix_env     fix_env  gres
-              dups = findLocalDupsRdrEnv rdr_env3 new_occs
+              rdr_env2  = extendGlobalRdrEnv (isGHCi && not inBracket) rdr_env avails
+                 -- Shadowing only applies for GHCi decls outside brackets
+                 -- e.g. (Trac #4127a)
+                 --   ghci> runQ [d| class C a where f :: a
+                 --                  f = True
+                 --                  instance C Int where f = 2 |]
+                 --   We don't want the f=True to shadow the f class-op
 
-              gbl_env' = gbl_env { tcg_rdr_env = rdr_env3, tcg_fix_env = fix_env' }
+              lcl_env3 = lcl_env2 { tcl_th_bndrs = extendNameEnvList th_bndrs
+                                                       [ (n, (TopLevel, th_lvl))
+                                                       | n <- new_names ] }
+              fix_env' = foldl extend_fix_env fix_env new_names
+              dups = findLocalDupsRdrEnv rdr_env2 new_names
 
-        ; traceRn (text "extendGlobalRdrEnvRn dups" <+> (ppr dups))
-        ; mapM_ addDupDeclErr dups
+              gbl_env' = gbl_env { tcg_rdr_env = rdr_env2, tcg_fix_env = fix_env' }
 
-        ; traceRn (text "extendGlobalRdrEnvRn" <+> (ppr new_fixities $$ ppr fix_env $$ ppr fix_env'))
-        ; return (gbl_env', lcl_env2) }
+        ; traceRn (text "extendGlobalRdrEnvRn 1" <+> (ppr avails $$ (ppr dups)))
+        ; mapM_ (addDupDeclErr . map gre_name) dups
+
+        ; traceRn (text "extendGlobalRdrEnvRn 2" <+> (pprGlobalRdrEnv True rdr_env2))
+        ; return (gbl_env', lcl_env3) }
   where
-    gres = gresFromAvails LocalDef avails
+    new_names = concatMap availNames avails
+    new_occs  = map nameOccName new_names
 
     -- If there is a fixity decl for the gre, add it to the fixity env
-    extend_fix_env fix_env gre
+    extend_fix_env fix_env name
       | Just (L _ fi) <- lookupFsEnv new_fixities (occNameFS occ)
       = extendNameEnv fix_env name (FixItem occ fi)
       | otherwise
       = fix_env
       where
-        name = gre_name gre
         occ  = nameOccName name
-
-    qual_gre :: GlobalRdrElt -> GlobalRdrElt
-    -- Transform top-level GREs from the module being compiled
-    -- so that they are out of the way of new definitions in a Template
-    -- Haskell bracket
-    -- See Note [Top-level Names in Template Haskell decl quotes]
-    -- Seems like 5 times as much work as it deserves!
-    --
-    -- For a LocalDef we make a (fake) qualified imported GRE for a
-    -- local GRE so that the original *qualified* name is still in scope
-    -- but the *unqualified* one no longer is.  What a hack!
-
-    qual_gre gre@(GRE { gre_prov = LocalDef, gre_name = name })
-        | isExternalName name = gre { gre_prov = Imported [imp_spec] }
-        | otherwise           = gre
-          -- Do not shadow Internal (ie Template Haskell) Names
-          -- See Note [Top-level Names in Template Haskell decl quotes]
-        where
-          mod = ASSERT2( isExternalName name, ppr name) moduleName (nameModule name)
-          imp_spec = ImpSpec { is_item = ImpAll, is_decl = decl_spec }
-          decl_spec = ImpDeclSpec { is_mod = mod, is_as = mod,
-                                    is_qual = True,  -- Qualified only!
-                                    is_dloc = srcLocSpan (nameSrcLoc name) }
-
-    qual_gre gre@(GRE { gre_prov = Imported specs })
-        = gre { gre_prov = Imported (map qual_spec specs) }
-
-    qual_spec spec@(ImpSpec { is_decl = decl_spec })
-        = spec { is_decl = decl_spec { is_qual = True } }
 \end{code}
 
 @getLocalDeclBinders@ returns the names for an @HsDecl@.  It's
@@ -502,6 +484,7 @@ getLocalNonValBinders fixity_env
   = do  { -- Process all type/class decls *except* family instances
         ; overload_ok <- xoptM Opt_OverloadedRecordFields
         ; (tc_avails, tc_fldss) <- fmap unzip $ mapM (new_tc overload_ok) (tyClGroupConcat tycl_decls)
+        ; traceRn (text "getLocalNonValBinders 1" <+> ppr tc_avails)
         ; envs <- extendGlobalRdrEnvRn tc_avails fixity_env
         ; setEnvs envs $ do {
             -- Bring these things into scope first
@@ -523,6 +506,7 @@ getLocalNonValBinders fixity_env
               new_bndrs = availsToNameSet avails `unionNameSets`
                           availsToNameSet tc_avails
               flds      = concat nti_fldss ++ concat tc_fldss
+        ; traceRn (text "getLocalNonValBinders 2" <+> ppr avails)
         ; envs <- extendGlobalRdrEnvRn avails fixity_env
 
         ; let group' = group{ hs_instds = inst_decls' }
@@ -530,20 +514,24 @@ getLocalNonValBinders fixity_env
         ; return (group', envs, new_bndrs, flds) } }
   where
     for_hs_bndrs :: [Located RdrName]
-    for_hs_bndrs = [nm | L _ (ForeignImport nm _ _ _) <- foreign_decls]
+    for_hs_bndrs = [ L decl_loc (unLoc nm)
+                   | L decl_loc (ForeignImport nm _ _ _) <- foreign_decls]
 
     -- In a hs-boot file, the value binders come from the
     --  *signatures*, and there should be no foreign binders
-    hs_boot_sig_bndrs = [n | L _ (TypeSig ns _) <- val_sigs, n <- ns]
+    hs_boot_sig_bndrs = [ L decl_loc (unLoc n)
+                        | L decl_loc (TypeSig ns _) <- val_sigs, n <- ns]
     ValBindsIn _ val_sigs = val_binds
 
+      -- the SrcSpan attached to the input should be the span of the
+      -- declaration, not just the name
     new_simple :: Located RdrName -> RnM AvailInfo
     new_simple rdr_name = do{ nm <- newTopSrcBinder rdr_name
                             ; return (Avail nm) }
 
     new_tc :: Bool -> LTyClDecl RdrName -> RnM (AvailInfo, [(Name, [FieldLabel])])
     new_tc overload_ok tc_decl -- NOT for type/data instances
-        = do { let (bndrs, flds) = hsTyClDeclBinders (unLoc tc_decl)
+        = do { let (bndrs, flds) = hsLTyClDeclBinders tc_decl
              ; names@(main_name : _) <- mapM newTopSrcBinder bndrs
              ; flds' <- mapM (new_rec_sel overload_ok (nameOccName main_name) . fstOf3) flds
              ; let fld_env = case unLoc tc_decl of
@@ -1461,7 +1449,7 @@ reportUnusedNames _export_decls gbl_env
 
 This code finds which import declarations are unused.  The
 specification and implementation notes are here:
-  http://hackage.haskell.org/trac/ghc/wiki/Commentary/Compiler/UnusedImports
+  http://ghc.haskell.org/trac/ghc/wiki/Commentary/Compiler/UnusedImports
 
 \begin{code}
 type ImportDeclUsage

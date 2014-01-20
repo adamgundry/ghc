@@ -30,6 +30,8 @@ module TcGenDeriv (
         deepSubtypesContaining, foldDataConArgs,
         gen_Foldable_binds,
         gen_Traversable_binds,
+        mkCoerceClassMethEqn,
+        gen_Newtype_binds,
         genAuxBinds,
         ordOpTbl, boxConTbl
     ) where
@@ -48,6 +50,7 @@ import PrelInfo
 import FamInstEnv( FamInst )
 import MkCore ( eRROR_ID )
 import PrelNames hiding (error_RDR)
+import MkId ( coerceId )
 import PrimOp
 import SrcLoc
 import TyCon
@@ -55,14 +58,18 @@ import TcType
 import TysPrim
 import TysWiredIn
 import Type
+import Class
 import TypeRep
 import VarSet
+import VarEnv
 import Module
 import State
 import Util
+import Var
 import MonadUtils
 import Outputable
 import FastString
+import Pair
 import Bag
 import Fingerprint
 import TcEnv (InstInfo)
@@ -1426,8 +1433,8 @@ gen_Data_binds dflags loc tycon
 
         ------------ gcast1/2
     tycon_kind = tyConKind tycon
-    gcast_binds | tycon_kind `eqKind` kind1 = mk_gcast dataCast1_RDR gcast1_RDR
-                | tycon_kind `eqKind` kind2 = mk_gcast dataCast2_RDR gcast2_RDR
+    gcast_binds | tycon_kind `tcEqKind` kind1 = mk_gcast dataCast1_RDR gcast1_RDR
+                | tycon_kind `tcEqKind` kind2 = mk_gcast dataCast2_RDR gcast2_RDR
                 | otherwise                 = emptyBag
     mk_gcast dataCast_RDR gcast_RDR
       = unitBag (mk_easy_FunBind loc dataCast_RDR [nlVarPat f_RDR]
@@ -1887,7 +1894,69 @@ gen_Traversable_binds loc tycon
        where appAp x y = nlHsApps ap_RDR [x,y]
 \end{code}
 
+%************************************************************************
+%*                                                                      *
+                     Newtype-deriving instances
+%*                                                                      *
+%************************************************************************
 
+We take every method in the original instance and `coerce` it to fit
+into the derived instance. We need a type annotation on the argument
+to `coerce` to make it obvious what instantiation of the method we're
+coercing from.
+
+See #8503 for more discussion.
+
+\begin{code}
+mkCoerceClassMethEqn :: Class   -- the class being derived
+                     -> [TyVar] -- the tvs in the instance head
+                     -> [Type]  -- instance head parameters (incl. newtype)
+                     -> Type    -- the representation type (already eta-reduced)
+                     -> Id      -- the method to look at
+                     -> Pair Type
+mkCoerceClassMethEqn cls inst_tvs cls_tys rhs_ty id
+  = Pair (substTy rhs_subst user_meth_ty) (substTy lhs_subst user_meth_ty)
+  where
+    cls_tvs = classTyVars cls
+    in_scope = mkInScopeSet $ mkVarSet inst_tvs
+    lhs_subst = mkTvSubst in_scope (zipTyEnv cls_tvs cls_tys)
+    rhs_subst = mkTvSubst in_scope (zipTyEnv cls_tvs (changeLast cls_tys rhs_ty))
+    (_class_tvs, _class_constraint, user_meth_ty) = tcSplitSigmaTy (varType id)
+
+    changeLast :: [a] -> a -> [a]
+    changeLast []     _  = panic "changeLast"
+    changeLast [_]    x  = [x]
+    changeLast (x:xs) x' = x : changeLast xs x'
+
+
+gen_Newtype_binds :: SrcSpan
+                  -> Class   -- the class being derived
+                  -> [TyVar] -- the tvs in the instance head
+                  -> [Type]  -- instance head parameters (incl. newtype)
+                  -> Type    -- the representation type (already eta-reduced)
+                  -> LHsBinds RdrName
+gen_Newtype_binds loc cls inst_tvs cls_tys rhs_ty
+  = listToBag $ zipWith mk_bind
+        (classMethods cls)
+        (map (mkCoerceClassMethEqn cls inst_tvs cls_tys rhs_ty) (classMethods cls))
+  where
+    coerce_RDR = getRdrName coerceId
+    mk_bind :: Id -> Pair Type -> LHsBind RdrName
+    mk_bind id (Pair tau_ty user_ty)
+      = L loc $ mkRdrFunBind (L loc meth_RDR) [mkSimpleMatch [] rhs_expr]
+      where
+        meth_RDR = getRdrName id
+        rhs_expr
+          = ( nlHsVar coerce_RDR
+                `nlHsApp`
+              (nlHsVar meth_RDR `nlExprWithTySig` toHsType tau_ty'))
+            `nlExprWithTySig` toHsType user_ty
+        -- Open the representation type here, so that it's forall'ed type
+        -- variables refer to the ones bound in the user_ty
+        (_, _, tau_ty')  = tcSplitSigmaTy tau_ty
+
+    nlExprWithTySig e s = noLoc (ExprWithTySig e s)
+\end{code}
 
 %************************************************************************
 %*                                                                      *

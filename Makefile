@@ -5,8 +5,8 @@
 # This file is part of the GHC build system.
 #
 # To understand how the build system works and how to modify it, see
-#      http://hackage.haskell.org/trac/ghc/wiki/Building/Architecture
-#      http://hackage.haskell.org/trac/ghc/wiki/Building/Modifying
+#      http://ghc.haskell.org/trac/ghc/wiki/Building/Architecture
+#      http://ghc.haskell.org/trac/ghc/wiki/Building/Modifying
 #
 # -----------------------------------------------------------------------------
 
@@ -72,9 +72,6 @@ endif
 	$(MAKE) -r --no-print-directory -f ghc.mk phase=final $@
 
 binary-dist: binary-dist-prep
-ifeq "$(mingw32_TARGET_OS)" "1"
-	mv bindistprep/*.exe .
-endif
 	mv bindistprep/*.tar.bz2 .
 
 binary-dist-prep:

@@ -10,7 +10,7 @@ The @Inst@ type: dictionaries or method instances
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
---     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
+--     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
 module Inst ( 
@@ -26,8 +26,6 @@ module Inst (
        tcSyntaxName,
 
        -- Simple functions over evidence variables
-       hasEqualities, 
-       
        tyVarsOfWC, tyVarsOfBag, 
        tyVarsOfCt, tyVarsOfCts, 
 
@@ -49,8 +47,8 @@ import InstEnv
 import FunDeps
 import TcMType
 import Type
+import Coercion ( Role(..) )
 import TcType
-import Class
 import Unify
 import HscTypes
 import Id
@@ -84,7 +82,8 @@ emitWanted :: CtOrigin -> TcPredType -> TcM EvVar
 emitWanted origin pred 
   = do { loc <- getCtLoc origin
        ; ev  <- newWantedEvVar pred
-       ; emitFlat (mkNonCanonical loc (CtWanted { ctev_pred = pred, ctev_evar = ev }))
+       ; emitFlat $ mkNonCanonical $
+             CtWanted { ctev_pred = pred, ctev_evar = ev, ctev_loc = loc }
        ; return ev }
 
 newMethodFromName :: CtOrigin -> Name -> TcRhoType -> TcM (HsExpr TcId)
@@ -222,7 +221,7 @@ instCallConstraints orig preds
        ; return (mkWpEvApps evs) }
   where
     go pred 
-     | Just (ty1, ty2) <- getEqPredTys_maybe pred -- Try short-cut
+     | Just (Nominal, ty1, ty2) <- getEqPredTys_maybe pred -- Try short-cut
      = do  { co <- unifyType ty1 ty2
            ; return (EvCoercion co) }
      | otherwise
@@ -514,22 +513,6 @@ addClsInstsErr herald ispecs
 %************************************************************************
 
 \begin{code}
-hasEqualities :: [EvVar] -> Bool
--- Has a bunch of canonical constraints (all givens) got any equalities in it?
-hasEqualities givens = any (has_eq . evVarPred) givens
-  where
-    has_eq = has_eq' . classifyPredType
-    
-    -- See Note [Float Equalities out of Implications] in TcSimplify
-    has_eq' (EqPred {})          = True
-    has_eq' (ClassPred cls _tys) = any has_eq (classSCTheta cls)
-    has_eq' (TuplePred ts)       = any has_eq ts
-    has_eq' (IrredPred _)        = True -- Might have equalities in it after reduction?
-       -- This is conservative.  e.g. if there's a constraint function FC with
-       --    type instance FC Int = Show
-       -- then we won't float from inside a given constraint (FC Int a), even though
-       -- it's really the innocuous (Show a).  Too bad!  Add a type signature
-
 ---------------- Getting free tyvars -------------------------
 tyVarsOfCt :: Ct -> TcTyVarSet
 -- NB: the 
@@ -569,8 +552,7 @@ tidyCt env ct
   = case ct of
      CHoleCan { cc_ev = ev }
        -> ct { cc_ev = tidy_ev env ev }
-     _ -> CNonCanonical { cc_ev = tidy_ev env (cc_ev ct)
-                        , cc_loc  = cc_loc ct }
+     _ -> mkNonCanonical (tidy_ev env (ctEvidence ct))
   where 
     tidy_ev :: TidyEnv -> CtEvidence -> CtEvidence
      -- NB: we do not tidy the ctev_evtm/var field because we don't 

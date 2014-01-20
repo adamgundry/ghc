@@ -17,15 +17,12 @@ module Avail (
     availFieldsLabels,
     availFieldsNames, availFieldsNamesWithSelectors,
     fieldLabelsToAvailFields,
-    gresFromAvails,
-    gresFromAvail,
     pprAvailField
   ) where
 
 import Name
 import NameEnv
 import NameSet
-import RdrName
 
 import FieldLabel
 import Binary
@@ -182,34 +179,6 @@ fieldLabelToAvailField fl = (flSelector fl, mb_lbl)
 fieldLabelsToAvailFields :: [FieldLabel] -> AvailFields
 fieldLabelsToAvailFields = map fieldLabelToAvailField
 
-
--- -----------------------------------------------------------------------------
--- gresFromAvails
-
--- | make a 'GlobalRdrEnv' where all the elements point to the same
--- Provenance (useful for "hiding" imports, or imports with
--- no details).
-gresFromAvails :: Provenance -> [AvailInfo] -> [GlobalRdrElt]
-gresFromAvails prov avails
-  = concatMap (gresFromAvail (const prov) prov) avails
-
-gresFromAvail :: (Name -> Provenance) -> Provenance ->
-                     AvailInfo -> [GlobalRdrElt]
-gresFromAvail prov_fn prov_fld avail = xs ++ ys
-  where
-    parent _ (Avail _)                   = NoParent
-    parent n (AvailTC m _ _) | n == m    = NoParent
-                             | otherwise = ParentIs m
-
-    xs = map greFromFld (availFlds avail)
-    ys = map greFromNonFld (availNonFldNames avail)
-
-    greFromNonFld n = GRE { gre_name = n, gre_par = parent n avail, gre_prov = prov_fn n}
-
-    greFromFld (n, mb_lbl)
-      = GRE { gre_name = n
-            , gre_par  = FldParent (availName avail) mb_lbl
-            , gre_prov = prov_fld }
 
 -- -----------------------------------------------------------------------------
 -- Printing

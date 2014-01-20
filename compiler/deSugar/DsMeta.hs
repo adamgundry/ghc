@@ -18,7 +18,9 @@ module DsMeta( dsBracket,
                liftName, liftStringName, expQTyConName, patQTyConName,
                decQTyConName, decsQTyConName, typeQTyConName,
                decTyConName, typeTyConName, mkNameG_dName, mkNameG_vName, mkNameG_tcName,
-               quoteExpName, quotePatName, quoteDecName, quoteTypeName
+               quoteExpName, quotePatName, quoteDecName, quoteTypeName,
+               tExpTyConName, tExpDataConName, unTypeName, unTypeQName,
+               unsafeTExpCoerceName
                 ) where
 
 #include "HsVersions.h"
@@ -65,7 +67,7 @@ import Control.Monad
 import Data.List
 
 -----------------------------------------------------------------------------
-dsBracket :: HsBracket Name -> [PendingSplice] -> DsM CoreExpr
+dsBracket :: HsBracket Name -> [PendingTcSplice] -> DsM CoreExpr
 -- Returns a CoreExpr of type TH.ExpQ
 -- The quoted thing is parameterised over Name, even though it has
 -- been type checked.  We don't want all those type decorations!
@@ -73,7 +75,7 @@ dsBracket :: HsBracket Name -> [PendingSplice] -> DsM CoreExpr
 dsBracket brack splices
   = dsExtendMetaEnv new_bit (do_brack brack)
   where
-    new_bit = mkNameEnv [(n, Splice (unLoc e)) | (n,e) <- splices]
+    new_bit = mkNameEnv [(n, Splice (unLoc e)) | (n, e) <- splices]
 
     do_brack (VarBr _ n) = do { MkC e1  <- lookupOcc n ; return e1 }
     do_brack (ExpBr e)   = do { MkC e1  <- repLE e     ; return e1 }
@@ -81,6 +83,7 @@ dsBracket brack splices
     do_brack (TypBr t)   = do { MkC t1  <- repLTy t    ; return t1 }
     do_brack (DecBrG gp) = do { MkC ds1 <- repTopDs gp ; return ds1 }
     do_brack (DecBrL _)  = panic "dsBracket: unexpected DecBrL"
+    do_brack (TExpBr e)  = do { MkC e1  <- repLE e     ; return e1 }
 
 {- -------------- Examples --------------------
 
@@ -760,6 +763,8 @@ repLPred :: LHsType Name -> DsM (Core TH.PredQ)
 repLPred (L _ p) = repPred p
 
 repPred :: HsType Name -> DsM (Core TH.PredQ)
+repPred (HsParTy ty) 
+  = repLPred ty
 repPred ty
   | Just (cls, tys) <- splitHsClassTy_maybe ty
   = do
@@ -832,7 +837,7 @@ repTy (HsKindSig t k)       = do
                                 t1 <- repLTy t
                                 k1 <- repLKind k
                                 repTSig t1 k1
-repTy (HsSpliceTy splice _ _) = repSplice splice
+repTy (HsSpliceTy splice _)     = repSplice splice
 repTy (HsExplicitListTy _ tys)  = do
                                     tys1 <- repLTys tys
                                     repTPromotedList tys1
@@ -846,8 +851,8 @@ repTy (HsTyLit lit) = do
 repTy ty                      = notHandled "Exotic form of type" (ppr ty)
 
 repTyLit :: HsTyLit -> DsM (Core TH.TyLitQ)
-repTyLit (HsNumTy i) = do dflags <- getDynFlags
-                          rep2 numTyLitName [mkIntExpr dflags i]
+repTyLit (HsNumTy i) = do iExpr <- mkIntegerExpr i
+                          rep2 numTyLitName [iExpr]
 repTyLit (HsStrTy s) = do { s' <- mkStringExprFS s
                          ; rep2 strTyLitName [s']
                          }
@@ -1023,13 +1028,13 @@ repE (ArithSeq _ _ aseq) =
                              ds3 <- repLE e3
                              repFromThenTo ds1 ds2 ds3
 
-repE (HsSpliceE splice)  = repSplice splice
-repE e@(PArrSeq {})      = notHandled "Parallel arrays" (ppr e)
-repE e@(HsCoreAnn {})    = notHandled "Core annotations" (ppr e)
-repE e@(HsSCC {})        = notHandled "Cost centres" (ppr e)
-repE e@(HsTickPragma {}) = notHandled "Tick Pragma" (ppr e)
-repE e@(HsBracketOut {}) = notHandled "TH brackets" (ppr e)
-repE e                   = notHandled "Expression form" (ppr e)
+repE (HsSpliceE _ splice)  = repSplice splice
+repE e@(PArrSeq {})        = notHandled "Parallel arrays" (ppr e)
+repE e@(HsCoreAnn {})      = notHandled "Core annotations" (ppr e)
+repE e@(HsSCC {})          = notHandled "Cost centres" (ppr e)
+repE e@(HsTickPragma {})   = notHandled "Tick Pragma" (ppr e)
+repE e@(HsTcBracketOut {}) = notHandled "TH brackets" (ppr e)
+repE e                     = notHandled "Expression form" (ppr e)
 
 -----------------------------------------------------------------------------
 -- Building representations of auxillary structures like Match, Clause, Stmt,
@@ -1321,6 +1326,8 @@ repP p@(SigPatIn {})  = notHandled "Type signatures in patterns" (ppr p)
         --       do { p' <- repLP p; t' <- repLTy t; repPsig p' t' }
         --      repPsig :: Core TH.PatQ -> Core TH.TypeQ -> DsM (Core TH.PatQ)
         --      repPsig (MkC p) (MkC t) = rep2 sigPName [p, t]
+
+repP (SplicePat splice) = repSplice splice
 
 repP other = notHandled "Exotic pattern" (ppr other)
 
@@ -2019,6 +2026,9 @@ templateHaskellNames = [
     returnQName, bindQName, sequenceQName, newNameName, liftName,
     mkNameName, mkNameG_vName, mkNameG_dName, mkNameG_tcName, mkNameLName,
     liftStringName,
+    unTypeName,
+    unTypeQName,
+    unsafeTExpCoerceName,
 
     -- Lit
     charLName, stringLName, integerLName, intPrimLName, wordPrimLName,
@@ -2094,6 +2104,8 @@ templateHaskellNames = [
     conLikeDataConName, funLikeDataConName,
     -- Phases
     allPhasesDataConName, fromPhaseDataConName, beforePhaseDataConName,
+    -- TExp
+    tExpDataConName,
     -- RuleBndr
     ruleVarName, typedRuleVarName,
     -- FunDep
@@ -2111,7 +2123,7 @@ templateHaskellNames = [
     typeTyConName, tyVarBndrTyConName, matchTyConName, clauseTyConName,
     patQTyConName, fieldPatQTyConName, fieldExpQTyConName, funDepTyConName,
     predQTyConName, decsQTyConName, ruleBndrQTyConName, tySynEqnQTyConName,
-    roleTyConName,
+    roleTyConName, tExpTyConName,
 
     -- Quasiquoting
     quoteDecName, quoteTypeName, quoteExpName, quotePatName]
@@ -2136,7 +2148,7 @@ qqFun  = mk_known_key_name OccName.varName  qqLib
 qTyConName, nameTyConName, fieldExpTyConName, patTyConName,
     fieldPatTyConName, expTyConName, decTyConName, typeTyConName,
     tyVarBndrTyConName, matchTyConName, clauseTyConName, funDepTyConName,
-    predTyConName :: Name
+    predTyConName, tExpTyConName :: Name
 qTyConName        = thTc (fsLit "Q")            qTyConKey
 nameTyConName     = thTc (fsLit "Name")         nameTyConKey
 fieldExpTyConName = thTc (fsLit "FieldExp")     fieldExpTyConKey
@@ -2150,10 +2162,12 @@ matchTyConName    = thTc (fsLit "Match")        matchTyConKey
 clauseTyConName   = thTc (fsLit "Clause")       clauseTyConKey
 funDepTyConName   = thTc (fsLit "FunDep")       funDepTyConKey
 predTyConName     = thTc (fsLit "Pred")         predTyConKey
+tExpTyConName     = thTc (fsLit "TExp")         tExpTyConKey
 
 returnQName, bindQName, sequenceQName, newNameName, liftName,
     mkNameName, mkNameG_vName, mkNameG_dName, mkNameG_tcName,
-    mkNameLName, liftStringName :: Name
+    mkNameLName, liftStringName, unTypeName, unTypeQName,
+    unsafeTExpCoerceName :: Name
 returnQName    = thFun (fsLit "returnQ")   returnQIdKey
 bindQName      = thFun (fsLit "bindQ")     bindQIdKey
 sequenceQName  = thFun (fsLit "sequenceQ") sequenceQIdKey
@@ -2165,6 +2179,9 @@ mkNameG_vName  = thFun (fsLit "mkNameG_v")  mkNameG_vIdKey
 mkNameG_dName  = thFun (fsLit "mkNameG_d")  mkNameG_dIdKey
 mkNameG_tcName = thFun (fsLit "mkNameG_tc") mkNameG_tcIdKey
 mkNameLName    = thFun (fsLit "mkNameL")    mkNameLIdKey
+unTypeName     = thFun (fsLit "unType")     unTypeIdKey
+unTypeQName    = thFun (fsLit "unTypeQ")    unTypeQIdKey
+unsafeTExpCoerceName = thFun (fsLit "unsafeTExpCoerce") unsafeTExpCoerceIdKey
 
 
 -------------------- TH.Lib -----------------------
@@ -2409,6 +2426,10 @@ allPhasesDataConName   = thCon (fsLit "AllPhases")   allPhasesDataConKey
 fromPhaseDataConName   = thCon (fsLit "FromPhase")   fromPhaseDataConKey
 beforePhaseDataConName = thCon (fsLit "BeforePhase") beforePhaseDataConKey
 
+-- newtype TExp a = ...
+tExpDataConName :: Name
+tExpDataConName = thCon (fsLit "TExp") tExpDataConKey
+
 -- data RuleBndr = ...
 ruleVarName, typedRuleVarName :: Name
 ruleVarName      = libFun (fsLit ("ruleVar"))      ruleVarIdKey
@@ -2467,7 +2488,7 @@ expTyConKey, matchTyConKey, clauseTyConKey, qTyConKey, expQTyConKey,
     fieldExpTyConKey, fieldPatTyConKey, nameTyConKey, patQTyConKey,
     fieldPatQTyConKey, fieldExpQTyConKey, funDepTyConKey, predTyConKey,
     predQTyConKey, decsQTyConKey, ruleBndrQTyConKey, tySynEqnQTyConKey,
-    roleTyConKey :: Unique
+    roleTyConKey, tExpTyConKey :: Unique
 expTyConKey             = mkPreludeTyConUnique 200
 matchTyConKey           = mkPreludeTyConUnique 201
 clauseTyConKey          = mkPreludeTyConUnique 202
@@ -2498,13 +2519,14 @@ decsQTyConKey           = mkPreludeTyConUnique 226
 ruleBndrQTyConKey       = mkPreludeTyConUnique 227
 tySynEqnQTyConKey       = mkPreludeTyConUnique 228
 roleTyConKey            = mkPreludeTyConUnique 229
+tExpTyConKey            = mkPreludeTyConUnique 230
 
 -- IdUniques available: 200-499
 -- If you want to change this, make sure you check in PrelNames
 
 returnQIdKey, bindQIdKey, sequenceQIdKey, liftIdKey, newNameIdKey,
     mkNameIdKey, mkNameG_vIdKey, mkNameG_dIdKey, mkNameG_tcIdKey,
-    mkNameLIdKey :: Unique
+    mkNameLIdKey, unTypeIdKey, unTypeQIdKey, unsafeTExpCoerceIdKey :: Unique
 returnQIdKey        = mkPreludeMiscIdUnique 200
 bindQIdKey          = mkPreludeMiscIdUnique 201
 sequenceQIdKey      = mkPreludeMiscIdUnique 202
@@ -2515,6 +2537,9 @@ mkNameG_vIdKey       = mkPreludeMiscIdUnique 206
 mkNameG_dIdKey       = mkPreludeMiscIdUnique 207
 mkNameG_tcIdKey      = mkPreludeMiscIdUnique 208
 mkNameLIdKey         = mkPreludeMiscIdUnique 209
+unTypeIdKey          = mkPreludeMiscIdUnique 210
+unTypeQIdKey         = mkPreludeMiscIdUnique 211
+unsafeTExpCoerceIdKey = mkPreludeMiscIdUnique 212
 
 
 -- data Lit = ...
@@ -2758,6 +2783,10 @@ allPhasesDataConKey, fromPhaseDataConKey, beforePhaseDataConKey :: Unique
 allPhasesDataConKey   = mkPreludeDataConUnique 45
 fromPhaseDataConKey   = mkPreludeDataConUnique 46
 beforePhaseDataConKey = mkPreludeDataConUnique 47
+
+-- newtype TExp a = ...
+tExpDataConKey :: Unique
+tExpDataConKey = mkPreludeDataConUnique 48
 
 -- data FunDep = ...
 funDepIdKey :: Unique

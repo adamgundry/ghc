@@ -12,7 +12,7 @@ This module exports some utility functions of no great interest.
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
---     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
+--     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
 -- | Utility functions for constructing Core syntax, principally for desugaring
@@ -730,10 +730,11 @@ mkFailurePair :: CoreExpr	-- Result type of the whole case expression
 		      CoreExpr)	-- Fail variable applied to realWorld#
 -- See Note [Failure thunks and CPR]
 mkFailurePair expr
-  = do { fail_fun_var <- newFailLocalDs (realWorldStatePrimTy `mkFunTy` ty)
-       ; fail_fun_arg <- newSysLocalDs realWorldStatePrimTy
-       ; return (NonRec fail_fun_var (Lam fail_fun_arg expr),
-                 App (Var fail_fun_var) (Var realWorldPrimId)) }
+  = do { fail_fun_var <- newFailLocalDs (voidPrimTy `mkFunTy` ty)
+       ; fail_fun_arg <- newSysLocalDs voidPrimTy
+       ; let real_arg = setOneShotLambda fail_fun_arg
+       ; return (NonRec fail_fun_var (Lam real_arg expr),
+                 App (Var fail_fun_var) (Var voidPrimId)) }
   where
     ty = exprType expr
 \end{code}

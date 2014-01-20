@@ -1,4 +1,4 @@
-%
+o%
 % (c) The University of Glasgow, 1996-2003
 
 Functions over HsSyn specialised to RdrName.
@@ -7,16 +7,17 @@ Functions over HsSyn specialised to RdrName.
 module RdrHsSyn (
         mkHsOpApp,
         mkHsIntegral, mkHsFractional, mkHsIsString,
-        mkHsDo, mkHsSplice, mkTopSpliceDecl,
+        mkHsDo, mkSpliceDecl,
         mkRoleAnnotDecl,
         mkClassDecl, 
-        mkTyData, mkFamInstData, 
+        mkTyData, mkDataFamInst, 
         mkTySynonym, mkTyFamInstEqn,
         mkTyFamInst, 
         mkFamDecl, 
         splitCon, mkInlinePragma,
         mkRecConstrOrUpdate, -- HsExp -> [HsFieldUpdate] -> P HsExp
         mkTyLit,
+        mkTyClD, mkInstD,
 
         cvBindGroup,
         cvBindsAndSigs,
@@ -36,7 +37,6 @@ module RdrHsSyn (
         -- checking and constructing values
         checkPrecP,           -- Int -> P Int
         checkContext,         -- HsType -> P HsContext
-        checkTyVars,          -- [LHsType RdrName] -> P ()
         checkPattern,         -- HsExp -> P HsPat
         bang_RDR,
         checkPatterns,        -- SrcLoc -> [HsExp] -> P [HsPat]
@@ -109,6 +109,12 @@ Similarly for mkConDecl, mkClassOpSig and default-method names.
         *** See "THE NAMING STORY" in HsDecls ****
 
 \begin{code}
+mkTyClD :: LTyClDecl n -> LHsDecl n
+mkTyClD (L loc d) = L loc (TyClD d)
+
+mkInstD :: LInstDecl n -> LHsDecl n
+mkInstD (L loc d) = L loc (InstD d)
+
 mkClassDecl :: SrcSpan
             -> Located (Maybe (LHsContext RdrName), LHsType RdrName)
             -> Located [Located (FunDep RdrName)]
@@ -119,7 +125,8 @@ mkClassDecl loc (L _ (mcxt, tycl_hdr)) fds where_cls
   = do { let (binds, sigs, ats, at_defs, _, docs) = cvBindsAndSigs (unLoc where_cls)
              cxt = fromMaybe (noLoc []) mcxt
        ; (cls, tparams) <- checkTyClHdr tycl_hdr
-       ; tyvars <- checkTyVars tycl_hdr tparams      -- Only type vars allowed
+       ; tyvars <- checkTyVars (ptext (sLit "class")) whereDots
+                               cls tparams      -- Only type vars allowed
        ; return (L loc (ClassDecl { tcdCtxt = cxt, tcdLName = cls, tcdTyVars = tyvars,
                                     tcdFDs = unLoc fds, tcdSigs = sigs, tcdMeths = binds,
                                     tcdATs = ats, tcdATDefs = at_defs, tcdDocs  = docs,
@@ -135,27 +142,11 @@ mkTyData :: SrcSpan
          -> P (LTyClDecl RdrName)
 mkTyData loc new_or_data cType (L _ (mcxt, tycl_hdr)) ksig data_cons maybe_deriv
   = do { (tc, tparams) <- checkTyClHdr tycl_hdr
-       ; tyvars <- checkTyVars tycl_hdr tparams
+       ; tyvars <- checkTyVars (ppr new_or_data) equalsDots tc tparams
        ; defn <- mkDataDefn new_or_data cType mcxt ksig data_cons maybe_deriv
        ; return (L loc (DataDecl { tcdLName = tc, tcdTyVars = tyvars,
                                    tcdDataDefn = defn,
                                    tcdFVs = placeHolderNames })) }
-
-mkFamInstData :: SrcSpan
-         -> NewOrData
-         -> Maybe CType
-         -> Located (Maybe (LHsContext RdrName), LHsType RdrName)
-         -> Maybe (LHsKind RdrName)
-         -> [LConDecl RdrName]
-         -> Maybe [LHsType RdrName]
-         -> P (LDataFamInstDecl RdrName)
-mkFamInstData loc new_or_data cType (L _ (mcxt, tycl_hdr)) ksig data_cons maybe_deriv
-  = do { (tc, tparams) <- checkTyClHdr tycl_hdr
-       ; defn <- mkDataDefn new_or_data cType mcxt ksig data_cons maybe_deriv
-       ; return (L loc (DataFamInstDecl { dfid_tycon = tc
-                                        , dfid_rep_tycon = placeHolderRepTyCon
-                                        , dfid_pats = mkHsWithBndrs tparams
-                                        , dfid_defn = defn, dfid_fvs = placeHolderNames })) }
 
 mkDataDefn :: NewOrData
            -> Maybe CType
@@ -179,9 +170,9 @@ mkTySynonym :: SrcSpan
             -> P (LTyClDecl RdrName)
 mkTySynonym loc lhs rhs
   = do { (tc, tparams) <- checkTyClHdr lhs
-       ; tyvars <- checkTyVars lhs tparams
-       ; return (L loc (SynDecl { tcdLName = tc, tcdTyVars = tyvars,
-                                 tcdRhs = rhs, tcdFVs = placeHolderNames })) }
+       ; tyvars <- checkTyVars (ptext (sLit "type")) equalsDots tc tparams
+       ; return (L loc (SynDecl { tcdLName = tc, tcdTyVars = tyvars
+                                , tcdRhs = rhs, tcdFVs = placeHolderNames })) }
 
 mkTyFamInstEqn :: LHsType RdrName
                -> LHsType RdrName
@@ -192,51 +183,69 @@ mkTyFamInstEqn lhs rhs
                               , tfie_pats  = mkHsWithBndrs tparams
                               , tfie_rhs   = rhs }) }
 
+mkDataFamInst :: SrcSpan
+         -> NewOrData
+         -> Maybe CType
+         -> Located (Maybe (LHsContext RdrName), LHsType RdrName)
+         -> Maybe (LHsKind RdrName)
+         -> [LConDecl RdrName]
+         -> Maybe [LHsType RdrName]
+         -> P (LInstDecl RdrName)
+mkDataFamInst loc new_or_data cType (L _ (mcxt, tycl_hdr)) ksig data_cons maybe_deriv
+  = do { (tc, tparams) <- checkTyClHdr tycl_hdr
+       ; defn <- mkDataDefn new_or_data cType mcxt ksig data_cons maybe_deriv
+       ; return (L loc (DataFamInstD (
+                  DataFamInstDecl { dfid_tycon = tc
+                                  , dfid_rep_tycon = placeHolderRepTyCon
+                                  , dfid_pats = mkHsWithBndrs tparams
+                                  , dfid_defn = defn, dfid_fvs = placeHolderNames }))) }
+
 mkTyFamInst :: SrcSpan
             -> LTyFamInstEqn RdrName
-            -> P (LTyFamInstDecl RdrName)
+            -> P (LInstDecl RdrName)
 mkTyFamInst loc eqn
-  = return (L loc (TyFamInstDecl { tfid_eqn  = eqn
-                                 , tfid_fvs  = placeHolderNames }))
+  = return (L loc (TyFamInstD (TyFamInstDecl { tfid_eqn  = eqn
+                                             , tfid_fvs  = placeHolderNames })))
 
 mkFamDecl :: SrcSpan
           -> FamilyInfo RdrName
           -> LHsType RdrName   -- LHS
           -> Maybe (LHsKind RdrName) -- Optional kind signature
-          -> P (LFamilyDecl RdrName)
+          -> P (LTyClDecl RdrName)
 mkFamDecl loc info lhs ksig
   = do { (tc, tparams) <- checkTyClHdr lhs
-       ; tyvars <- checkTyVars lhs tparams
-       ; return (L loc (FamilyDecl info tc tyvars ksig)) }
+       ; tyvars <- checkTyVars (ppr info) equals_or_where tc tparams
+       ; return (L loc (FamDecl (FamilyDecl { fdInfo = info, fdLName = tc
+                                            , fdTyVars = tyvars, fdKindSig = ksig }))) }
+  where
+    equals_or_where = case info of
+                        DataFamily          -> empty
+                        OpenTypeFamily      -> empty
+                        ClosedTypeFamily {} -> whereDots
 
-mkTopSpliceDecl :: LHsExpr RdrName -> HsDecl RdrName
+mkSpliceDecl :: LHsExpr RdrName -> HsDecl RdrName
 -- If the user wrote
 --      [pads| ... ]   then return a QuasiQuoteD
 --      $(e)           then return a SpliceD
 -- but if she wrote, say,
 --      f x            then behave as if she'd written $(f x)
 --                     ie a SpliceD
-mkTopSpliceDecl (L _ (HsQuasiQuoteE qq))            = QuasiQuoteD qq
-mkTopSpliceDecl (L _ (HsSpliceE (HsSplice _ expr))) = SpliceD (SpliceDecl expr       Explicit)
-mkTopSpliceDecl other_expr                          = SpliceD (SpliceDecl other_expr Implicit)
-
--- Ensure a type literal is used correctly; notably, we need the proper extension enabled,
--- and if it's an integer literal, the literal must be >= 0. This can occur with
--- -XNegativeLiterals enabled (see #8306)
-mkTyLit :: Located HsTyLit -> P (LHsType RdrName)
-mkTyLit lit = extension typeLiteralsEnabled >>= check
+mkSpliceDecl lexpr@(L loc expr)
+  | HsQuasiQuoteE qq <- expr          = QuasiQuoteD qq
+  | HsSpliceE is_typed splice <- expr = ASSERT( not is_typed )
+                                        SpliceD (SpliceDecl (L loc splice) Explicit)
+  | otherwise                         = SpliceD (SpliceDecl (L loc splice) Implicit)
   where
-    negLit (L _ (HsStrTy _)) = False
-    negLit (L _ (HsNumTy i)) = i < 0
+    splice = mkHsSplice lexpr
 
-    check False =
-      parseErrorSDoc (getLoc lit)
-        (text "Illegal literal in type (use DataKinds to enable):" <+> ppr lit)
-    check True  =
-      if not (negLit lit) then return (HsTyLit `fmap` lit)
-       else parseErrorSDoc (getLoc lit)
-              (text "Illegal literal in type (type literals must not be negative):" <+> ppr lit)
-
+mkTyLit :: Located (HsTyLit) -> P (LHsType RdrName)
+mkTyLit l =
+  do allowed <- extension typeLiteralsEnabled
+     if allowed
+       then return (HsTyLit `fmap` l)
+       else parseErrorSDoc (getLoc l)
+              (text "Illegal literal in type (use DataKinds to enable):" <+>
+              ppr l)
 
 mkRoleAnnotDecl :: SrcSpan
                 -> Located RdrName                   -- type being annotated
@@ -493,13 +502,10 @@ we can bring x,y into scope.  So:
    * For RecCon we do not
 
 \begin{code}
-checkTyVars :: LHsType RdrName -> [LHsType RdrName] -> P (LHsTyVarBndrs RdrName)
+checkTyVars :: SDoc -> SDoc -> Located RdrName -> [LHsType RdrName] -> P (LHsTyVarBndrs RdrName)
 -- Check whether the given list of type parameters are all type variables
--- (possibly with a kind signature).  If the second argument is `False',
--- only type variables are allowed and we raise an error on encountering a
--- non-variable; otherwise, we allow non-variable arguments and return the
--- entire list of parameters.
-checkTyVars tycl_hdr tparms = do { tvs <- mapM chk tparms
+-- (possibly with a kind signature).
+checkTyVars pp_what equals_or_where tc tparms = do { tvs <- mapM chk tparms
                                  ; return (mkHsQTvs tvs) }
   where
         -- Check that the name space is correct!
@@ -509,9 +515,15 @@ checkTyVars tycl_hdr tparms = do { tvs <- mapM chk tparms
         | isRdrTyVar tv    = return (L l (UserTyVar tv))
     chk t@(L l _)
         = parseErrorSDoc l $
-          vcat [ sep [ ptext (sLit "Unexpected type") <+> quotes (ppr t)
-                     , ptext (sLit "where type variable expected") ]
-               , ptext (sLit "In the declaration of") <+> quotes (ppr tycl_hdr) ]
+          vcat [ ptext (sLit "Unexpected type") <+> quotes (ppr t)
+               , ptext (sLit "In the") <+> pp_what <+> ptext (sLit "declaration for") <+> quotes (ppr tc)
+               , vcat[ (ptext (sLit "A") <+> pp_what <+> ptext (sLit "declaration should have form"))
+                     , nest 2 (pp_what <+> ppr tc <+> ptext (sLit "a b c")
+                               <+> equals_or_where) ] ]
+
+whereDots, equalsDots :: SDoc
+whereDots  = ptext (sLit "where ...")
+equalsDots = ptext (sLit "= ...")
 
 checkDatatypeContext :: Maybe (LHsContext RdrName) -> P ()
 checkDatatypeContext Nothing = return ()
@@ -660,10 +672,12 @@ checkAPat msg loc e0 = do
      | otherwise -> parseErrorSDoc loc (text "Illegal tuple section in pattern:" $$ ppr e0)
 
    RecordCon c _ (HsRecFields fs dd)
-                      -> do fs <- mapM (checkPatField msg) fs
-                            return (ConPatIn c (RecCon (HsRecFields fs dd)))
-   HsQuasiQuoteE q    -> return (QuasiQuotePat q)
-   _                  -> patFail msg loc e0
+                        -> do fs <- mapM (checkPatField msg) fs
+                              return (ConPatIn c (RecCon (HsRecFields fs dd)))
+   HsSpliceE is_typed s | not is_typed 
+                        -> return (SplicePat s)
+   HsQuasiQuoteE q      -> return (QuasiQuotePat q)
+   _                    -> patFail msg loc e0
 
 placeHolderPunRhs :: LHsExpr RdrName
 -- The RHS of a punned record field will be filled in by the renamer

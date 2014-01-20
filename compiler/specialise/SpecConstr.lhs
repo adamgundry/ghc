@@ -1,6 +1,6 @@
-ToDo [Nov 2010]
+ToDo [Oct 2013]
 ~~~~~~~~~~~~~~~
-1. Use a library type rather than an annotation for ForceSpecConstr
+1. Nuke ForceSpecConstr for good (it is subsumed by GHC.Types.SPEC in ghc-prim)
 2. Nuke NoSpecConstr
 
 %
@@ -31,7 +31,7 @@ import DataCon
 import Coercion         hiding( substTy, substCo )
 import Rules
 import Type             hiding ( substTy )
-import TyCon            ( isRecursiveTyCon )
+import TyCon            ( isRecursiveTyCon, tyConName )
 import Id
 import MkCore           ( mkImpossibleExpr )
 import Var
@@ -53,13 +53,13 @@ import UniqFM
 import MonadUtils
 import Control.Monad    ( zipWithM )
 import Data.List
+import PrelNames        ( specTyConName )
 
-
--- See Note [SpecConstrAnnotation]
+-- See Note [Forcing specialisation]
 #ifndef GHCI
 type SpecConstrAnnotation = ()
 #else
-import TyCon            ( TyCon )
+import TyCon ( TyCon )
 import GHC.Exts( SpecConstrAnnotation(..) )
 #endif
 \end{code}
@@ -423,27 +423,39 @@ But fspec doesn't have decent strictness info.  As it happened,
 and hence f.  But now f's strictness is less than its arity, which
 breaks an invariant.
 
-Note [SpecConstrAnnotation]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-SpecConstrAnnotation is defined in GHC.Exts, and is only guaranteed to
-be available in stage 2 (well, until the bootstrap compiler can be
-guaranteed to have it)
-
-So we define it to be () in stage1 (ie when GHCI is undefined), and
-'#ifdef' out the code that uses it.
-
-See also Note [Forcing specialisation]
 
 Note [Forcing specialisation]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-With stream fusion and in other similar cases, we want to fully specialise
-some (but not necessarily all!) loops regardless of their size and the
-number of specialisations. We allow a library to specify this by annotating
-a type with ForceSpecConstr and then adding a parameter of that type to the
-loop. Here is a (simplified) example from the vector library:
+
+With stream fusion and in other similar cases, we want to fully
+specialise some (but not necessarily all!) loops regardless of their
+size and the number of specialisations.
+
+We allow a library to do this, in one of two ways (one which is
+deprecated):
+
+  1) Add a parameter of type GHC.Types.SPEC (from ghc-prim) to the loop body.
+
+  2) (Deprecated) Annotate a type with ForceSpecConstr from GHC.Exts,
+     and then add *that* type as a parameter to the loop body
+
+The reason #2 is deprecated is because it requires GHCi, which isn't
+available for things like a cross compiler using stage1.
+
+Here's a (simplified) example from the `vector` package. You may bring
+the special 'force specialization' type into scope by saying:
+
+  import GHC.Types (SPEC(..))
+
+or by defining your own type (again, deprecated):
 
   data SPEC = SPEC | SPEC2
   {-# ANN type SPEC ForceSpecConstr #-}
+
+(Note this is the exact same definition of GHC.Types.SPEC, just
+without the annotation.)
+
+After that, you say:
 
   foldl :: (a -> b -> a) -> a -> Stream b -> a
   {-# INLINE foldl #-}
@@ -493,12 +505,6 @@ or tuples here, (b) we don't want to restrict the set of types that
 can be used in Stream states and (c) some types are fixed by the user
 (e.g., the accumulator here) but we still want to specialise as much
 as possible.
-
-ForceSpecConstr is done by way of an annotation:
-  data SPEC = SPEC | SPEC2
-  {-# ANN type SPEC ForceSpecConstr #-}
-But SPEC is the *only* type so annotated, so it'd be better to
-use a particular library type.
 
 Alternatives to ForceSpecConstr
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -906,15 +912,14 @@ decreaseSpecCount env n_specs
         -- See Note [Avoiding exponential blowup]
 
 ---------------------------------------------------
--- See Note [SpecConstrAnnotation]
+-- See Note [Forcing specialisation]
 ignoreType    :: ScEnv -> Type   -> Bool
 ignoreDataCon  :: ScEnv -> DataCon -> Bool
 forceSpecBndr :: ScEnv -> Var    -> Bool
+
 #ifndef GHCI
 ignoreType    _ _  = False
 ignoreDataCon  _ _ = False
-forceSpecBndr _ _  = False
-
 #else /* GHCI */
 
 ignoreDataCon env dc = ignoreTyCon env (dataConTyCon dc)
@@ -927,6 +932,7 @@ ignoreType env ty
 ignoreTyCon :: ScEnv -> TyCon -> Bool
 ignoreTyCon env tycon
   = lookupUFM (sc_annotations env) tycon == Just NoSpecConstr
+#endif /* GHCI */
 
 forceSpecBndr env var = forceSpecFunTy env . snd . splitForAllTys . varType $ var
 
@@ -940,11 +946,13 @@ forceSpecArgTy env ty
 forceSpecArgTy env ty
   | Just (tycon, tys) <- splitTyConApp_maybe ty
   , tycon /= funTyCon
-      = lookupUFM (sc_annotations env) tycon == Just ForceSpecConstr
+      = tyConName tycon == specTyConName
+#ifdef GHCI
+        || lookupUFM (sc_annotations env) tycon == Just ForceSpecConstr
+#endif
         || any (forceSpecArgTy env) tys
 
 forceSpecArgTy _ _ = False
-#endif /* GHCI */
 \end{code}
 
 Note [Add scrutinee to ValueEnv too]
@@ -1541,7 +1549,7 @@ spec_one env fn arg_bndrs body (call_pat@(qvars, pats), rule_number)
                              `setIdArity` count isId spec_lam_args
               spec_str   = calcSpecStrictness fn spec_lam_args pats
                 -- Conditionally use result of new worker-wrapper transform
-              (spec_lam_args, spec_call_args) = mkWorkerArgs (sc_dflags env) qvars False body_ty
+              (spec_lam_args, spec_call_args) = mkWorkerArgs (sc_dflags env) qvars NoOneShotInfo body_ty
                 -- Usual w/w hack to avoid generating 
                 -- a spec_rhs of unlifted type and no args
 
@@ -1559,7 +1567,7 @@ calcSpecStrictness :: Id                     -- The original function
                    -> StrictSig              -- Strictness of specialised thing
 -- See Note [Transfer strictness]
 calcSpecStrictness fn qvars pats
-  = StrictSig (mkTopDmdType spec_dmds topRes)
+  = mkClosedStrictSig spec_dmds topRes
   where
     spec_dmds = [ lookupVarEnv dmd_env qv `orElse` topDmd | qv <- qvars, isId qv ]
     StrictSig (DmdType _ dmds _) = idStrictness fn

@@ -5,7 +5,7 @@
 -- Primitive Operations and Types
 --
 -- For more information on PrimOps, see
---   http://hackage.haskell.org/trac/ghc/wiki/Commentary/PrimOps
+--   http://ghc.haskell.org/trac/ghc/wiki/Commentary/PrimOps
 --
 -----------------------------------------------------------------------
 
@@ -18,7 +18,7 @@
 -- Information on how PrimOps are implemented and the steps necessary to
 -- add a new one can be found in the Commentary:
 --
---  http://hackage.haskell.org/trac/ghc/wiki/Commentary/PrimOps
+--  http://ghc.haskell.org/trac/ghc/wiki/Commentary/PrimOps
 
 -- This file is divided into named sections, each containing or more
 -- primop entries. Section headers have the format:
@@ -61,7 +61,7 @@ defaults
    can_fail         = False   -- See Note Note [PrimOp can_fail and has_side_effects] in PrimOp
    commutable       = False
    code_size        = { primOpCodeSizeDefault }
-   strictness       = { \ arity -> mkStrictSig (mkTopDmdType (replicate arity topDmd) topRes) }
+   strictness       = { \ arity -> mkClosedStrictSig (replicate arity topDmd) topRes }
    fixity           = Nothing
    llvm_only        = False
    vector           = []
@@ -1618,15 +1618,15 @@ primop  CatchOp "catch#" GenPrimOp
    with
 	-- Catch is actually strict in its first argument
 	-- but we don't want to tell the strictness
-	-- analyser about that!
-        -- might use caught action multiply
+	-- analyser about that, so that exceptions stay inside it.
+   strictness  = { \ _arity -> mkClosedStrictSig [apply1Dmd,apply2Dmd,topDmd] topRes }
    out_of_line = True
    has_side_effects = True
 
 primop  RaiseOp "raise#" GenPrimOp
    a -> b
    with
-   strictness  = { \ _arity -> mkStrictSig (mkTopDmdType [topDmd] botRes) }
+   strictness  = { \ _arity -> mkClosedStrictSig [topDmd] botRes }
       -- NB: result is bottom
    out_of_line = True
 
@@ -1643,7 +1643,7 @@ primop  RaiseOp "raise#" GenPrimOp
 primop  RaiseIOOp "raiseIO#" GenPrimOp
    a -> State# RealWorld -> (# State# RealWorld, b #)
    with
-   strictness  = { \ _arity -> mkStrictSig (mkTopDmdType [topDmd, topDmd] botRes) }
+   strictness  = { \ _arity -> mkClosedStrictSig [topDmd, topDmd] botRes }
    out_of_line = True
    has_side_effects = True
 
@@ -1651,6 +1651,7 @@ primop  MaskAsyncExceptionsOp "maskAsyncExceptions#" GenPrimOp
         (State# RealWorld -> (# State# RealWorld, a #))
      -> (State# RealWorld -> (# State# RealWorld, a #))
    with
+   strictness  = { \ _arity -> mkClosedStrictSig [apply1Dmd,topDmd] topRes }
    out_of_line = True
    has_side_effects = True
 
@@ -1658,6 +1659,7 @@ primop  MaskUninterruptibleOp "maskUninterruptible#" GenPrimOp
         (State# RealWorld -> (# State# RealWorld, a #))
      -> (State# RealWorld -> (# State# RealWorld, a #))
    with
+   strictness  = { \ _arity -> mkClosedStrictSig [apply1Dmd,topDmd] topRes }
    out_of_line = True
    has_side_effects = True
 
@@ -1665,6 +1667,7 @@ primop  UnmaskAsyncExceptionsOp "unmaskAsyncExceptions#" GenPrimOp
         (State# RealWorld -> (# State# RealWorld, a #))
      -> (State# RealWorld -> (# State# RealWorld, a #))
    with
+   strictness  = { \ _arity -> mkClosedStrictSig [apply1Dmd,topDmd] topRes }
    out_of_line = True
    has_side_effects = True
 
@@ -1684,6 +1687,7 @@ primop	AtomicallyOp "atomically#" GenPrimOp
       (State# RealWorld -> (# State# RealWorld, a #) )
    -> State# RealWorld -> (# State# RealWorld, a #)
    with
+   strictness  = { \ _arity -> mkClosedStrictSig [apply1Dmd,topDmd] topRes }
    out_of_line = True
    has_side_effects = True
 
@@ -1700,7 +1704,7 @@ primop	AtomicallyOp "atomically#" GenPrimOp
 primop  RetryOp "retry#" GenPrimOp
    State# RealWorld -> (# State# RealWorld, a #)
    with
-   strictness  = { \ _arity -> mkStrictSig (mkTopDmdType [topDmd] botRes) }
+   strictness  = { \ _arity -> mkClosedStrictSig [topDmd] botRes }
    out_of_line = True
    has_side_effects = True
 
@@ -1709,6 +1713,7 @@ primop  CatchRetryOp "catchRetry#" GenPrimOp
    -> (State# RealWorld -> (# State# RealWorld, a #) )
    -> (State# RealWorld -> (# State# RealWorld, a #) )
    with
+   strictness  = { \ _arity -> mkClosedStrictSig [apply1Dmd,apply1Dmd,topDmd] topRes }
    out_of_line = True
    has_side_effects = True
 
@@ -1717,6 +1722,7 @@ primop  CatchSTMOp "catchSTM#" GenPrimOp
    -> (b -> State# RealWorld -> (# State# RealWorld, a #) )
    -> (State# RealWorld -> (# State# RealWorld, a #) )
    with
+   strictness  = { \ _arity -> mkClosedStrictSig [apply1Dmd,apply2Dmd,topDmd] topRes }
    out_of_line = True
    has_side_effects = True
 
@@ -2159,7 +2165,7 @@ section "Tag to enum stuff"
 primop  DataToTagOp "dataToTag#" GenPrimOp
    a -> Int#
    with
-   strictness  = { \ _arity -> mkStrictSig (mkTopDmdType [evalDmd] topRes) }
+   strictness  = { \ _arity -> mkClosedStrictSig [evalDmd] topRes }
 
 	-- dataToTag# must have an evaluated argument
 
@@ -2221,6 +2227,18 @@ primop  GetCurrentCCSOp "getCurrentCCS#" GenPrimOp
 section "Etc"
 	{Miscellaneous built-ins}
 ------------------------------------------------------------------------
+
+primtype Proxy# a
+   { The type constructor {\tt Proxy#} is used to bear witness to some
+   type variable. It's used when you want to pass around proxy values
+   for doing things like modelling type applications. A {\tt Proxy#}
+   is not only unboxed, it also has a polymorphic kind, and has no
+   runtime representation, being totally free. }
+
+pseudoop "proxy#"
+   Proxy# a
+   { Witness for an unboxed {\tt Proxy#} value, which has no runtime
+   representation. }
 
 pseudoop   "seq"
    a -> b -> b
@@ -2372,7 +2390,7 @@ primclass Coercible a b
 
      In SafeHaskell code, this instance is only usable if the constructors of
      every type constructor used in the definition of {\tt D} (including
-     those of {\tt D} itself) is in scope.
+     those of {\tt D} itself) are in scope.
 
      The third kind of instance exists for every {\tt newtype NT = MkNT T} and
      comes in two variants, namely
@@ -2390,7 +2408,7 @@ primclass Coercible a b
    }
 
 ------------------------------------------------------------------------
-section "SIMD Vectors" 
+section "SIMD Vectors"
 	{Operations on SIMD vectors.}
 ------------------------------------------------------------------------
 
@@ -2596,22 +2614,107 @@ primop VecWriteScalarOffAddrOp "writeOffAddrAs#" GenPrimOp
    	vector = ALL_VECTOR_TYPES
 
 ------------------------------------------------------------------------
+
 section "Prefetch"
-	{Prefetch operations}
+	{Prefetch operations: Note how every prefetch operation has a name
+  with the pattern prefetch*N#, where N is either 0,1,2, or 3.
+
+  This suffix number, N, is the "locality level" of the prefetch, following the
+  convention in GCC and other compilers.
+  Higher locality numbers correspond to the memory being loaded in more
+  levels of the cpu cache, and being retained after initial use. The naming
+  convention follows the naming convention of the prefetch intrinsic found
+  in the GCC and Clang C compilers.
+
+  On the LLVM backend, prefetch*N# uses the LLVM prefetch intrinsic
+  with locality level N. The code generated by LLVM is target architecture
+  dependent, but should agree with the GHC NCG on x86 systems.
+
+  On the Sparc and PPC native backends, prefetch*N is a No-Op.
+
+  On the x86 NCG, N=0 will generate prefetchNTA,
+  N=1 generates prefetcht2, N=2 generates prefetcht1, and
+  N=3 generates prefetcht0.
+
+  For streaming workloads, the prefetch*0 operations are recommended.
+  For workloads which do many reads or writes to a memory location in a short period of time,
+  prefetch*3 operations are recommended.
+
+  For further reading about prefetch and associated systems performance optimization,
+  the instruction set and optimization manuals by Intel and other CPU vendors are
+  excellent starting place.
+
+
+  The "Intel 64 and IA-32 Architectures Optimization Reference Manual" is
+  especially a helpful read, even if your software is meant for other CPU
+  architectures or vendor hardware. The manual can be found at
+  http://www.intel.com/content/www/us/en/architecture-and-technology/64-ia-32-architectures-optimization-manual.html .
+
+  The {\tt prefetchMutableByteArray} family of operations has the order of operations
+  determined by passing around the {\tt State#} token.
+
+  For the {\tt prefetchByteArray}
+  and {\tt prefetchAddr} families of operations, consider the following example:
+
+  {\tt let a1 = prefetchByteArray2# a n in ...a1... }
+
+  In the above fragement, {\tt a} is the input variable for the prefetch
+  and {\tt a1 == a} will be true. To ensure that the prefetch is not treated as deadcode,
+  the body of the let should only use {\tt a1} and NOT {\tt a}. The same principle
+  applies for uses of prefetch in a loop.
+
+  }
+
+
 ------------------------------------------------------------------------
 
-primop PrefetchByteArrayOp "prefetchByteArray#" GenPrimOp
+
+--- the Int# argument for prefetch is the byte offset on the byteArray or  Addr#
+
+---
+primop PrefetchByteArrayOp3 "prefetchByteArray3#" GenPrimOp
    ByteArray# -> Int# -> ByteArray#
-   with llvm_only = True
 
-primop PrefetchMutableByteArrayOp "prefetchMutableByteArray#" GenPrimOp
+primop PrefetchMutableByteArrayOp3 "prefetchMutableByteArray3#" GenPrimOp
    MutableByteArray# s -> Int# -> State# s -> State# s
-   with has_side_effects = True
-        llvm_only = True
 
-primop PrefetchAddrOp "prefetchAddr#" GenPrimOp
+primop PrefetchAddrOp3 "prefetchAddr3#" GenPrimOp
+    Addr# -> Int# -> Addr#
+
+----
+
+primop PrefetchByteArrayOp2 "prefetchByteArray2#" GenPrimOp
+   ByteArray# -> Int# -> ByteArray#
+
+primop PrefetchMutableByteArrayOp2 "prefetchMutableByteArray2#" GenPrimOp
+   MutableByteArray# s -> Int# -> State# s -> State# s
+
+primop PrefetchAddrOp2 "prefetchAddr2#" GenPrimOp
    Addr# -> Int# -> Addr#
-   with llvm_only = True
+
+----
+
+primop PrefetchByteArrayOp1 "prefetchByteArray1#" GenPrimOp
+   ByteArray# -> Int# -> ByteArray#
+
+primop PrefetchMutableByteArrayOp1 "prefetchMutableByteArray1#" GenPrimOp
+   MutableByteArray# s -> Int# -> State# s -> State# s
+
+primop PrefetchAddrOp1 "prefetchAddr1#" GenPrimOp
+   Addr# -> Int# -> Addr#
+
+----
+
+primop PrefetchByteArrayOp0 "prefetchByteArray0#" GenPrimOp
+   ByteArray# -> Int# -> ByteArray#
+
+primop PrefetchMutableByteArrayOp0 "prefetchMutableByteArray0#" GenPrimOp
+   MutableByteArray# s -> Int# -> State# s -> State# s
+
+primop PrefetchAddrOp0 "prefetchAddr0#" GenPrimOp
+   Addr# -> Int# -> Addr#
+
+
 
 ------------------------------------------------------------------------
 ---                                                                  ---

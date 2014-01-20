@@ -14,7 +14,7 @@ lower levels it is preserved with @let@/@letrec@s).
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
---     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
+--     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
 module DsBinds ( dsTopLHsBinds, dsLHsBinds, decomposeRuleLhs, dsSpec,
@@ -44,12 +44,12 @@ import Unique( Unique )
 import Digraph
 
 
-import TyCon      ( isTupleTyCon, tyConDataCons_maybe, unwrapNewTyCon_maybe )
+import TyCon      ( isTupleTyCon, tyConDataCons_maybe )
 import TcEvidence
 import TcType
 import Type
 import Coercion hiding (substCo)
-import TysWiredIn ( eqBoxDataCon, coercibleTyCon, coercibleDataCon, tupleCon )
+import TysWiredIn ( eqBoxDataCon, coercibleDataCon, tupleCon )
 import Id
 import Class
 import DataCon	( dataConWorkId )
@@ -65,7 +65,6 @@ import Maybes
 import OrdList
 import Bag
 import BasicTypes hiding ( TopLevel )
-import Pair
 import DynFlags
 import FastString
 import ErrUtils( MsgDoc )
@@ -575,10 +574,10 @@ SPEC f :: ty                [n]   INLINE [k]
 
 \begin{code}
 decomposeRuleLhs :: [Var] -> CoreExpr -> Either SDoc ([Var], Id, [CoreExpr])
--- Take apart the LHS of a RULE.  It's supposed to look like
---     /\a. f a Int dOrdInt
--- or  /\a.\d:Ord a. let { dl::Ord [a] = dOrdList a d } in f [a] dl
--- That is, the RULE binders are lambda-bound
+-- (decomposeRuleLhs bndrs lhs) takes apart the LHS of a RULE,
+-- The 'bndrs' are the quantified binders of the rules, but decomposeRuleLhs
+-- may add some extra dictionary binders (see Note [Constant rule dicts])
+--
 -- Returns Nothing if the LHS isn't of the expected shape
 decomposeRuleLhs bndrs lhs 
   =  -- Note [Simplifying the left-hand side of a RULE]
@@ -706,7 +705,8 @@ dsHsWrapper (WpTyApp ty)      e = return $ App e (Type ty)
 dsHsWrapper (WpLet ev_binds)  e = do bs <- dsTcEvBinds ev_binds
                                      return (mkCoreLets bs e)
 dsHsWrapper (WpCompose c1 c2) e = dsHsWrapper c1 =<< dsHsWrapper c2 e
-dsHsWrapper (WpCast co)       e = dsTcCoercion Representational co (mkCast e) 
+dsHsWrapper (WpCast co)       e = ASSERT(tcCoercionRole co == Representational)
+                                  dsTcCoercion co (mkCast e)
 dsHsWrapper (WpEvLam ev)      e = return $ Lam ev e 
 dsHsWrapper (WpTyLam tv)      e = return $ Lam tv e 
 dsHsWrapper (WpEvApp evtrm)   e = liftM (App e) (dsEvTerm evtrm)
@@ -740,7 +740,7 @@ dsEvTerm (EvId v) = return (Var v)
 
 dsEvTerm (EvCast tm co) 
   = do { tm' <- dsEvTerm tm
-       ; dsTcCoercion Representational co $ mkCast tm' }
+       ; dsTcCoercion co $ mkCast tm' }
                         -- 'v' is always a lifted evidence variable so it is
                         -- unnecessary to call varToCoreExpr v here.
 
@@ -748,7 +748,7 @@ dsEvTerm (EvDFunApp df tys tms) = do { tms' <- mapM dsEvTerm tms
                                      ; return (Var df `mkTyApps` tys `mkApps` tms') }
 
 dsEvTerm (EvCoercion (TcCoVarCo v)) = return (Var v)  -- See Note [Simple coercions]
-dsEvTerm (EvCoercion co)            = dsTcCoercion Nominal co mkEqBox
+dsEvTerm (EvCoercion co)            = dsTcCoercion co mkEqBox
 
 dsEvTerm (EvTupleSel v n)
    = do { tm' <- dsEvTerm v
@@ -785,51 +785,8 @@ dsEvTerm (EvLit l) =
     EvNum n -> mkIntegerExpr n
     EvStr s -> mkStringExprFS s
 
--- Note [Coercible Instances]
-dsEvTerm (EvCoercible (EvCoercibleRefl ty)) = do
-  return $ mkCoercible $ mkReflCo Representational ty
-
-dsEvTerm (EvCoercible (EvCoercibleTyCon tyCon evs)) = do
-  ntEvs <- mapM (mapEvCoercibleArgM dsEvTerm) evs
-  wrapInEqRCases ntEvs $ \cos -> do
-    return $ mkCoercible $
-      mkTyConAppCo Representational tyCon cos
-
-dsEvTerm (EvCoercible (EvCoercibleNewType lor tyCon tys v)) = do
-  ntEv <- dsEvTerm v
-  wrapInEqRCase ntEv $ \co -> do
-          return $ mkCoercible $
-                connect lor co $
-                mkUnbranchedAxInstCo Representational coAxiom tys
-  where Just (_, _, coAxiom) = unwrapNewTyCon_maybe tyCon
-        connect CLeft co2 co1 = mkTransCo co1 co2
-        connect CRight co2 co1 = mkTransCo co2 (mkSymCo co1)
-
-wrapInEqRCase :: CoreExpr -> (Coercion -> DsM CoreExpr) -> DsM CoreExpr
-wrapInEqRCase e mkBody = do
-  cov <- newSysLocalDs (mkCoercionType Representational ty1 ty2)
-  body' <- mkBody (mkCoVarCo cov)
-  return $
-        ASSERT (tc == coercibleTyCon)
-        mkWildCase
-                e
-                (exprType e)
-                (exprType body')
-                [(DataAlt coercibleDataCon, [cov], body')]
-  where
-  Just (tc, [ty1, ty2]) = splitTyConApp_maybe (exprType e)
-
-wrapInEqRCases :: [EvCoercibleArg CoreExpr] -> ([Coercion] -> DsM CoreExpr) -> DsM CoreExpr
-wrapInEqRCases (EvCoercibleArgN t:es) mkBody =
-  wrapInEqRCases es (\cos -> mkBody (mkReflCo Nominal t:cos))
-wrapInEqRCases (EvCoercibleArgR e:es) mkBody = wrapInEqRCase e $ \co ->
-  wrapInEqRCases es (\cos -> mkBody (co:cos))
-wrapInEqRCases (EvCoercibleArgP t1 t2:es) mkBody =
-  wrapInEqRCases es (\cos -> mkBody (mkUnivCo Phantom t1 t2:cos))
-wrapInEqRCases [] mkBody = mkBody []
-
 ---------------------------------------
-dsTcCoercion :: Role -> TcCoercion -> (Coercion -> CoreExpr) -> DsM CoreExpr
+dsTcCoercion :: TcCoercion -> (Coercion -> CoreExpr) -> DsM CoreExpr
 -- This is the crucial function that moves 
 -- from TcCoercions to Coercions; see Note [TcCoercions] in Coercion
 -- e.g.  dsTcCoercion (trans g1 g2) k
@@ -837,14 +794,14 @@ dsTcCoercion :: Role -> TcCoercion -> (Coercion -> CoreExpr) -> DsM CoreExpr
 --         case g2 of EqBox g2# ->
 --         k (trans g1# g2#)
 -- thing_inside will get a coercion at the role requested
-dsTcCoercion role co thing_inside
+dsTcCoercion co thing_inside
   = do { us <- newUniqueSupply
        ; let eqvs_covs :: [(EqVar,CoVar)]
              eqvs_covs = zipWith mk_co_var (varSetElems (coVarsOfTcCo co))
                                            (uniqsFromSupply us)
 
              subst = mkCvSubst emptyInScopeSet [(eqv, mkCoVarCo cov) | (eqv, cov) <- eqvs_covs]
-             result_expr = thing_inside (ds_tc_coercion subst role co)
+             result_expr = thing_inside (ds_tc_coercion subst co)
              result_ty   = exprType result_expr
 
        ; return (foldr (wrap_in_case result_ty) result_expr eqvs_covs) }
@@ -855,46 +812,43 @@ dsTcCoercion role co thing_inside
          eq_nm = idName eqv
          occ = nameOccName eq_nm
          loc = nameSrcSpan eq_nm
-         ty  = mkCoercionType Nominal ty1 ty2
+         ty  = mkCoercionType (getEqPredRole (evVarPred eqv)) ty1 ty2
          (ty1, ty2) = getEqPredTys (evVarPred eqv)
 
-    wrap_in_case result_ty (eqv, cov) body 
-      = Case (Var eqv) eqv result_ty [(DataAlt eqBoxDataCon, [cov], body)]
+    wrap_in_case result_ty (eqv, cov) body
+      = case getEqPredRole (evVarPred eqv) of
+         Nominal          -> Case (Var eqv) eqv result_ty [(DataAlt eqBoxDataCon, [cov], body)]
+         Representational -> Case (Var eqv) eqv result_ty [(DataAlt coercibleDataCon, [cov], body)]
+         Phantom          -> panic "wrap_in_case/phantom"
 
-ds_tc_coercion :: CvSubst -> Role -> TcCoercion -> Coercion
--- If the incoming TcCoercion if of type (a ~ b), 
---                 the result is of type (a ~# b)
--- The VarEnv maps EqVars of type (a ~ b) to Coercions of type (a ~# b)
+ds_tc_coercion :: CvSubst -> TcCoercion -> Coercion
+-- If the incoming TcCoercion if of type (a ~ b)   (resp.  Coercible a b)
+--                 the result is of type (a ~# b)  (reps.  a ~# b)
+-- The VarEnv maps EqVars of type (a ~ b) to Coercions of type (a ~# b) (resp. and so on)
 -- No need for InScope set etc because the 
-ds_tc_coercion subst role tc_co
-  = go role tc_co
+ds_tc_coercion subst tc_co
+  = go tc_co
   where
-    go Phantom co
-      = mkUnivCo Phantom ty1 ty2
-      where Pair ty1 ty2 = tcCoercionKind co
-
-    go r (TcRefl ty)            = Refl r (Coercion.substTy subst ty)
-    go r (TcTyConAppCo tc cos)  = mkTyConAppCo r tc (zipWith go (tyConRolesX r tc) cos)
-    go r (TcAppCo co1 co2)      = mkAppCo (go r co1) (go Nominal co2)
-    go r (TcForAllCo tv co)     = mkForAllCo tv' (ds_tc_coercion subst' r co)
+    go (TcRefl r ty)            = Refl r (Coercion.substTy subst ty)
+    go (TcTyConAppCo r tc cos)  = mkTyConAppCo r tc (map go cos)
+    go (TcAppCo co1 co2)        = let leftCo    = go co1
+                                      rightRole = nextRole leftCo in
+                                  mkAppCoFlexible leftCo rightRole (go co2)
+    go (TcForAllCo tv co)       = mkForAllCo tv' (ds_tc_coercion subst' co)
                               where
                                 (subst', tv') = Coercion.substTyVarBndr subst tv
-    go r (TcAxiomInstCo ax ind tys)
-                                = mkAxInstCo r ax ind (map (Coercion.substTy subst) tys)
-    go r (TcSymCo co)           = mkSymCo (go r co)
-    go r (TcTransCo co1 co2)    = mkTransCo (go r co1) (go r co2)
-    go r (TcNthCo n co)         = mkNthCoRole r n (go r co) -- the 2nd r is a harmless lie
-    go r (TcLRCo lr co)         = maybeSubCo r $ mkLRCo lr (go Nominal co)
-    go r (TcInstCo co ty)       = mkInstCo (go r co) ty
-    go r (TcLetCo bs co)        = ds_tc_coercion (ds_co_binds bs) r co
-    go r (TcCastCo co1 co2)     = maybeSubCo r $ mkCoCast (go Nominal co1)
-                                                          (go Nominal co2)
-    go r (TcCoVarCo v)          = maybeSubCo r $ ds_ev_id subst v
-    go _ (TcAxiomRuleCo co ts cs) = AxiomRuleCo co
-                                      (map (Coercion.substTy subst) ts)
-                                      (map (go Nominal) cs)
-
-
+    go (TcAxiomInstCo ax ind cos)
+                                = AxiomInstCo ax ind (map go cos)
+    go (TcPhantomCo ty1 ty2)    = UnivCo Phantom ty1 ty2
+    go (TcSymCo co)             = mkSymCo (go co)
+    go (TcTransCo co1 co2)      = mkTransCo (go co1) (go co2)
+    go (TcNthCo n co)           = mkNthCo n (go co)
+    go (TcLRCo lr co)           = mkLRCo lr (go co)
+    go (TcSubCo co)             = mkSubCo (go co)
+    go (TcLetCo bs co)          = ds_tc_coercion (ds_co_binds bs) co
+    go (TcCastCo co1 co2)       = mkCoCast (go co1) (go co2)
+    go (TcCoVarCo v)            = ds_ev_id subst v
+    go (TcAxiomRuleCo co ts cs) = AxiomRuleCo co (map (Coercion.substTy subst) ts) (map go cs)
 
     ds_co_binds :: TcEvBinds -> CvSubst
     ds_co_binds (EvBinds bs)      = foldl ds_scc subst (sccEvBinds bs)
@@ -906,9 +860,9 @@ ds_tc_coercion subst role tc_co
     ds_scc _ (CyclicSCC other) = pprPanic "ds_scc:cyclic" (ppr other $$ ppr tc_co)
 
     ds_co_term :: CvSubst -> EvTerm -> Coercion
-    ds_co_term subst (EvCoercion tc_co) = ds_tc_coercion subst Nominal tc_co
+    ds_co_term subst (EvCoercion tc_co) = ds_tc_coercion subst tc_co
     ds_co_term subst (EvId v)           = ds_ev_id subst v
-    ds_co_term subst (EvCast tm co)     = mkCoCast (ds_co_term subst tm) (ds_tc_coercion subst Nominal co)
+    ds_co_term subst (EvCast tm co)     = mkCoCast (ds_co_term subst tm) (ds_tc_coercion subst co)
     ds_co_term _ other = pprPanic "ds_co_term" (ppr other $$ ppr tc_co)
 
     ds_ev_id :: CvSubst -> EqVar -> Coercion

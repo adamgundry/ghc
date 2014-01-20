@@ -20,12 +20,11 @@ module PrelRules ( primOpRules, builtinRules ) where
 #include "HsVersions.h"
 #include "../includes/MachDeps.h"
 
-import {-# SOURCE #-} MkId ( mkPrimOpId, magicSingIId )
+import {-# SOURCE #-} MkId ( mkPrimOpId, magicDictId )
 
 import CoreSyn
 import MkCore
 import Id
-import Var         (setVarType)
 import Literal
 import CoreSubst   ( exprIsLiteral_maybe )
 import PrimOp      ( PrimOp(..), tagToEnumKey )
@@ -142,10 +141,8 @@ primOpRules nm OrOp        = mkPrimOpRule nm 2 [ binaryLit (wordOp2 (.|.))
 primOpRules nm XorOp       = mkPrimOpRule nm 2 [ binaryLit (wordOp2 xor)
                                                , identityDynFlags zerow
                                                , equalArgs >> retLit zerow ]
-primOpRules nm SllOp       = mkPrimOpRule nm 2 [ binaryLit (wordShiftOp2 Bits.shiftL)
-                                               , rightIdentityDynFlags zeroi ]
-primOpRules nm SrlOp       = mkPrimOpRule nm 2 [ binaryLit (wordShiftOp2 shiftRightLogical)
-                                               , rightIdentityDynFlags zeroi ]
+primOpRules nm SllOp       = mkPrimOpRule nm 2 [ wordShiftRule Bits.shiftL ]
+primOpRules nm SrlOp       = mkPrimOpRule nm 2 [ wordShiftRule shiftRightLogical ]
 
 -- coercions
 primOpRules nm Word2IntOp     = mkPrimOpRule nm 1 [ liftLitDynFlags word2IntLit
@@ -374,14 +371,25 @@ wordOp2 op dflags (MachWord w1) (MachWord w2)
     = wordResult dflags (fromInteger w1 `op` fromInteger w2)
 wordOp2 _ _ _ _ = Nothing  -- Could find LitLit
 
-wordShiftOp2 :: (Integer -> Int -> Integer)
-             -> DynFlags -> Literal -> Literal
-             -> Maybe CoreExpr
--- Shifts take an Int; hence second arg of op is Int
-wordShiftOp2 op dflags (MachWord x) (MachInt n)
-  = wordResult dflags (x `op` fromInteger n)
-    -- Do the shift at type Integer
-wordShiftOp2 _ _ _ _ = Nothing
+wordShiftRule :: (Integer -> Int -> Integer) -> RuleM CoreExpr
+                 -- Shifts take an Int; hence second arg of op is Int
+-- See Note [Guarding against silly shifts]
+wordShiftRule shift_op
+  = do { dflags <- getDynFlags
+       ; [e1, Lit (MachInt shift_len)] <- getArgs
+       ; case e1 of
+           _ | shift_len == 0 
+             -> return e1
+             | shift_len < 0 || wordSizeInBits dflags < shift_len
+             -> return (mkRuntimeErrorApp rUNTIME_ERROR_ID wordPrimTy 
+                                        ("Bad shift length" ++ show shift_len))
+           Lit (MachWord x)
+             -> liftMaybe $ wordResult dflags (x `shift_op` fromInteger shift_len) 
+                    -- Do the shift at type Integer, but shift length is Int
+           _ -> mzero }
+
+wordSizeInBits :: DynFlags -> Integer
+wordSizeInBits dflags = toInteger (platformWordSize (targetPlatform dflags) `shiftL` 3)
 
 --------------------------
 floatOp2 :: (Rational -> Rational -> Rational)
@@ -522,6 +530,53 @@ idempotent = do [e1, e2] <- getArgs
                 guard $ cheapEqExpr e1 e2
                 return e1
 \end{code}
+
+Note [Guarding against silly shifts]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Consider this code:
+
+  import Data.Bits( (.|.), shiftL )
+  chunkToBitmap :: [Bool] -> Word32
+  chunkToBitmap chunk = foldr (.|.) 0 [ 1 `shiftL` n | (True,n) <- zip chunk [0..] ]
+
+This optimises to:
+Shift.$wgo = \ (w_sCS :: GHC.Prim.Int#) (w1_sCT :: [GHC.Types.Bool]) ->
+    case w1_sCT of _ {
+      [] -> __word 0;
+      : x_aAW xs_aAX ->
+        case x_aAW of _ {
+          GHC.Types.False ->
+            case w_sCS of wild2_Xh {
+              __DEFAULT -> Shift.$wgo (GHC.Prim.+# wild2_Xh 1) xs_aAX;
+              9223372036854775807 -> __word 0  };
+          GHC.Types.True ->
+            case GHC.Prim.>=# w_sCS 64 of _ {
+              GHC.Types.False ->
+                case w_sCS of wild3_Xh {
+                  __DEFAULT ->
+                    case Shift.$wgo (GHC.Prim.+# wild3_Xh 1) xs_aAX of ww_sCW { __DEFAULT ->
+                      GHC.Prim.or# (GHC.Prim.narrow32Word#
+                                      (GHC.Prim.uncheckedShiftL# (__word 1) wild3_Xh))
+                                   ww_sCW
+                     };
+                  9223372036854775807 ->
+                    GHC.Prim.narrow32Word#
+!!!!-->                  (GHC.Prim.uncheckedShiftL# (__word 1) 9223372036854775807)
+                };
+              GHC.Types.True ->
+                case w_sCS of wild3_Xh {
+                  __DEFAULT -> Shift.$wgo (GHC.Prim.+# wild3_Xh 1) xs_aAX;
+                  9223372036854775807 -> __word 0
+                } } } }
+
+Note the massive shift on line "!!!!".  It can't happen, because we've checked 
+that w < 64, but the optimiser didn't spot that. We DO NO want to constant-fold this!
+Moreover, if the programmer writes (n `uncheckedShiftL` 9223372036854775807), we
+can't constant fold it, but if it gets to the assember we get
+     Error: operand type mismatch for `shl'
+
+So the best thing to do is to rewrite the shift with a call to error,
+when the second arg is stupid.
 
 %************************************************************************
 %*                                                                      *
@@ -888,8 +943,8 @@ builtinRules
                    ru_nargs = 2, ru_try = \dflags _ _ -> match_eq_string dflags },
      BuiltinRule { ru_name = fsLit "Inline", ru_fn = inlineIdName,
                    ru_nargs = 2, ru_try = \_ _ _ -> match_inline },
-     BuiltinRule { ru_name = fsLit "MagicSingI", ru_fn = idName magicSingIId,
-                   ru_nargs = 3, ru_try = \_ _ _ -> match_magicSingI }
+     BuiltinRule { ru_name = fsLit "MagicDict", ru_fn = idName magicDictId,
+                   ru_nargs = 4, ru_try = \_ _ _ -> match_magicDict }
      ]
  ++ builtinIntegerRules
 
@@ -1062,18 +1117,19 @@ match_inline (Type _ : e : _)
 match_inline _ = Nothing
 
 
--- See Note [magicSingIId magic] in `basicTypes/MkId.lhs`
+-- See Note [magicDictId magic] in `basicTypes/MkId.lhs`
 -- for a description of what is going on here.
-match_magicSingI :: [Expr CoreBndr] -> Maybe (Expr CoreBndr)
-match_magicSingI (Type t : e : Lam b _ : _)
-  | ((_ : _ : fu : _),_)  <- splitFunTys t
-  , (sI_type,_)           <- splitFunTy fu
-  , Just (sI_tc,xs)       <- splitTyConApp_maybe sI_type
-  , Just (_,_,co)         <- unwrapNewTyCon_maybe sI_tc
-  = Just $ let f = setVarType b fu
-           in Lam f $ Var f `App` Cast e (mkSymCo (mkUnbranchedAxInstCo Representational co xs))
+match_magicDict :: [Expr CoreBndr] -> Maybe (Expr CoreBndr)
+match_magicDict [Type _, Var wrap `App` Type a `App` Type _ `App` f, x, y ]
+  | Just (fieldTy, _)   <- splitFunTy_maybe $ dropForAlls $ idType wrap
+  , Just (dictTy, _)    <- splitFunTy_maybe fieldTy
+  , Just dictTc         <- tyConAppTyCon_maybe dictTy
+  , Just (_,_,co)       <- unwrapNewTyCon_maybe dictTc
+  = Just
+  $ f `App` Cast x (mkSymCo (mkUnbranchedAxInstCo Representational co [a]))
+      `App` y
 
-match_magicSingI _ = Nothing
+match_magicDict _ = Nothing
 
 -------------------------------------------------
 -- Integer rules

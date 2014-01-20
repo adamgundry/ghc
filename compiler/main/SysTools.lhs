@@ -25,6 +25,7 @@ module SysTools (
         readElfSection,
 
         getLinkerInfo,
+        getCompilerInfo,
 
         linkDynLib,
 
@@ -395,7 +396,7 @@ runPp :: DynFlags -> [Option] -> IO ()
 runPp dflags args =   do
   let prog = pgm_F dflags
       opts = map Option (getOpts dflags opt_F)
-  runSomething dflags "Haskell pre-processor" prog (opts ++ args)
+  runSomething dflags "Haskell pre-processor" prog (args ++ opts)
 
 runCc :: DynFlags -> [Option] -> IO ()
 runCc dflags args =   do
@@ -638,17 +639,18 @@ neededLinkArgs :: LinkerInfo -> [Option]
 neededLinkArgs (GnuLD o)     = o
 neededLinkArgs (GnuGold o)   = o
 neededLinkArgs (DarwinLD o)  = o
+neededLinkArgs (SolarisLD o) = o
 neededLinkArgs UnknownLD     = []
 
 -- Grab linker info and cache it in DynFlags.
 getLinkerInfo :: DynFlags -> IO LinkerInfo
 getLinkerInfo dflags = do
-  info <- readIORef (rtldFlags dflags)
+  info <- readIORef (rtldInfo dflags)
   case info of
     Just v  -> return v
     Nothing -> do
       v <- getLinkerInfo' dflags
-      writeIORef (rtldFlags dflags) (Just v)
+      writeIORef (rtldInfo dflags) (Just v)
       return v
 
 -- See Note [Run-time linker info].
@@ -676,6 +678,14 @@ getLinkerInfo' dflags = do
   -- Process the executable call
   info <- catchIO (do
              case os of
+               OSSolaris2 ->
+                 -- Solaris uses its own Solaris linker. Even all
+                 -- GNU C are recommended to configure with Solaris
+                 -- linker instead of using GNU binutils linker. Also
+                 -- all GCC distributed with Solaris follows this rule
+                 -- precisely so we assume here, the Solaris linker is
+                 -- used.
+                 return $ SolarisLD []
                OSDarwin ->
                  -- Darwin has neither GNU Gold or GNU LD, but a strange linker
                  -- that doesn't support --version. We can just assume that's
@@ -710,6 +720,55 @@ getLinkerInfo' dflags = do
                   text "Make sure you're using GNU ld, GNU gold" <+>
                   text "or the built in OS X linker, etc."
                 return UnknownLD)
+  return info
+
+-- Grab compiler info and cache it in DynFlags.
+getCompilerInfo :: DynFlags -> IO CompilerInfo
+getCompilerInfo dflags = do
+  info <- readIORef (rtccInfo dflags)
+  case info of
+    Just v  -> return v
+    Nothing -> do
+      v <- getCompilerInfo' dflags
+      writeIORef (rtccInfo dflags) (Just v)
+      return v
+
+-- See Note [Run-time linker info].
+getCompilerInfo' :: DynFlags -> IO CompilerInfo
+getCompilerInfo' dflags = do
+  let (pgm,_) = pgm_c dflags
+      -- Try to grab the info from the process output.
+      parseCompilerInfo _stdo stde _exitc
+        -- Regular GCC
+        | any ("gcc version" `isPrefixOf`) stde =
+          return GCC
+        -- Regular clang
+        | any ("clang version" `isPrefixOf`) stde =
+          return Clang
+        -- XCode 5 clang
+        | any ("Apple LLVM version" `isPrefixOf`) stde =
+          return Clang
+        -- XCode 4.1 clang
+        | any ("Apple clang version" `isPrefixOf`) stde =
+          return Clang
+         -- Unknown linker.
+        | otherwise = fail "invalid -v output, or compiler is unsupported"
+
+  -- Process the executable call
+  info <- catchIO (do
+                (exitc, stdo, stde) <- readProcessWithExitCode pgm ["-v"] ""
+                -- Split the output by lines to make certain kinds
+                -- of processing easier.
+                parseCompilerInfo (lines stdo) (lines stde) exitc
+            )
+            (\err -> do
+                debugTraceMsg dflags 2
+                    (text "Error (figuring out compiler information):" <+>
+                     text (show err))
+                errorMsg dflags $ hang (text "Warning:") 9 $
+                  text "Couldn't figure out linker information!" $$
+                  text "Make sure you're using GNU gcc, or clang"
+                return UnknownCC)
   return info
 
 runLink :: DynFlags -> [Option] -> IO ()
@@ -910,7 +969,7 @@ getTempDir dflags = do
             Just dir -> do
                 removeDirectory our_dir
                 return dir
-      `catchIO` \e -> if isAlreadyExistsError e || isDoesNotExistError e
+      `catchIO` \e -> if isAlreadyExistsError e
                       then mkTempDir prefix else ioError e
 
 addFilesToClean :: DynFlags -> [FilePath] -> IO ()

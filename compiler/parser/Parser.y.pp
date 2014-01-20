@@ -13,7 +13,7 @@
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and fix
 -- any warnings in the module. See
---     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#Warnings
+--     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#Warnings
 -- for details
 
 module Parser ( parseModule, parseStmt, parseIdentifier, parseType,
@@ -227,7 +227,6 @@ incorrect.
  'then'         { L _ ITthen }
  'type'         { L _ ITtype }
  'where'        { L _ ITwhere }
- '_scc_'        { L _ ITscc }         -- ToDo: remove
 
  'forall'       { L _ ITforall }                -- GHC extension keywords
  'foreign'      { L _ ITforeign }
@@ -348,8 +347,12 @@ incorrect.
 '[t|'           { L _ ITopenTypQuote  }
 '[d|'           { L _ ITopenDecQuote  }
 '|]'            { L _ ITcloseQuote    }
+'[||'           { L _ ITopenTExpQuote   }
+'||]'           { L _ ITcloseTExpQuote  }
 TH_ID_SPLICE    { L _ (ITidEscape _)  }     -- $x
 '$('            { L _ ITparenEscape   }     -- $( exp )
+TH_ID_TY_SPLICE { L _ (ITidTyEscape _)  }   -- $$x
+'$$('           { L _ ITparenTyEscape   }   -- $$( exp )
 TH_TY_QUOTE     { L _ ITtyQuote       }      -- ''T
 TH_QUASIQUOTE   { L _ (ITquasiQuote _) }
 TH_QQUASIQUOTE  { L _ (ITqQuasiQuote _) }
@@ -595,13 +598,13 @@ topdecl :: { OrdList (LHsDecl RdrName) }
                                                     VectD (HsVectTypeIn True $3 (Just $5)) }
         | '{-# VECTORISE' 'class' gtycon '#-}'  { unitOL $ LL $ VectD (HsVectClassIn $3) }
         | annotation { unitOL $1 }
-        | decl                                  { unLoc $1 }
+        | decl_no_th                            { unLoc $1 }
 
         -- Template Haskell Extension
         -- The $(..) form is one possible form of infixexp
         -- but we treat an arbitrary expression just as if
         -- it had a $(..) wrapped around it
-        | infixexp                              { unitOL (LL $ mkTopSpliceDecl $1) }
+        | infixexp                              { unitOL (LL $ mkSpliceDecl $1) }
 
 -- Type classes
 --
@@ -626,8 +629,7 @@ ty_decl :: { LTyClDecl RdrName }
         | 'type' 'family' type opt_kind_sig where_type_family
                 -- Note the use of type for the head; this allows
                 -- infix type constructors to be declared
-                {% do { L loc decl <- mkFamDecl (comb4 $1 $3 $4 $5) (unLoc $5) $3 (unLoc $4)
-                      ; return (L loc (FamDecl decl)) } }
+                {% mkFamDecl (comb4 $1 $3 $4 $5) (unLoc $5) $3 (unLoc $4) }
 
           -- ordinary data type or newtype declaration
         | data_or_newtype capi_ctype tycl_hdr constrs deriving
@@ -647,8 +649,7 @@ ty_decl :: { LTyClDecl RdrName }
 
           -- data/newtype family
         | 'data' 'family' type opt_kind_sig
-                {% do { L loc decl <- mkFamDecl (comb3 $1 $2 $4) DataFamily $3 (unLoc $4)
-                      ; return (L loc (FamDecl decl)) } }
+                {% mkFamDecl (comb3 $1 $2 $4) DataFamily $3 (unLoc $4) }
 
 inst_decl :: { LInstDecl RdrName }
         : 'instance' inst_type where_inst
@@ -660,22 +661,19 @@ inst_decl :: { LInstDecl RdrName }
 
            -- type instance declarations
         | 'type' 'instance' ty_fam_inst_eqn
-                {% do { L loc tfi <- mkTyFamInst (comb2 $1 $3) $3
-                      ; return (L loc (TyFamInstD { tfid_inst = tfi })) } }
+                {% mkTyFamInst (comb2 $1 $3) $3 }
 
           -- data/newtype instance declaration
-        | data_or_newtype 'instance' tycl_hdr constrs deriving
-                {% do { L loc d <- mkFamInstData (comb4 $1 $3 $4 $5) (unLoc $1) Nothing $3
-                                      Nothing (reverse (unLoc $4)) (unLoc $5)
-                      ; return (L loc (DataFamInstD { dfid_inst = d })) } }
+        | data_or_newtype 'instance' capi_ctype tycl_hdr constrs deriving
+                {% mkDataFamInst (comb4 $1 $4 $5 $6) (unLoc $1) $3 $4
+                                      Nothing (reverse (unLoc $5)) (unLoc $6) }
 
           -- GADT instance declaration
-        | data_or_newtype 'instance' tycl_hdr opt_kind_sig
+        | data_or_newtype 'instance' capi_ctype tycl_hdr opt_kind_sig
                  gadt_constrlist
                  deriving
-                {% do { L loc d <- mkFamInstData (comb4 $1 $3 $5 $6) (unLoc $1) Nothing $3
-                                            (unLoc $4) (unLoc $5) (unLoc $6)
-                      ; return (L loc (DataFamInstD { dfid_inst = d })) } }
+                {% mkDataFamInst (comb4 $1 $4 $6 $7) (unLoc $1) $3 $4
+                                     (unLoc $5) (unLoc $6) (unLoc $7) }
 
 -- Closed type families
 
@@ -712,44 +710,46 @@ ty_fam_inst_eqn :: { LTyFamInstEqn RdrName }
 --   data declarations.
 --
 at_decl_cls :: { LHsDecl RdrName }
-           -- family declarations
-        : 'type' type opt_kind_sig
-                -- Note the use of type for the head; this allows
-                -- infix type constructors to be declared.
-                {% do { L loc decl <- mkFamDecl (comb3 $1 $2 $3) OpenTypeFamily $2 (unLoc $3)
-                      ; return (L loc (TyClD (FamDecl decl))) } }
+        :  -- data family declarations, with optional 'family' keyword
+          'data' opt_family type opt_kind_sig
+                {% liftM mkTyClD (mkFamDecl (comb3 $1 $3 $4) DataFamily $3 (unLoc $4)) }
 
-        | 'data' type opt_kind_sig
-                {% do { L loc decl <- mkFamDecl (comb3 $1 $2 $3) DataFamily $2 (unLoc $3)
-                      ; return (L loc (TyClD (FamDecl decl))) } }
+           -- type family declarations, with optional 'family' keyword
+           -- (can't use opt_instance because you get shift/reduce errors
+        | 'type' type opt_kind_sig
+                {% liftM mkTyClD (mkFamDecl (comb3 $1 $2 $3) OpenTypeFamily $2 (unLoc $3)) }
+        | 'type' 'family' type opt_kind_sig
+                {% liftM mkTyClD (mkFamDecl (comb3 $1 $3 $4) OpenTypeFamily $3 (unLoc $4)) }
 
-           -- default type instance
+           -- default type instances, with optional 'instance' keyword
         | 'type' ty_fam_inst_eqn
-                -- Note the use of type for the head; this allows
-                -- infix type constructors and type patterns
-                {% do { L loc tfi <- mkTyFamInst (comb2 $1 $2) $2
-                      ; return (L loc (InstD (TyFamInstD { tfid_inst = tfi }))) } }
+                {% liftM mkInstD (mkTyFamInst (comb2 $1 $2) $2) }
+        | 'type' 'instance' ty_fam_inst_eqn
+                {% liftM mkInstD (mkTyFamInst (comb2 $1 $3) $3) }
+
+opt_family   :: { () }
+              : {- empty -}   { () }
+              | 'family'      { () }
 
 -- Associated type instances
 --
-at_decl_inst :: { LTyFamInstDecl RdrName }
+at_decl_inst :: { LInstDecl RdrName }
            -- type instance declarations
         : 'type' ty_fam_inst_eqn
                 -- Note the use of type for the head; this allows
                 -- infix type constructors and type patterns
                 {% mkTyFamInst (comb2 $1 $2) $2 }
 
-adt_decl_inst :: { LDataFamInstDecl RdrName }
         -- data/newtype instance declaration
-        : data_or_newtype capi_ctype tycl_hdr constrs deriving
-                {% mkFamInstData (comb4 $1 $3 $4 $5) (unLoc $1) $2 $3
+        | data_or_newtype capi_ctype tycl_hdr constrs deriving
+                {% mkDataFamInst (comb4 $1 $3 $4 $5) (unLoc $1) $2 $3
                                  Nothing (reverse (unLoc $4)) (unLoc $5) }
 
         -- GADT instance declaration
         | data_or_newtype capi_ctype tycl_hdr opt_kind_sig
                  gadt_constrlist
                  deriving
-                {% mkFamInstData (comb4 $1 $3 $5 $6) (unLoc $1) $2 $3
+                {% mkDataFamInst (comb4 $1 $3 $5 $6) (unLoc $1) $2 $3
                                  (unLoc $4) (unLoc $5) (unLoc $6) }
 
 data_or_newtype :: { Located NewOrData }
@@ -841,8 +841,7 @@ where_cls :: { Located (OrdList (LHsDecl RdrName)) }    -- Reversed
 -- Declarations in instance bodies
 --
 decl_inst  :: { Located (OrdList (LHsDecl RdrName)) }
-decl_inst  : at_decl_inst               { LL (unitOL (L1 (InstD (TyFamInstD { tfid_inst = unLoc $1 })))) }
-           | adt_decl_inst              { LL (unitOL (L1 (InstD (DataFamInstD { dfid_inst = unLoc $1 })))) }
+decl_inst  : at_decl_inst               { LL (unitOL (L1 (InstD (unLoc $1)))) }
            | decl                       { $1 }
 
 decls_inst :: { Located (OrdList (LHsDecl RdrName)) }   -- Reversed
@@ -1363,7 +1362,7 @@ docdecld :: { LDocDecl }
         | docnamed                              { L1 (case (unLoc $1) of (n, doc) -> DocCommentNamed n doc) }
         | docsection                            { L1 (case (unLoc $1) of (n, doc) -> DocGroup n doc) }
 
-decl    :: { Located (OrdList (LHsDecl RdrName)) }
+decl_no_th :: { Located (OrdList (LHsDecl RdrName)) }
         : sigdecl               { $1 }
 
         | '!' aexp rhs          {% do { let { e = LL (SectionR (LL (HsVar bang_RDR)) $2) };
@@ -1378,6 +1377,14 @@ decl    :: { Located (OrdList (LHsDecl RdrName)) }
                                         let { l = comb2 $1 $> };
                                         return $! (sL l (unitOL $! (sL l $ ValD r))) } }
         | docdecl               { LL $ unitOL $1 }
+
+decl    :: { Located (OrdList (LHsDecl RdrName)) }
+        : decl_no_th            { $1 }
+
+        -- Why do we only allow naked declaration splices in top-level
+        -- declarations and not here? Short answer: because readFail009
+        -- fails terribly with a panic in cvBindsAndSigs otherwise.
+        | splice_exp            { LL $ unitOL (LL $ mkSpliceDecl $1) }
 
 rhs     :: { Located (GRHSs RdrName (LHsExpr RdrName)) }
         : '=' exp wherebinds    { sL (comb3 $1 $2 $3) $ GRHSs (unguardedRHS $2) (unLoc $3) }
@@ -1459,7 +1466,7 @@ exp10 :: { LHsExpr RdrName }
         | 'if' exp optSemi 'then' exp optSemi 'else' exp
                                         {% checkDoAndIfThenElse $2 $3 $5 $6 $8 >>
                                            return (LL $ mkHsIf $2 $5 $8) }
-        | 'if' gdpats                   {% hintMultiWayIf (getLoc $1) >>
+        | 'if' ifgdpats                 {% hintMultiWayIf (getLoc $1) >>
                                            return (LL $ HsMultiIf placeHolderType (reverse $ unLoc $2)) }
         | 'case' exp 'of' altslist              { LL $ HsCase $2 (mkMatchGroup (unLoc $4)) }
         | '-' fexp                              { LL $ NegApp $2 noSyntaxExpr }
@@ -1492,9 +1499,7 @@ optSemi :: { Bool }
         | {- empty -} { False }
 
 scc_annot :: { Located FastString }
-        : '_scc_' STRING                        {% (addWarning Opt_WarnWarningsDeprecations (getLoc $1) (text "_scc_ is deprecated; use an SCC pragma instead")) >>= \_ ->
-                                   ( do scc <- getSCC $2; return $ LL scc ) }
-        | '{-# SCC' STRING '#-}'                {% do scc <- getSCC $2; return $ LL scc }
+        : '{-# SCC' STRING '#-}'                {% do scc <- getSCC $2; return $ LL scc }
         | '{-# SCC' VARID  '#-}'                { LL (getVARID $2) }
 
 hpc_annot :: { Located (FastString,(Int,Int),(Int,Int)) }
@@ -1548,17 +1553,14 @@ aexp2   :: { LHsExpr RdrName }
         | '_'                           { L1 EWildPat }
 
         -- Template Haskell Extension
-        | TH_ID_SPLICE          { L1 $ HsSpliceE (mkHsSplice
-                                        (L1 $ HsVar (mkUnqual varName
-                                                        (getTH_ID_SPLICE $1)))) }
-        | '$(' exp ')'          { LL $ HsSpliceE (mkHsSplice $2) }
-
+        | splice_exp            { $1 }
 
         | SIMPLEQUOTE  qvar     { LL $ HsBracket (VarBr True  (unLoc $2)) }
         | SIMPLEQUOTE  qcon     { LL $ HsBracket (VarBr True  (unLoc $2)) }
         | TH_TY_QUOTE tyvar     { LL $ HsBracket (VarBr False (unLoc $2)) }
         | TH_TY_QUOTE gtycon    { LL $ HsBracket (VarBr False (unLoc $2)) }
         | '[|' exp '|]'         { LL $ HsBracket (ExpBr $2) }
+        | '[||' exp '||]'       { LL $ HsBracket (TExpBr $2) }
         | '[t|' ctype '|]'      { LL $ HsBracket (TypBr $2) }
         | '[p|' infixexp '|]'   {% checkPattern empty $2 >>= \p ->
                                         return (LL $ HsBracket (PatBr p)) }
@@ -1567,6 +1569,16 @@ aexp2   :: { LHsExpr RdrName }
 
         -- arrow notation extension
         | '(|' aexp2 cmdargs '|)'       { LL $ HsArrForm $2 Nothing (reverse $3) }
+
+splice_exp :: { LHsExpr RdrName }
+        : TH_ID_SPLICE          { L1 $ mkHsSpliceE 
+                                        (L1 $ HsVar (mkUnqual varName 
+                                                        (getTH_ID_SPLICE $1))) } 
+        | '$(' exp ')'          { LL $ mkHsSpliceE $2 }               
+        | TH_ID_TY_SPLICE       { L1 $ mkHsSpliceTE 
+                                        (L1 $ HsVar (mkUnqual varName 
+                                                        (getTH_ID_TY_SPLICE $1))) } 
+        | '$$(' exp ')'         { LL $ mkHsSpliceTE $2 }               
 
 cmdargs :: { [LHsCmdTop RdrName] }
         : cmdargs acmd                  { $2 : $1 }
@@ -1753,6 +1765,19 @@ ralt :: { Located [LGRHS RdrName (LHsExpr RdrName)] }
 gdpats :: { Located [LGRHS RdrName (LHsExpr RdrName)] }
         : gdpats gdpat                  { LL ($2 : unLoc $1) }
         | gdpat                         { L1 [$1] }
+
+-- optional semi-colons between the guards of a MultiWayIf, because we use
+-- layout here, but we don't need (or want) the semicolon as a separator (#7783).
+gdpatssemi :: { Located [LGRHS RdrName (LHsExpr RdrName)] }
+        : gdpatssemi gdpat optSemi      { sL (comb2 $1 $2) ($2 : unLoc $1) }
+        | gdpat optSemi                 { L1 [$1] }
+
+-- layout for MultiWayIf doesn't begin with an open brace, because it's hard to
+-- generate the open brace in addition to the vertical bar in the lexer, and
+-- we don't need it.
+ifgdpats :: { Located [LGRHS RdrName (LHsExpr RdrName)] }
+         : '{' gdpatssemi '}'              { LL (unLoc $2) }
+         |     gdpatssemi close            { $1 }
 
 gdpat   :: { LGRHS RdrName (LHsExpr RdrName) }
         : '|' guardquals '->' exp               { sL (comb2 $1 $>) $ GRHS (unLoc $2) $4 }
@@ -2201,6 +2226,7 @@ getPRIMWORD     (L _ (ITprimword x)) = x
 getPRIMFLOAT    (L _ (ITprimfloat  x)) = x
 getPRIMDOUBLE   (L _ (ITprimdouble x)) = x
 getTH_ID_SPLICE (L _ (ITidEscape x)) = x
+getTH_ID_TY_SPLICE (L _ (ITidTyEscape x)) = x
 getINLINE       (L _ (ITinline_prag inl conl)) = (inl,conl)
 getSPEC_INLINE  (L _ (ITspec_inline_prag True))  = (Inline,  FunLike)
 getSPEC_INLINE  (L _ (ITspec_inline_prag False)) = (NoInline,FunLike)

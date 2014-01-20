@@ -27,9 +27,9 @@
 #include "RtsUtils.h"
 #include "Trace.h"
 #include "StgPrimFloat.h" // for __int_encodeFloat etc.
-#include "Stable.h"
 #include "Proftimer.h"
 #include "GetEnv.h"
+#include "Stable.h"
 
 #if !defined(mingw32_HOST_OS)
 #include "posix/Signals.h"
@@ -138,11 +138,14 @@
 #include <sys/tls.h>
 #endif
 
-/* Hash table mapping symbol names to Symbol */
-static /*Str*/HashTable *symhash;
+typedef struct _RtsSymbolInfo {
+    void *value;
+    const ObjectCode *owner;
+    HsBool weak;
+} RtsSymbolInfo;
 
-/* Hash table mapping symbol names to StgStablePtr */
-static /*Str*/HashTable *stablehash;
+/* Hash table mapping symbol names to RtsSymbolInfo */
+static /*Str*/HashTable *symhash;
 
 /* List of currently loaded objects */
 ObjectCode *objects = NULL;     /* initially empty */
@@ -963,7 +966,7 @@ typedef struct _RtsSymbolVal {
       SymI_HasProto(UPD_PAP_IN_PLACE_ctr)               \
       SymI_HasProto(ALLOC_HEAP_ctr)                     \
       SymI_HasProto(ALLOC_HEAP_tot)                     \
-      SymI_HasProto(HEAP_CHK_ctr)			\
+      SymI_HasProto(HEAP_CHK_ctr)                       \
       SymI_HasProto(STK_CHK_ctr)                        \
       SymI_HasProto(ALLOC_RTS_ctr)                      \
       SymI_HasProto(ALLOC_RTS_tot)                      \
@@ -1130,6 +1133,7 @@ typedef struct _RtsSymbolVal {
       SymI_HasProto(hs_hpc_rootModule)                                  \
       SymI_HasProto(hs_hpc_module)                                      \
       SymI_HasProto(initLinker)                                         \
+      SymI_HasProto(initLinker_)                                        \
       SymI_HasProto(stg_unpackClosurezh)                                \
       SymI_HasProto(stg_getApStackValzh)                                \
       SymI_HasProto(stg_getSparkzh)                                     \
@@ -1139,7 +1143,6 @@ typedef struct _RtsSymbolVal {
       SymI_HasProto(stg_killThreadzh)                                   \
       SymI_HasProto(loadArchive)                                        \
       SymI_HasProto(loadObj)                                            \
-      SymI_HasProto(insertStableSymbol)                                 \
       SymI_HasProto(insertSymbol)                                       \
       SymI_HasProto(lookupSymbol)                                       \
       SymI_HasProto(stg_makeStablePtrzh)                                \
@@ -1153,7 +1156,6 @@ typedef struct _RtsSymbolVal {
       SymI_HasProto(stg_newByteArrayzh)                                 \
       SymI_HasProto(stg_casIntArrayzh)                                  \
       SymI_HasProto(stg_fetchAddIntArrayzh)                             \
-      SymI_HasProto_redirect(newCAF, newDynCAF)                         \
       SymI_HasProto(stg_newMVarzh)                                      \
       SymI_HasProto(stg_newMutVarzh)                                    \
       SymI_HasProto(stg_newTVarzh)                                      \
@@ -1225,6 +1227,7 @@ typedef struct _RtsSymbolVal {
       SymI_HasProto(rts_unsafeGetMyCapability)                          \
       SymI_HasProto(rtsSupportsBoundThreads)                            \
       SymI_HasProto(rts_isProfiled)                                     \
+      SymI_HasProto(rts_isDynamic)                                      \
       SymI_HasProto(setProgArgv)                                        \
       SymI_HasProto(startupHaskell)                                     \
       SymI_HasProto(shutdownHaskell)                                    \
@@ -1347,6 +1350,7 @@ typedef struct _RtsSymbolVal {
       SymI_HasProto(g0)                                                 \
       SymI_HasProto(allocate)                                           \
       SymI_HasProto(allocateExec)                                       \
+      SymI_HasProto(flushExec)                                          \
       SymI_HasProto(freeExec)                                           \
       SymI_HasProto(getAllocations)                                     \
       SymI_HasProto(revertCAFs)                                         \
@@ -1468,15 +1472,31 @@ static RtsSymbolVal rtsSyms[] = {
  * Insert symbols into hash tables, checking for duplicates.
  */
 
-static void ghciInsertStrHashTable ( pathchar* obj_name,
-                                     HashTable *table,
-                                     char* key,
-                                     void *data
-                                   )
+static void ghciInsertSymbolTable(
+   pathchar* obj_name,
+   HashTable *table,
+   char* key,
+   void *data,
+   HsBool weak,
+   ObjectCode *owner)
 {
-   if (lookupHashTable(table, (StgWord)key) == NULL)
+   RtsSymbolInfo *pinfo = lookupStrHashTable(table, key);
+   if (!pinfo) /* new entry */
    {
-      insertStrHashTable(table, (StgWord)key, data);
+      pinfo = stgMallocBytes(sizeof (*pinfo), "ghciInsertToSymbolTable");
+      pinfo->value = data;
+      pinfo->owner = owner;
+      pinfo->weak = weak;
+      insertStrHashTable(table, key, pinfo);
+      return;
+   } else if ((!pinfo->weak || pinfo->value) && weak) {
+     return; /* duplicate weak symbol, throw it away */
+   } else if (pinfo->weak) /* weak symbol is in the table */
+   {
+      /* override the weak definition with the non-weak one */
+      pinfo->value = data;
+      pinfo->owner = owner;
+      pinfo->weak = HS_BOOL_FALSE;
       return;
    }
    debugBelch(
@@ -1497,6 +1517,32 @@ static void ghciInsertStrHashTable ( pathchar* obj_name,
    );
    stg_exit(1);
 }
+
+static HsBool ghciLookupSymbolTable(HashTable *table,
+    const char *key, void **result)
+{
+    RtsSymbolInfo *pinfo = lookupStrHashTable(table, key);
+    if (!pinfo) {
+        *result = NULL;
+        return HS_BOOL_FALSE;
+    }
+    if (pinfo->weak)
+        IF_DEBUG(linker, debugBelch("lookup: promoting %s\n", key));
+    /* Once it's looked up, it can no longer be overridden */
+    pinfo->weak = HS_BOOL_FALSE;
+
+    *result = pinfo->value;
+    return HS_BOOL_TRUE;
+}
+
+static void ghciRemoveSymbolTable(HashTable *table, const char *key,
+    ObjectCode *owner)
+{
+    RtsSymbolInfo *pinfo = lookupStrHashTable(table, key);
+    if (!pinfo || owner != pinfo->owner) return;
+    removeStrHashTable(table, key, NULL);
+    stgFree(pinfo);
+}
 /* -----------------------------------------------------------------------------
  * initialize the object linker
  */
@@ -1513,8 +1559,16 @@ static Mutex dl_mutex; // mutex to protect dlopen/dlerror critical section
 #endif
 #endif
 
+void initLinker (void)
+{
+    // default to retaining CAFs for backwards compatibility.  Most
+    // users will want initLinker_(0): otherwise unloadObj() will not
+    // be able to unload object files when they contain CAFs.
+    initLinker_(1);
+}
+
 void
-initLinker( void )
+initLinker_ (int retain_cafs)
 {
     RtsSymbolVal *sym;
 #if defined(OBJFORMAT_ELF) || defined(OBJFORMAT_MACHO)
@@ -1539,18 +1593,30 @@ initLinker( void )
 #if defined(THREADED_RTS) && (defined(OBJFORMAT_ELF) || defined(OBJFORMAT_MACHO))
     initMutex(&dl_mutex);
 #endif
-    stablehash = allocStrHashTable();
     symhash = allocStrHashTable();
 
     /* populate the symbol table with stuff from the RTS */
     for (sym = rtsSyms; sym->lbl != NULL; sym++) {
-        ghciInsertStrHashTable(WSTR("(GHCi built-in symbols)"),
-                               symhash, sym->lbl, sym->addr);
+        ghciInsertSymbolTable(WSTR("(GHCi built-in symbols)"),
+                               symhash, sym->lbl, sym->addr, HS_BOOL_FALSE, NULL);
         IF_DEBUG(linker, debugBelch("initLinker: inserting rts symbol %s, %p\n", sym->lbl, sym->addr));
     }
 #   if defined(OBJFORMAT_MACHO) && defined(powerpc_HOST_ARCH)
     machoInitSymbolsWithoutUnderscore();
 #   endif
+    /* GCC defines a special symbol __dso_handle which is resolved to NULL if
+       referenced from a statically linked module. We need to mimic this, but
+       we cannot use NULL because we use it to mean nonexistent symbols. So we
+       use an arbitrary (hopefully unique) address here.
+    */
+    ghciInsertSymbolTable(WSTR("(GHCi special symbols)"),
+        symhash, "__dso_handle", (void *)0x12345687, HS_BOOL_FALSE, NULL);
+
+    // Redurect newCAF to newDynCAF if retain_cafs is true.
+    ghciInsertSymbolTable(WSTR("(GHCi built-in symbols)"), symhash,
+                          MAYBE_LEADING_UNDERSCORE_STR("newCAF"),
+                          retain_cafs ? newDynCAF : newCAF,
+                          HS_BOOL_FALSE, NULL);
 
 #   if defined(OBJFORMAT_ELF) || defined(OBJFORMAT_MACHO)
 #   if defined(RTLD_DEFAULT)
@@ -1868,23 +1934,12 @@ error:
 }
 
 /* -----------------------------------------------------------------------------
- * insert a stable symbol in the hash table
- */
-
-void
-insertStableSymbol(pathchar* obj_name, char* key, StgPtr p)
-{
-  ghciInsertStrHashTable(obj_name, stablehash, key, getStablePtr(p));
-}
-
-
-/* -----------------------------------------------------------------------------
  * insert a symbol in the hash table
  */
 void
 insertSymbol(pathchar* obj_name, char* key, void* data)
 {
-  ghciInsertStrHashTable(obj_name, symhash, key, data);
+  ghciInsertSymbolTable(obj_name, symhash, key, data, HS_BOOL_FALSE, NULL);
 }
 
 /* -----------------------------------------------------------------------------
@@ -1897,9 +1952,8 @@ lookupSymbol( char *lbl )
     IF_DEBUG(linker, debugBelch("lookupSymbol: looking up %s\n", lbl));
     initLinker() ;
     ASSERT(symhash != NULL);
-    val = lookupStrHashTable(symhash, lbl);
 
-    if (val == NULL) {
+    if (!ghciLookupSymbolTable(symhash, lbl, &val)) {
         IF_DEBUG(linker, debugBelch("lookupSymbol: symbol not found\n"));
 #       if defined(OBJFORMAT_ELF)
         return internal_dlsym(dl_prog_handle, lbl);
@@ -1911,12 +1965,12 @@ lookupSymbol( char *lbl )
            HACK: On OS X, all symbols are prefixed with an underscore.
                  However, dlsym wants us to omit the leading underscore from the
                  symbol name -- the dlsym routine puts it back on before searching
-		 for the symbol. For now, we simply strip it off here (and ONLY
+                 for the symbol. For now, we simply strip it off here (and ONLY
                  here).
         */
         IF_DEBUG(linker, debugBelch("lookupSymbol: looking up %s with dlsym\n", lbl));
-	ASSERT(lbl[0] == '_');
-	return internal_dlsym(dl_prog_handle, lbl + 1);
+        ASSERT(lbl[0] == '_');
+        return internal_dlsym(dl_prog_handle, lbl + 1);
 #       else
         if (NSIsSymbolNameDefined(lbl)) {
             NSSymbol symbol = NSLookupAndBindSymbol(lbl);
@@ -2002,7 +2056,7 @@ void ghci_enquire ( char* addr )
          if (sym == NULL) continue;
          a = NULL;
          if (a == NULL) {
-            a = lookupStrHashTable(symhash, sym);
+            ghciLookupSymbolTable(symhash, sym, (void **)&a);
          }
          if (a == NULL) {
              // debugBelch("ghci_enquire: can't find %s\n", sym);
@@ -2870,7 +2924,7 @@ unloadObj( pathchar *path )
                 int i;
                 for (i = 0; i < oc->n_symbols; i++) {
                    if (oc->symbols[i] != NULL) {
-                       removeStrHashTable(symhash, oc->symbols[i], NULL);
+                       ghciRemoveSymbolTable(symhash, oc->symbols[i], oc);
                    }
                 }
             }
@@ -3994,7 +4048,8 @@ ocGetNames_PEi386 ( ObjectCode* oc )
          ASSERT(i >= 0 && i < oc->n_symbols);
          /* cstring_from_COFF_symbol_name always succeeds. */
          oc->symbols[i] = (char*)sname;
-         ghciInsertStrHashTable(oc->fileName, symhash, (char*)sname, addr);
+         ghciInsertSymbolTable(oc->fileName, symhash, (char*)sname, addr,
+            HS_BOOL_FALSE, oc);
       } else {
 #        if 0
          debugBelch(
@@ -4836,6 +4891,7 @@ ocGetNames_ELF ( ObjectCode* oc )
       for (j = 0; j < nent; j++) {
 
          char  isLocal = FALSE; /* avoids uninit-var warning */
+         HsBool isWeak = HS_BOOL_FALSE;
          char* ad      = NULL;
          char* nm      = strtab + stab[j].st_name;
          int   secno   = stab[j].st_shndx;
@@ -4856,6 +4912,7 @@ ocGetNames_ELF ( ObjectCode* oc )
          else
          if ( ( ELF_ST_BIND(stab[j].st_info)==STB_GLOBAL
                 || ELF_ST_BIND(stab[j].st_info)==STB_LOCAL
+                || ELF_ST_BIND(stab[j].st_info)==STB_WEAK
               )
               /* and not an undefined symbol */
               && stab[j].st_shndx != SHN_UNDEF
@@ -4879,7 +4936,8 @@ ocGetNames_ELF ( ObjectCode* oc )
             ad = ehdrC + shdr[ secno ].sh_offset + stab[j].st_value;
             if (ELF_ST_BIND(stab[j].st_info)==STB_LOCAL) {
                isLocal = TRUE;
-            } else {
+               isWeak = FALSE;
+            } else { /* STB_GLOBAL or STB_WEAK */
 #ifdef ELF_FUNCTION_DESC
                /* dlsym() and the initialisation table both give us function
                 * descriptors, so to be consistent we store function descriptors
@@ -4890,6 +4948,7 @@ ocGetNames_ELF ( ObjectCode* oc )
                IF_DEBUG(linker,debugBelch( "addOTabName(GLOB): %10p  %s %s\n",
                                       ad, oc->fileName, nm ));
                isLocal = FALSE;
+               isWeak = (ELF_ST_BIND(stab[j].st_info)==STB_WEAK);
             }
          }
 
@@ -4902,7 +4961,7 @@ ocGetNames_ELF ( ObjectCode* oc )
             if (isLocal) {
                /* Ignore entirely. */
             } else {
-               ghciInsertStrHashTable(oc->fileName, symhash, nm, ad);
+               ghciInsertSymbolTable(oc->fileName, symhash, nm, ad, isWeak, oc);
             }
          } else {
             /* Skip. */
@@ -4973,8 +5032,6 @@ do_Elf_Rel_relocations ( ObjectCode* oc, char* ehdrC,
 #ifdef i386_HOST_ARCH
       Elf_Addr  value;
 #endif
-      StgStablePtr stablePtr;
-      StgPtr stableVal;
 #ifdef arm_HOST_ARCH
       int is_target_thm=0, T=0;
 #endif
@@ -4997,16 +5054,8 @@ do_Elf_Rel_relocations ( ObjectCode* oc, char* ehdrC,
 
          } else {
             symbol = strtab + sym.st_name;
-            stablePtr = (StgStablePtr)lookupHashTable(stablehash, (StgWord)symbol);
-            if (NULL == stablePtr) {
-              /* No, so look up the name in our global table. */
-              S_tmp = lookupSymbol( symbol );
-              S = (Elf_Addr)S_tmp;
-            } else {
-              stableVal = deRefStablePtr( stablePtr );
-              S_tmp = stableVal;
-              S = (Elf_Addr)S_tmp;
-            }
+            S_tmp = lookupSymbol( symbol );
+            S = (Elf_Addr)S_tmp;
          }
          if (!S) {
             errorBelch("%s: unknown symbol `%s'", oc->fileName, symbol);
@@ -5867,8 +5916,8 @@ resolveImports(
 
         if (addr == NULL)
         {
-	    errorBelch("\nlookupSymbol failed in resolveImports\n"
-		       "%s: unknown symbol `%s'", oc->fileName, nm);
+            errorBelch("\nlookupSymbol failed in resolveImports\n"
+                       "%s: unknown symbol `%s'", oc->fileName, nm);
             return 0;
         }
         ASSERT(addr);
@@ -5958,14 +6007,14 @@ relocateSection(
         uint64_t baseValue;
         int type = reloc->r_type;
 
-	IF_DEBUG(linker, debugBelch("relocateSection: relocation %d\n", i));
-	IF_DEBUG(linker, debugBelch("               : type      = %d\n", reloc->r_type));
-	IF_DEBUG(linker, debugBelch("               : address   = %d\n", reloc->r_address));
-	IF_DEBUG(linker, debugBelch("               : symbolnum = %u\n", reloc->r_symbolnum));
-	IF_DEBUG(linker, debugBelch("               : pcrel     = %d\n", reloc->r_pcrel));
-	IF_DEBUG(linker, debugBelch("               : length    = %d\n", reloc->r_length));
-	IF_DEBUG(linker, debugBelch("               : extern    = %d\n", reloc->r_extern));
-	IF_DEBUG(linker, debugBelch("               : type      = %d\n", reloc->r_type));
+        IF_DEBUG(linker, debugBelch("relocateSection: relocation %d\n", i));
+        IF_DEBUG(linker, debugBelch("               : type      = %d\n", reloc->r_type));
+        IF_DEBUG(linker, debugBelch("               : address   = %d\n", reloc->r_address));
+        IF_DEBUG(linker, debugBelch("               : symbolnum = %u\n", reloc->r_symbolnum));
+        IF_DEBUG(linker, debugBelch("               : pcrel     = %d\n", reloc->r_pcrel));
+        IF_DEBUG(linker, debugBelch("               : length    = %d\n", reloc->r_length));
+        IF_DEBUG(linker, debugBelch("               : extern    = %d\n", reloc->r_extern));
+        IF_DEBUG(linker, debugBelch("               : type      = %d\n", reloc->r_type));
 
         switch(reloc->r_length)
         {
@@ -6002,50 +6051,50 @@ relocateSection(
         {
             struct nlist *symbol = &nlist[reloc->r_symbolnum];
             char *nm = image + symLC->stroff + symbol->n_un.n_strx;
-	    void *addr = NULL;
+            void *addr = NULL;
 
             IF_DEBUG(linker, debugBelch("relocateSection: making jump island for %s, extern = %d, X86_64_RELOC_GOT\n", nm, reloc->r_extern));
 
             ASSERT(reloc->r_extern);
-	    if (reloc->r_extern == 0) {
-		    errorBelch("\nrelocateSection: global offset table relocation for symbol with r_extern == 0\n");
-	    }
+            if (reloc->r_extern == 0) {
+                    errorBelch("\nrelocateSection: global offset table relocation for symbol with r_extern == 0\n");
+            }
 
-	    if (symbol->n_type & N_EXT) {
-		    // The external bit is set, meaning the symbol is exported,
-		    // and therefore can be looked up in this object module's
-		    // symtab, or it is undefined, meaning dlsym must be used
-		    // to resolve it.
+            if (symbol->n_type & N_EXT) {
+                    // The external bit is set, meaning the symbol is exported,
+                    // and therefore can be looked up in this object module's
+                    // symtab, or it is undefined, meaning dlsym must be used
+                    // to resolve it.
 
-		    addr = lookupSymbol(nm);
-		    IF_DEBUG(linker, debugBelch("relocateSection: looked up %s, "
-						"external X86_64_RELOC_GOT or X86_64_RELOC_GOT_LOAD\n", nm));
-		    IF_DEBUG(linker, debugBelch("               : addr = %p\n", addr));
+                    addr = lookupSymbol(nm);
+                    IF_DEBUG(linker, debugBelch("relocateSection: looked up %s, "
+                                                "external X86_64_RELOC_GOT or X86_64_RELOC_GOT_LOAD\n", nm));
+                    IF_DEBUG(linker, debugBelch("               : addr = %p\n", addr));
 
-		    if (addr == NULL) {
-			    errorBelch("\nlookupSymbol failed in relocateSection (RELOC_GOT)\n"
-				       "%s: unknown symbol `%s'", oc->fileName, nm);
-			    return 0;
-		    }
-	    } else {
-		    IF_DEBUG(linker, debugBelch("relocateSection: %s is not an exported symbol\n", nm));
+                    if (addr == NULL) {
+                            errorBelch("\nlookupSymbol failed in relocateSection (RELOC_GOT)\n"
+                                       "%s: unknown symbol `%s'", oc->fileName, nm);
+                            return 0;
+                    }
+            } else {
+                    IF_DEBUG(linker, debugBelch("relocateSection: %s is not an exported symbol\n", nm));
 
-		    // The symbol is not exported, or defined in another
-		    // module, so it must be in the current object module,
-		    // at the location given by the section index and
-		    // symbol address (symbol->n_value)
+                    // The symbol is not exported, or defined in another
+                    // module, so it must be in the current object module,
+                    // at the location given by the section index and
+                    // symbol address (symbol->n_value)
 
-		    if ((symbol->n_type & N_TYPE) == N_SECT) {
-			    addr = (void *)relocateAddress(oc, nSections, sections, symbol->n_value);
-			    IF_DEBUG(linker, debugBelch("relocateSection: calculated relocation %p of "
-							"non-external X86_64_RELOC_GOT or X86_64_RELOC_GOT_LOAD\n",
-							(void *)symbol->n_value));
-			    IF_DEBUG(linker, debugBelch("               : addr = %p\n", addr));
-		    } else {
-			    errorBelch("\nrelocateSection: %s is not exported,"
-				       " and should be defined in a section, but isn't!\n", nm);
-		    }
-	    }
+                    if ((symbol->n_type & N_TYPE) == N_SECT) {
+                            addr = (void *)relocateAddress(oc, nSections, sections, symbol->n_value);
+                            IF_DEBUG(linker, debugBelch("relocateSection: calculated relocation %p of "
+                                                        "non-external X86_64_RELOC_GOT or X86_64_RELOC_GOT_LOAD\n",
+                                                        (void *)symbol->n_value));
+                            IF_DEBUG(linker, debugBelch("               : addr = %p\n", addr));
+                    } else {
+                            errorBelch("\nrelocateSection: %s is not exported,"
+                                       " and should be defined in a section, but isn't!\n", nm);
+                    }
+            }
 
             value = (uint64_t) &makeSymbolExtra(oc, reloc->r_symbolnum, (unsigned long)addr)->addr;
 
@@ -6055,7 +6104,7 @@ relocateSection(
         {
             struct nlist *symbol = &nlist[reloc->r_symbolnum];
             char *nm = image + symLC->stroff + symbol->n_un.n_strx;
-	    void *addr = NULL;
+            void *addr = NULL;
 
             IF_DEBUG(linker, debugBelch("relocateSection: looking up external symbol %s\n", nm));
             IF_DEBUG(linker, debugBelch("               : type  = %d\n", symbol->n_type));
@@ -6070,25 +6119,25 @@ relocateSection(
             }
             else {
                 addr = lookupSymbol(nm);
-		if (addr == NULL)
-		{
-		     errorBelch("\nlookupSymbol failed in relocateSection (relocate external)\n"
-				"%s: unknown symbol `%s'", oc->fileName, nm);
-		     return 0;
-		}
+                if (addr == NULL)
+                {
+                     errorBelch("\nlookupSymbol failed in relocateSection (relocate external)\n"
+                                "%s: unknown symbol `%s'", oc->fileName, nm);
+                     return 0;
+                }
 
-		value = (uint64_t) addr;
+                value = (uint64_t) addr;
                 IF_DEBUG(linker, debugBelch("relocateSection: external symbol %s, address %p\n", nm, (void *)value));
             }
         }
         else
         {
-	    // If the relocation is not through the global offset table
-	    // or external, then set the value to the baseValue.  This
-	    // will leave displacements into the __const section
-	    // unchanged (as they ought to be).
+            // If the relocation is not through the global offset table
+            // or external, then set the value to the baseValue.  This
+            // will leave displacements into the __const section
+            // unchanged (as they ought to be).
 
-	    value = baseValue;
+            value = baseValue;
         }
 
         IF_DEBUG(linker, debugBelch("relocateSection: value = %p\n", (void *)value));
@@ -6605,11 +6654,13 @@ ocGetNames_MachO(ObjectCode* oc)
                     else
                     {
                             IF_DEBUG(linker, debugBelch("ocGetNames_MachO: inserting %s\n", nm));
-                            ghciInsertStrHashTable(oc->fileName, symhash, nm,
+                            ghciInsertSymbolTable(oc->fileName, symhash, nm,
                                                     image
                                                     + sections[nlist[i].n_sect-1].offset
                                                     - sections[nlist[i].n_sect-1].addr
-                                                    + nlist[i].n_value);
+                                                    + nlist[i].n_value,
+                                                    HS_BOOL_FALSE,
+                                                    oc);
                             oc->symbols[curSymbol++] = nm;
                     }
                 }
@@ -6640,8 +6691,8 @@ ocGetNames_MachO(ObjectCode* oc)
                 nlist[i].n_value = commonCounter;
 
                 IF_DEBUG(linker, debugBelch("ocGetNames_MachO: inserting common symbol: %s\n", nm));
-                ghciInsertStrHashTable(oc->fileName, symhash, nm,
-                                       (void*)commonCounter);
+                ghciInsertSymbolTable(oc->fileName, symhash, nm,
+                                       (void*)commonCounter, HS_BOOL_FALSE, oc);
                 oc->symbols[curSymbol++] = nm;
 
                 commonCounter += sz;
@@ -6811,7 +6862,7 @@ machoInitSymbolsWithoutUnderscore(void)
 
 #undef SymI_NeedsProto
 #define SymI_NeedsProto(x)  \
-    ghciInsertStrHashTable("(GHCi built-in symbols)", symhash, #x, *p++);
+    ghciInsertSymbolTable("(GHCi built-in symbols)", symhash, #x, *p++, HS_BOOL_FALSE, NULL);
 
     RTS_MACHO_NOUNDERLINE_SYMBOLS
 

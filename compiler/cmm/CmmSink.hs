@@ -171,7 +171,7 @@ cmmSink dflags graph = ofBlockList (g_entry graph) $ sink mapEmpty $ blocks
 
       -- Now sink and inline in this block
       (middle', assigs) = walk dflags ann_middles (mapFindWithDefault [] lbl sunk)
-      fold_last = constantFold dflags last
+      fold_last = constantFoldNode dflags last
       (final_last, assigs') = tryToInline dflags live fold_last assigs
 
       -- We cannot sink into join points (successors with more than
@@ -295,8 +295,8 @@ walk :: DynFlags
 
      -> Assignments                     -- The current list of
                                         -- assignments we are sinking.
-                                        -- Later assignments may refer
-                                        -- to earlier ones.
+                                        -- Earlier assignments may refer
+                                        -- to later ones.
 
      -> ( Block CmmNode O O             -- The new block
         , Assignments                   -- Assignments to sink further
@@ -311,7 +311,7 @@ walk dflags nodes assigs = go nodes emptyBlock assigs
     | Just a <- shouldSink dflags node2 = go ns block (a : as1)
     | otherwise                         = go ns block' as'
     where
-      node1 = constantFold dflags node
+      node1 = constantFoldNode dflags node
 
       (node2, as1) = tryToInline dflags live node1 as
 
@@ -320,12 +320,6 @@ walk dflags nodes assigs = go nodes emptyBlock assigs
 
       block' = foldl blockSnoc block dropped `blockSnoc` node2
 
-
-constantFold :: DynFlags -> CmmNode e x -> CmmNode e x
-constantFold dflags node = mapExpDeep f node
-  where f (CmmMachOp op args) = cmmMachOpFold dflags op args
-        f (CmmRegOff r 0) = CmmReg r
-        f e = e
 
 --
 -- Heuristic to decide whether to pick up and sink an assignment
@@ -405,12 +399,15 @@ tryToInline dflags live node assigs = go usages node [] assigs
 
   go usages node skipped (a@(l,rhs,_) : rest)
    | cannot_inline           = dont_inline
+   | occurs_none             = discard  -- Note [discard during inlining]
    | occurs_once             = inline_and_discard
    | isTrivial rhs           = inline_and_keep
    | otherwise               = dont_inline
    where
         inline_and_discard = go usages' inl_node skipped rest
           where usages' = foldLocalRegsUsed dflags addUsage usages rhs
+
+        discard = go usages node skipped rest
 
         dont_inline        = keep node  -- don't inline the assignment, keep it
         inline_and_keep    = keep inl_node -- inline the assignment, keep it
@@ -427,8 +424,11 @@ tryToInline dflags live node assigs = go usages node [] assigs
                         || l `elem` skipped
                         || not (okToInline dflags rhs node)
 
-        occurs_once = not (l `elemRegSet` live)
-                      && lookupUFM usages l == Just 1
+        l_usages = lookupUFM usages l
+        l_live   = l `elemRegSet` live
+
+        occurs_once = not l_live && l_usages == Just 1
+        occurs_none = not l_live && l_usages == Nothing
 
         inl_node = mapExpDeep inline node
                    -- mapExpDeep is where the inlining actually takes place!
@@ -467,6 +467,22 @@ tryToInline dflags live node assigs = go usages node [] assigs
 -- might still be tempted to inline y = z (because we always inline
 -- trivial rhs's).  But of course we can't, because y is equal to e,
 -- not z.
+
+-- Note [discard during inlining]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- Opportunities to discard assignments sometimes appear after we've
+-- done some inlining.  Here's an example:
+--
+--      x = R1;
+--      y = P64[x + 7];
+--      z = P64[x + 15];
+--      /* z is dead */
+--      R1 = y & (-8);
+--
+-- The x assignment is trivial, so we inline it in the RHS of y, and
+-- keep both x and y.  z gets dropped because it is dead, then we
+-- inline y, and we have a dead assignment to x.  If we don't notice
+-- that x is dead in tryToInline, we end up retaining it.
 
 addUsage :: UniqFM Int -> LocalReg -> UniqFM Int
 addUsage m r = addToUFM_C (+) m r 1
@@ -565,7 +581,7 @@ localRegistersConflict dflags expr node =
 --      We will attempt to sink { x = R1 } but we will detect conflict with
 --      { P64[Sp - 8]  = x } and hence we will drop { x = R1 } without even
 --      checking whether it conflicts with { call f() }. In this way we will
---      never need to check any assignment conflicts with CmmCall. Remeber
+--      never need to check any assignment conflicts with CmmCall. Remember
 --      that we still need to check for potential memory conflicts.
 --
 -- So the result is that we only need to worry about CmmUnsafeForeignCall nodes

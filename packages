@@ -17,7 +17,7 @@
 #    - Haddock and hsc2hs are applications, built on top of GHC,
 #        and in turn needed to bootstrap GHC
 #    - ghc-tarballs is need to build GHC
-#    - nofib and testsuite are optional helpers
+#    - nofib is an optional helpers
 #
 # The format of the lines in this file is:
 #   localpath  tag  remotepath  upstreamurl
@@ -28,12 +28,12 @@
 #   * 'upstreamurl' is the upstream Git repo location for packages
 #     maintained outside of GHC HQ.
 #
-#   * The 'tag' determines when "darcs-all get" will get the
+#   * The 'tag' determines when "sync-all get" will get the
 #     repo. If the tag is "-" then it will always get it, but if there
-#     is a tag then a corresponding flag must be given to darcs-all, e.g.
-#     if you want to get the packages with an "extralibs" or "testsuite"
-#     tag then you need to use "darcs-all --extra --testsuite get".
-#     Support for new tags must be manually added to the darcs-all script.
+#     is a tag then a corresponding flag must be given to "sync-all", e.g.
+#     if you want to get the packages with an "extralibs"
+#     tag then you need to use "sync-all --extra get".
+#     Support for new tags must be manually added to the "sync-all" script.
 #
 #     'tag' is also used to determine which packages the build system
 #     deems to have the EXTRA_PACKAGE property: tags 'dph' and 'extra'
@@ -58,7 +58,7 @@ libraries/deepseq            -           packages/deepseq.git            -
 libraries/directory          -           packages/directory.git          -
 libraries/filepath           -           packages/filepath.git           -
 libraries/ghc-prim           -           packages/ghc-prim.git           -
-libraries/haskeline          -           -                               http://git.haskell.org/darcs-mirrors/haskeline.git
+libraries/haskeline          -           -                               https://github.com/judah/haskeline.git
 libraries/haskell98          -           packages/haskell98.git          -
 libraries/haskell2010        -           packages/haskell2010.git        -
 libraries/hoopl              -           packages/hoopl.git              -
@@ -70,17 +70,16 @@ libraries/old-time           -           packages/old-time.git           -
 libraries/pretty             -           -                               https://github.com/haskell/pretty.git
 libraries/process            -           packages/process.git            -
 libraries/template-haskell   -           packages/template-haskell.git   -
-libraries/terminfo           -           -                               http://git.haskell.org/darcs-mirrors/terminfo.git
+libraries/terminfo           -           -                               https://github.com/judah/terminfo.git
 libraries/time               -           -                               http://git.haskell.org/darcs-mirrors/time.git
 libraries/transformers       -           -                               http://git.haskell.org/darcs-mirrors/transformers.git
 libraries/unix               -           packages/unix.git               -
 libraries/Win32              -           -                               https://github.com/haskell/win32.git
 libraries/xhtml              -           -                               https://github.com/haskell/xhtml.git
-testsuite                    testsuite   testsuite.git                   -
 nofib                        nofib       nofib.git                       -
 libraries/parallel           extra       packages/parallel.git           -
 libraries/stm                extra       packages/stm.git                -
-libraries/random             dph         -                               -
+libraries/random             dph         -                               https://github.com/haskell/random.git
 libraries/primitive          dph         -                               https://github.com/haskell/primitive.git
 libraries/vector             dph         -                               https://github.com/haskell/vector.git
 libraries/dph                dph         packages/dph.git                -

@@ -3,20 +3,20 @@
 % (c) The GRASP/AQUA Project, Glasgow University, 1992-1998
 %
 
-	Arity and ete expansion
+	Arity and eta expansion
 
 \begin{code}
 {-# OPTIONS -fno-warn-tabs #-}
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
---     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
+--     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
 -- | Arit and eta expansion
 module CoreArity (
 	manifestArity, exprArity, exprBotStrictness_maybe,
-	exprEtaExpandArity, CheapFun, etaExpand
+	exprEtaExpandArity, findRhsArity, CheapFun, etaExpand
     ) where
 
 #include "HsVersions.h"
@@ -38,6 +38,7 @@ import DynFlags ( DynFlags, GeneralFlag(..), gopt )
 import Outputable
 import FastString
 import Pair
+import Util     ( debugIsOn )
 \end{code}
 
 %************************************************************************
@@ -101,7 +102,7 @@ exprArity e = go e
     trim_arity arity ty = arity `min` length (typeArity ty)
 
 ---------------
-typeArity :: Type -> [OneShot]
+typeArity :: Type -> [OneShotInfo]
 -- How many value arrows are visible in the type?
 -- We look through foralls, and newtypes
 -- See Note [exprArity invariant]
@@ -113,8 +114,7 @@ typeArity ty
       = go rec_nts ty'
 
       | Just (arg,res) <- splitFunTy_maybe ty    
-      = isStateHackType arg : go rec_nts res
-
+      = typeOneShot arg : go rec_nts res
       | Just (tc,tys) <- splitTyConApp_maybe ty 
       , Just (ty', _) <- instNewTyCon_maybe tc tys
       , Just rec_nts' <- checkRecTc rec_nts tc  -- See Note [Expanding newtypes]
@@ -144,7 +144,7 @@ exprBotStrictness_maybe e
 	Just ar -> Just (ar, sig ar)
   where
     env    = AE { ae_bndrs = [], ae_ped_bot = True, ae_cheap_fn = \ _ _ -> False }
-    sig ar = mkStrictSig (mkTopDmdType (replicate ar topDmd) botRes)
+    sig ar = mkClosedStrictSig (replicate ar topDmd) botRes
                   -- For this purpose we can be very simple
 \end{code}
 
@@ -178,7 +178,7 @@ in exprArity.  That is a less local change, so I'm going to leave it for today!
 
 Note [Newtype classes and eta expansion]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    NB: this nasty special case is no longer required, becuase
+    NB: this nasty special case is no longer required, because
     for newtype classes we don't use the class-op rule mechanism
     at all.  See Note [Single-method classes] in TcInstDcls. SLPJ May 2013
 
@@ -475,39 +475,26 @@ Then  f             :: AT [False,False] ATop
 -------------------- Main arity code ----------------------------
 \begin{code}
 -- See Note [ArityType]
-data ArityType = ATop [OneShot] | ABot Arity
+data ArityType = ATop [OneShotInfo] | ABot Arity
      -- There is always an explicit lambda
      -- to justify the [OneShot], or the Arity
-
-type OneShot = Bool    -- False <=> Know nothing
-                       -- True  <=> Can definitely float inside this lambda
-	               -- The 'True' case can arise either because a binder
-		       -- is marked one-shot, or because it's a state lambda
-		       -- and we have the state hack on
 
 vanillaArityType :: ArityType
 vanillaArityType = ATop []	-- Totally uninformative
 
 -- ^ The Arity returned is the number of value args the
 -- expression can be applied to without doing much work
-exprEtaExpandArity :: DynFlags -> CheapAppFun -> CoreExpr -> Arity
+exprEtaExpandArity :: DynFlags -> CoreExpr -> Arity
 -- exprEtaExpandArity is used when eta expanding
 -- 	e  ==>  \xy -> e x y
-exprEtaExpandArity dflags cheap_app e
+exprEtaExpandArity dflags e
   = case (arityType env e) of
-      ATop (os:oss) 
-        | os || has_lam e -> 1 + length oss	-- Note [Eta expanding thunks]
-        | otherwise       -> 0
-      ATop []             -> 0
-      ABot n              -> n
+      ATop oss -> length oss
+      ABot n   -> n
   where
     env = AE { ae_bndrs    = []
-             , ae_cheap_fn = mk_cheap_fn dflags cheap_app
+             , ae_cheap_fn = mk_cheap_fn dflags isCheapApp
              , ae_ped_bot  = gopt Opt_PedanticBottoms dflags }
-
-    has_lam (Tick _ e) = has_lam e
-    has_lam (Lam b e)  = isId b || has_lam e
-    has_lam _          = False
 
 getBotArity :: ArityType -> Maybe Arity
 -- Arity of a divergent function
@@ -523,7 +510,94 @@ mk_cheap_fn dflags cheap_app
              || case mb_ty of
                   Nothing -> False
                   Just ty -> isDictLikeTy ty
+
+
+----------------------
+findRhsArity :: DynFlags -> Id -> CoreExpr -> Arity -> Arity
+-- This implements the fixpoint loop for arity analysis
+-- See Note [Arity analysis]
+findRhsArity dflags bndr rhs old_arity
+  = go (rhsEtaExpandArity dflags init_cheap_app rhs)
+       -- We always call exprEtaExpandArity once, but usually
+       -- that produces a result equal to old_arity, and then
+       -- we stop right away (since arities should not decrease)
+       -- Result: the common case is that there is just one iteration
+  where
+    init_cheap_app :: CheapAppFun
+    init_cheap_app fn n_val_args
+      | fn == bndr = True   -- On the first pass, this binder gets infinite arity
+      | otherwise  = isCheapApp fn n_val_args
+
+    go :: Arity -> Arity
+    go cur_arity
+      | cur_arity <= old_arity = cur_arity
+      | new_arity == cur_arity = cur_arity
+      | otherwise = ASSERT( new_arity < cur_arity )
+#ifdef DEBUG
+                    pprTrace "Exciting arity"
+                       (vcat [ ppr bndr <+> ppr cur_arity <+> ppr new_arity
+                                                    , ppr rhs])
+#endif
+                    go new_arity
+      where
+        new_arity = rhsEtaExpandArity dflags cheap_app rhs
+
+        cheap_app :: CheapAppFun
+        cheap_app fn n_val_args
+          | fn == bndr = n_val_args < cur_arity
+          | otherwise  = isCheapApp fn n_val_args
+
+-- ^ The Arity returned is the number of value args the
+-- expression can be applied to without doing much work
+rhsEtaExpandArity :: DynFlags -> CheapAppFun -> CoreExpr -> Arity
+-- exprEtaExpandArity is used when eta expanding
+-- 	e  ==>  \xy -> e x y
+rhsEtaExpandArity dflags cheap_app e
+  = case (arityType env e) of
+      ATop (os:oss)
+        | isOneShotInfo os || has_lam e -> 1 + length oss  
+                                   -- Don't expand PAPs/thunks
+                                   -- Note [Eta expanding thunks]
+        | otherwise       -> 0
+      ATop []             -> 0
+      ABot n              -> n
+  where
+    env = AE { ae_bndrs    = []
+             , ae_cheap_fn = mk_cheap_fn dflags cheap_app
+             , ae_ped_bot  = gopt Opt_PedanticBottoms dflags }
+
+    has_lam (Tick _ e) = has_lam e
+    has_lam (Lam b e)  = isId b || has_lam e
+    has_lam _          = False
 \end{code}
+
+Note [Arity analysis]
+~~~~~~~~~~~~~~~~~~~~~
+The motivating example for arity analysis is this:
+
+  f = \x. let g = f (x+1)
+          in \y. ...g...
+
+What arity does f have?  Really it should have arity 2, but a naive
+look at the RHS won't see that.  You need a fixpoint analysis which
+says it has arity "infinity" the first time round.
+
+This example happens a lot; it first showed up in Andy Gill's thesis,
+fifteen years ago!  It also shows up in the code for 'rnf' on lists
+in Trac #4138.
+
+The analysis is easy to achieve because exprEtaExpandArity takes an
+argument
+     type CheapFun = CoreExpr -> Maybe Type -> Bool
+used to decide if an expression is cheap enough to push inside a
+lambda.  And exprIsCheap' in turn takes an argument
+     type CheapAppFun = Id -> Int -> Bool
+which tells when an application is cheap. This makes it easy to
+write the analysis loop.
+
+The analysis is cheap-and-cheerful because it doesn't deal with
+mutual recursion.  But the self-recursive case is the important one.
+
 
 Note [Eta expanding through dictionaries]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -549,6 +623,11 @@ isDictLikeTy here rather than isDictTy
 
 Note [Eta expanding thunks]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+We don't eta-expand
+   * Trivial RHSs     x = y
+   * PAPs             x = map g
+   * Thunks           f = case y of p -> \x -> blah
+
 When we see
      f = case y of p -> \x -> blah
 should we eta-expand it? Well, if 'x' is a one-shot state token 
@@ -562,15 +641,15 @@ when saturated" so we don't want to be too gung-ho about saturating!
 
 \begin{code}
 arityLam :: Id -> ArityType -> ArityType
-arityLam id (ATop as) = ATop (isOneShotBndr id : as)
+arityLam id (ATop as) = ATop (idOneShotInfo id : as)
 arityLam _  (ABot n)  = ABot (n+1)
 
 floatIn :: Bool -> ArityType -> ArityType
--- We have something like (let x = E in b), 
--- where b has the given arity type.  
+-- We have something like (let x = E in b),
+-- where b has the given arity type.
 floatIn _     (ABot n)  = ABot n
 floatIn True  (ATop as) = ATop as
-floatIn False (ATop as) = ATop (takeWhile id as)
+floatIn False (ATop as) = ATop (takeWhile isOneShotInfo as)
    -- If E is not cheap, keep arity only for one-shots
 
 arityApp :: ArityType -> Bool -> ArityType
@@ -582,37 +661,34 @@ arityApp (ATop [])     _     = ATop []
 arityApp (ATop (_:as)) cheap = floatIn cheap (ATop as)
 
 andArityType :: ArityType -> ArityType -> ArityType   -- Used for branches of a 'case'
-andArityType (ABot n1) (ABot n2) 
+andArityType (ABot n1) (ABot n2)
   = ABot (n1 `min` n2)
 andArityType (ATop as)  (ABot _)  = ATop as
 andArityType (ABot _)   (ATop bs) = ATop bs
 andArityType (ATop as)  (ATop bs) = ATop (as `combine` bs)
   where	     -- See Note [Combining case branches]
-    combine (a:as) (b:bs) = (a && b) : combine as bs
-    combine []     bs     = take_one_shots bs
-    combine as     []     = take_one_shots as
-
-    take_one_shots [] = []
-    take_one_shots (one_shot : as) 
-      | one_shot  = True : take_one_shots as
-      | otherwise = [] 
+    combine (a:as) (b:bs) = (a `bestOneShot` b) : combine as bs
+    combine []     bs     = takeWhile isOneShotInfo bs
+    combine as     []     = takeWhile isOneShotInfo as
 \end{code}
 
 Note [Combining case branches]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Consider    
+Consider
   go = \x. let z = go e0
                go2 = \x. case x of
                            True  -> z
                            False -> \s(one-shot). e1
            in go2 x
-We *really* want to eta-expand go and go2.  
+We *really* want to eta-expand go and go2.
 When combining the barnches of the case we have
-     ATop [] `andAT` ATop [True]
-and we want to get ATop [True].  But if the inner
+     ATop [] `andAT` ATop [OneShotLam]
+and we want to get ATop [OneShotLam].  But if the inner
 lambda wasn't one-shot we don't want to do this.
 (We need a proper arity analysis to justify that.)
 
+So we combine the best of the two branches, on the (slightly dodgy)
+basis that if we know one branch is one-shot, then they all must be.
 
 \begin{code}
 ---------------------------
@@ -645,7 +721,7 @@ arityType env (Cast e co)
 
 arityType _ (Var v)
   | strict_sig <- idStrictness v
-  , not $ isTopSig strict_sig
+  , not $ isNopSig strict_sig
   , (ds, res) <- splitStrictSig strict_sig
   , let arity = length ds
   = if isBotRes res then ABot arity
@@ -653,7 +729,7 @@ arityType _ (Var v)
   | otherwise
   = ATop (take (idArity v) one_shots)
   where
-    one_shots :: [Bool]	    -- One-shot-ness derived from the type
+    one_shots :: [OneShotInfo]	-- One-shot-ness derived from the type
     one_shots = typeArity (idType v)
 
 	-- Lambdas; increase arity
@@ -693,7 +769,7 @@ arityType env (Case scrut _ _ alts)
      ATop as | not (ae_ped_bot env)    -- Check -fpedantic-bottoms
              , is_under scrut             -> ATop as
              | exprOkForSpeculation scrut -> ATop as
-             | otherwise                  -> ATop (takeWhile id as)	    
+             | otherwise                  -> ATop (takeWhile isOneShotInfo as)
   where
     -- is_under implements Note [Dealing with bottom (3)]
     is_under (Var f)           = f `elem` ae_bndrs env
@@ -902,7 +978,7 @@ mkEtaWW orig_n orig_expr in_scope orig_ty
            -- Avoid free vars of the original expression
        = go (n-1) subst' res_ty (EtaVar eta_id' : eis)
        				   
-       | Just(ty',co) <- splitNewTypeRepCo_maybe ty
+       | Just (co, ty') <- topNormaliseNewType_maybe ty
        = 	-- Given this:
        		-- 	newtype T = MkT ([T] -> Int)
        		-- Consider eta-expanding this

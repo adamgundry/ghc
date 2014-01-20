@@ -48,7 +48,7 @@ module Type (
         -- Pred types
         mkFamilyTyConApp,
         isDictLikeTy,
-        mkEqPred, mkPrimEqPred, mkReprPrimEqPred,
+        mkEqPred, mkCoerciblePred, mkPrimEqPred, mkReprPrimEqPred,
         mkClassPred,
         noParenPred, isClassPred, isEqPred,
         isIPPred, isIPPred_maybe, isIPTyCon, isIPClass,
@@ -56,14 +56,14 @@ module Type (
         -- Deconstructing predicate types
         PredTree(..), classifyPredType,
         getClassPredTys, getClassPredTys_maybe,
-        getEqPredTys, getEqPredTys_maybe,
+        getEqPredTys, getEqPredTys_maybe, getEqPredRole,
 
         -- ** Common type constructors
         funTyCon,
 
         -- ** Predicates on types
         isTypeVar, isKindVar,
-        isTyVarTy, isFunTy, isDictTy, isPredTy, 
+        isTyVarTy, isFunTy, isDictTy, isPredTy, isVoidTy,
 
         -- Overloaded record fields predicates
         isHasClass, isUpdClass, isRecordsClass,
@@ -164,8 +164,13 @@ import NameEnv
 import Class
 import TyCon
 import TysPrim
-import {-# SOURCE #-} TysWiredIn ( eqTyCon, typeNatKind, typeSymbolKind )
-import PrelNames
+import {-# SOURCE #-} TysWiredIn ( eqTyCon, coercibleTyCon, typeNatKind, typeSymbolKind )
+import PrelNames ( eqTyConKey, coercibleTyConKey,
+                   ipClassNameKey, openTypeKindTyConKey,
+                   constraintKindTyConKey, liftedTypeKindTyConKey,
+                   recordHasClassNameKey, recordUpdClassNameKey,
+                   fldTyFamNameKey, updTyFamNameKey )
+import Unique
 import CoAxiom
 
 -- others
@@ -562,7 +567,8 @@ splitTyConApp_maybe _                 = Nothing
 
 newTyConInstRhs :: TyCon -> [Type] -> Type
 -- ^ Unwrap one 'layer' of newtype on a type constructor and its
--- arguments, using an eta-reduced version of the @newtype@ if possible
+-- arguments, using an eta-reduced version of the @newtype@ if possible.
+-- This requires tys to have at least @newTyConInstArity tycon@ elements.
 newTyConInstRhs tycon tys
     = ASSERT2( equalLength tvs tys1, ppr tycon $$ ppr tys $$ ppr tvs )
       mkAppTys (substTyWith tvs tys1 ty) tys2
@@ -579,7 +585,7 @@ newTyConInstRhs tycon tys
 Notes on type synonyms
 ~~~~~~~~~~~~~~~~~~~~~~
 The various "split" functions (splitFunTy, splitRhoTy, splitForAllTy) try
-to return type synonyms whereever possible. Thus
+to return type synonyms wherever possible. Thus
 
         type Foo a = a -> a
 
@@ -597,7 +603,7 @@ interfaces.  Notably this plays a role in tcTySigs in TcBinds.lhs.
 Note [Nullary unboxed tuple]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 We represent the nullary unboxed tuple as the unary (but void) type
-State# RealWorld.  The reason for this is that the ReprArity is never
+Void#.  The reason for this is that the ReprArity is never
 less than the Arity (as it would otherwise be for a function type like
 (# #) -> Int).
 
@@ -643,7 +649,7 @@ repType ty
 
       | isUnboxedTupleTyCon tc
       = if null tys
-         then UnaryRep realWorldStatePrimTy -- See Note [Nullary unboxed tuple]
+         then UnaryRep voidPrimTy -- See Note [Nullary unboxed tuple]
          else UbxTupleRep (concatMap (flattenRepType . go rec_nts) tys)
 
     go _ ty = UnaryRep ty
@@ -688,6 +694,12 @@ typeRepArity 0 _ = 0
 typeRepArity n ty = case repType ty of
   UnaryRep (FunTy ty1 ty2) -> length (flattenRepType (repType ty1)) + typeRepArity (n - 1) ty2
   _                        -> pprPanic "typeRepArity: arity greater than type can handle" (ppr (n, ty))
+
+isVoidTy :: Type -> Bool
+-- True if the type has zero width
+isVoidTy ty = case repType ty of
+                UnaryRep (TyConApp tc _) -> isVoidRep (tyConPrimRep tc)
+                _                        -> False
 \end{code}
 
 Note [AppTy rep]
@@ -893,6 +905,13 @@ mkEqPred ty1 ty2
   where
     k = typeKind ty1
 
+mkCoerciblePred :: Type -> Type -> PredType
+mkCoerciblePred ty1 ty2
+  = WARN( not (k `eqKind` typeKind ty2), ppr ty1 $$ ppr ty2 $$ ppr k $$ ppr (typeKind ty2) )
+    TyConApp coercibleTyCon [k, ty1, ty2]
+  where
+    k = typeKind ty1
+
 mkPrimEqPred :: Type -> Type -> Type
 mkPrimEqPred ty1  ty2
   = WARN( not (k `eqKind` typeKind ty2), ppr ty1 $$ ppr ty2 )
@@ -989,15 +1008,27 @@ getClassPredTys_maybe ty = case splitTyConApp_maybe ty of
 getEqPredTys :: PredType -> (Type, Type)
 getEqPredTys ty
   = case splitTyConApp_maybe ty of
-      Just (tc, (_ : ty1 : ty2 : tys)) -> ASSERT( tc `hasKey` eqTyConKey && null tys )
-                                          (ty1, ty2)
+      Just (tc, (_ : ty1 : ty2 : tys)) ->
+        ASSERT( null tys && (tc `hasKey` eqTyConKey || tc `hasKey` coercibleTyConKey) )
+        (ty1, ty2)
       _ -> pprPanic "getEqPredTys" (ppr ty)
 
-getEqPredTys_maybe :: PredType -> Maybe (Type, Type)
+getEqPredTys_maybe :: PredType -> Maybe (Role, Type, Type)
 getEqPredTys_maybe ty
   = case splitTyConApp_maybe ty of
-      Just (tc, [_, ty1, ty2]) | tc `hasKey` eqTyConKey -> Just (ty1, ty2)
+      Just (tc, [_, ty1, ty2])
+        | tc `hasKey` eqTyConKey -> Just (Nominal, ty1, ty2)
+        | tc `hasKey` coercibleTyConKey -> Just (Representational, ty1, ty2)
       _ -> Nothing
+
+getEqPredRole :: PredType -> Role
+getEqPredRole ty
+  = case splitTyConApp_maybe ty of
+      Just (tc, [_, _, _])
+        | tc `hasKey` eqTyConKey -> Nominal
+        | tc `hasKey` coercibleTyConKey -> Representational
+      _ -> pprPanic "getEqPredRole" (ppr ty)
+
 \end{code}
 
 %************************************************************************
@@ -1180,11 +1211,13 @@ seqTypes (ty:tys) = seqType ty `seq` seqTypes tys
 
 \begin{code}
 eqKind :: Kind -> Kind -> Bool
+-- Watch out for horrible hack: See Note [Comparison with OpenTypeKind]
 eqKind = eqType
 
 eqType :: Type -> Type -> Bool
 -- ^ Type equality on source types. Does not look through @newtypes@ or
 -- 'PredType's, but it does look through type synonyms.
+-- Watch out for horrible hack: See Note [Comparison with OpenTypeKind]
 eqType t1 t2 = isEqual $ cmpType t1 t2
 
 eqTypeX :: RnEnv2 -> Type -> Type -> Bool
@@ -1215,6 +1248,7 @@ Now here comes the real worker
 
 \begin{code}
 cmpType :: Type -> Type -> Ordering
+-- Watch out for horrible hack: See Note [Comparison with OpenTypeKind]
 cmpType t1 t2 = cmpTypeX rn_env t1 t2
   where
     rn_env = mkRnEnv2 (mkInScopeSet (tyVarsOfType t1 `unionVarSet` tyVarsOfType t2))
@@ -1608,7 +1642,7 @@ Kinds
 ~~~~~
 
 For the description of subkinding in GHC, see
-  http://hackage.haskell.org/trac/ghc/wiki/Commentary/Compiler/TypeType#Kinds
+  http://ghc.haskell.org/trac/ghc/wiki/Commentary/Compiler/TypeType#Kinds
 
 \begin{code}
 type MetaKindVar = TyVar  -- invariant: MetaKindVar will always be a

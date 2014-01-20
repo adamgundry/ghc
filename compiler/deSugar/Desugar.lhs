@@ -17,6 +17,7 @@ import MkIface
 import Id
 import Name
 import Type
+import FamInstEnv
 import InstEnv
 import Class
 import Avail
@@ -28,7 +29,6 @@ import DsExpr
 import DsBinds
 import DsForeign
 import Module
-import RdrName
 import NameSet
 import NameEnv
 import Rules
@@ -91,24 +91,22 @@ deSugar hsc_env
 
         -- Desugar the program
         ; let export_set = availsToNameSet exports
-        ; let target = hscTarget dflags
-        ; let hpcInfo = emptyHpcInfo other_hpc_info
-        ; (msgs, mb_res) <- do
+              target     = hscTarget dflags
+              hpcInfo    = emptyHpcInfo other_hpc_info
+              want_ticks = gopt Opt_Hpc dflags
+                        || target == HscInterpreted
+                        || (gopt Opt_SccProfilingOn dflags
+                            && case profAuto dflags of
+                                 NoProfAuto -> False
+                                 _          -> True)
 
-                     let want_ticks = gopt Opt_Hpc dflags
-                                   || target == HscInterpreted
-                                   || (gopt Opt_SccProfilingOn dflags
-                                       && case profAuto dflags of
-                                            NoProfAuto -> False
-                                            _          -> True)
-
-                     (binds_cvr,ds_hpc_info, modBreaks)
+        ; (binds_cvr, ds_hpc_info, modBreaks)
                          <- if want_ticks && not (isHsBoot hsc_src)
                               then addTicksToBinds dflags mod mod_loc export_set
                                           (typeEnvTyCons type_env) binds
                               else return (binds, hpcInfo, emptyModBreaks)
 
-                     initDs hsc_env mod rdr_env type_env $ do
+        ; (msgs, mb_res) <- initDs hsc_env mod rdr_env type_env fam_inst_env $
                        do { ds_ev_binds <- dsEvBinds ev_binds
                           ; core_prs <- dsTopLHsBinds binds_cvr
                           ; (spec_prs, spec_rules) <- dsImpSpecs imp_specs
@@ -121,14 +119,13 @@ deSugar hsc_env
                           ; return ( ds_ev_binds
                                    , foreign_prs `appOL` core_prs `appOL` spec_prs
                                    , spec_rules ++ ds_rules, ds_vects
-                                   , ds_fords `appendStubC` hpc_init
-                                   , ds_hpc_info, modBreaks) }
+                                   , ds_fords `appendStubC` hpc_init ) }
 
         ; case mb_res of {
            Nothing -> return (msgs, Nothing) ;
-           Just (ds_ev_binds, all_prs, all_rules, vects0, ds_fords, ds_hpc_info, modBreaks) -> do
+           Just (ds_ev_binds, all_prs, all_rules, vects0, ds_fords) ->
 
-        {       -- Add export flags to bindings
+     do {       -- Add export flags to bindings
           keep_alive <- readIORef keep_var
         ; let (rules_for_locals, rules_for_imps)
                    = partition isLocalRule all_rules
@@ -222,29 +219,29 @@ and Rec the rest.
 
 
 \begin{code}
-deSugarExpr :: HscEnv
-            -> Module -> GlobalRdrEnv -> TypeEnv
-            -> LHsExpr Id
-            -> IO (Messages, Maybe CoreExpr)
--- Prints its own errors; returns Nothing if error occurred
+deSugarExpr :: HscEnv -> LHsExpr Id -> IO (Messages, Maybe CoreExpr)
 
-deSugarExpr hsc_env this_mod rdr_env type_env tc_expr
-  = do { let dflags = hsc_dflags hsc_env
+deSugarExpr hsc_env tc_expr
+  = do { let dflags       = hsc_dflags hsc_env
+             icntxt       = hsc_IC hsc_env
+             rdr_env      = ic_rn_gbl_env icntxt
+             type_env     = mkTypeEnvWithImplicits (ic_tythings icntxt)
+             fam_insts    = snd (ic_instances icntxt)
+             fam_inst_env = extendFamInstEnvList emptyFamInstEnv fam_insts
+             -- This stuff is a half baked version of TcRnDriver.setInteractiveContext
+
        ; showPass dflags "Desugar"
 
          -- Do desugaring
-       ; (msgs, mb_core_expr) <- initDs hsc_env this_mod rdr_env type_env $
+       ; (msgs, mb_core_expr) <- initDs hsc_env (icInteractiveModule icntxt) rdr_env
+                                        type_env fam_inst_env $
                                  dsLExpr tc_expr
 
-       ; case mb_core_expr of {
-            Nothing   -> return (msgs, Nothing) ;
-            Just expr ->
+       ; case mb_core_expr of
+            Nothing   -> return ()
+            Just expr -> dumpIfSet_dyn dflags Opt_D_dump_ds "Desugared" (pprCoreExpr expr)
 
- 
-         -- Dump output
-    do { dumpIfSet_dyn dflags Opt_D_dump_ds "Desugared" (pprCoreExpr expr)
-
-       ; return (msgs, Just expr) } } }
+       ; return (msgs, mb_core_expr) }
 \end{code}
 
 %************************************************************************
@@ -370,6 +367,8 @@ dsRule (L loc (HsRule name act vars lhs _tv_lhs rhs _fv_rhs))
 
               inline_shadows_rule   -- Function can be inlined before rule fires
                 | wopt Opt_WarnInlineRuleShadowing dflags
+                , isLocalId fn_id || hasSomeUnfolding (idUnfolding fn_id)   
+                       -- If imported with no unfolding, no worries
                 = case (idInlineActivation fn_id, act) of
                     (NeverActive, _)    -> False
                     (AlwaysActive, _)   -> True

@@ -25,6 +25,9 @@ Thumbs.db
 *.a
 *.o.cmd
 *.depend*
+*.dyn_o
+*.dyn_hi
+
 log
 tags
 
@@ -68,7 +71,6 @@ _darcs/
 /libraries/unix/
 /libraries/utf8-string/
 /nofib/
-/testsuite/
 /utils/haddock/
 /utils/hsc2hs/
 

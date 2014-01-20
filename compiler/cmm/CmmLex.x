@@ -16,7 +16,7 @@
 -- The above -Wwarn supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and fix
 -- any warnings in the module. See
---     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#Warnings
+--     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#Warnings
 -- for details
 
 module CmmLex (
@@ -152,6 +152,7 @@ data CmmToken
   | CmmT_foreign
   | CmmT_never
   | CmmT_prim
+  | CmmT_reserve
   | CmmT_return
   | CmmT_returns
   | CmmT_import
@@ -234,7 +235,8 @@ reservedWordsFM = listToUFM $
         ( "foreign",            CmmT_foreign ),
 	( "never",		CmmT_never ),
 	( "prim",		CmmT_prim ),
-	( "return",		CmmT_return ),
+        ( "reserve",            CmmT_reserve ),
+        ( "return",             CmmT_return ),
 	( "returns",		CmmT_returns ),
 	( "import",		CmmT_import ),
 	( "switch",		CmmT_switch ),

@@ -30,7 +30,7 @@ import IdInfo
 import InstEnv
 import FamInstEnv
 import Type             ( tidyTopType )
-import Demand           ( appIsBottom, isTopSig, isBottomingSig )
+import Demand           ( appIsBottom, isNopSig, isBottomingSig )
 import BasicTypes
 import Name hiding (varName)
 import NameSet
@@ -217,7 +217,7 @@ Note [choosing external names]
 
 See also the section "Interface stability" in the
 RecompilationAvoidance commentary:
-  http://hackage.haskell.org/trac/ghc/wiki/Commentary/Compiler/RecompilationAvoidance
+  http://ghc.haskell.org/trac/ghc/wiki/Commentary/Compiler/RecompilationAvoidance
 
 First we figure out which Ids are "external" Ids.  An
 "external" Id is one that is visible from outside the compilation
@@ -1113,7 +1113,7 @@ tidyTopIdInfo dflags rhs_tidy_env name orig_rhs tidy_rhs idinfo show_unfold caf_
     mb_bot_str = exprBotStrictness_maybe orig_rhs
 
     sig = strictnessInfo idinfo
-    final_sig | not $ isTopSig sig 
+    final_sig | not $ isNopSig sig
                  = WARN( _bottom_hidden sig , ppr name ) sig 
                  -- try a cheap-and-cheerful bottom analyser
                  | Just (_, nsig) <- mb_bot_str = nsig

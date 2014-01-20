@@ -17,7 +17,7 @@ which deal with the intantiated versions are located elsewhere:
 -- The above warning supression flag is a temporary kludge.
 -- While working on this module you are encouraged to remove it and
 -- detab the module (please do the detabbing in a separate patch). See
---     http://hackage.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
+--     http://ghc.haskell.org/trac/ghc/wiki/Commentary/CodingStyle#TabsvsSpaces
 -- for details
 
 module HsUtils(
@@ -32,7 +32,8 @@ module HsUtils(
 
   nlHsTyApp, nlHsVar, nlHsLit, nlHsApp, nlHsApps, nlHsIntLit, nlHsVarApps, 
   nlHsDo, nlHsOpApp, nlHsLam, nlHsPar, nlHsIf, nlHsCase, nlList,
-  mkLHsTupleExpr, mkLHsVarTuple, missingTupArg, 
+  mkLHsTupleExpr, mkLHsVarTuple, missingTupArg,
+  toHsType, toHsKind,
 
   -- Bindings
   mkFunBind, mkVarBind, mkHsVarBind, mk_easy_FunBind, mkTopFunBind,
@@ -54,7 +55,8 @@ module HsUtils(
   emptyRecStmt, mkRecStmt, 
 
   -- Template Haskell
-  unqualSplice, mkHsSpliceTy, mkHsSplice, mkHsQuasiQuote, unqualQuasiQuote,
+  mkHsSpliceTy, mkHsSpliceE, mkHsSpliceTE, mkHsSplice,
+  mkHsQuasiQuote, unqualQuasiQuote,
 
   -- Flags
   noRebindableInfo, 
@@ -66,12 +68,14 @@ module HsUtils(
   collectLStmtsBinders, collectStmtsBinders,
   collectLStmtBinders, collectStmtBinders,
 
-  hsLTyClDeclBinders, hsTyClDeclBinders, hsTyClDeclsBinders, 
+  hsLTyClDeclBinders, hsTyClDeclsBinders, 
   hsForeignDeclsBinders, hsGroupBinders, hsDataFamInstBinders,
   
   -- Collecting implicit binders
   lStmtsImplicits, hsValBindsImplicits, lPatImplicits
   ) where
+
+#include "HsVersions.h"
 
 import HsDecls
 import HsBinds
@@ -84,6 +88,8 @@ import TcEvidence
 import RdrName
 import Var
 import TypeRep
+import TcType
+import Kind
 import DataCon
 import Name
 import NameSet
@@ -251,8 +257,14 @@ mkHsOpApp e1 op e2 = OpApp e1 (noLoc (HsVar op)) (error "mkOpApp:fixity") e2
 mkHsSplice :: LHsExpr RdrName -> HsSplice RdrName
 mkHsSplice e = HsSplice unqualSplice e
 
+mkHsSpliceE :: LHsExpr RdrName -> HsExpr RdrName
+mkHsSpliceE e = HsSpliceE False (mkHsSplice e)
+
+mkHsSpliceTE :: LHsExpr RdrName -> HsExpr RdrName
+mkHsSpliceTE e = HsSpliceE True (mkHsSplice e)
+
 mkHsSpliceTy :: LHsExpr RdrName -> HsType RdrName
-mkHsSpliceTy e = HsSpliceTy (mkHsSplice e) emptyFVs placeHolderKind
+mkHsSpliceTy e = HsSpliceTy (mkHsSplice e) placeHolderKind
 
 unqualSplice :: RdrName
 unqualSplice = mkRdrUnqual (mkVarOccFS (fsLit "splice"))
@@ -378,6 +390,51 @@ missingTupArg :: HsTupArg a
 missingTupArg = Missing placeHolderType
 \end{code}
 
+
+%************************************************************************
+%*									*
+        Converting a Type to an HsType RdrName
+%*									*
+%************************************************************************
+
+This is needed to implement GeneralizedNewtypeDeriving.
+
+\begin{code}
+toHsType :: Type -> LHsType RdrName
+toHsType ty
+  | [] <- tvs_only
+  , [] <- theta
+  = to_hs_type tau
+  | otherwise
+  = noLoc $
+    mkExplicitHsForAllTy (map mk_hs_tvb tvs_only)
+                         (noLoc $ map toHsType theta)
+                         (to_hs_type tau)
+
+  where
+    (tvs, theta, tau) = tcSplitSigmaTy ty
+    tvs_only = filter isTypeVar tvs
+
+    to_hs_type (TyVarTy tv) = nlHsTyVar (getRdrName tv)
+    to_hs_type (AppTy t1 t2) = nlHsAppTy (toHsType t1) (toHsType t2)
+    to_hs_type (TyConApp tc args) = nlHsTyConApp (getRdrName tc) (map toHsType args')
+       where 
+         args' = filterOut isKind args
+         -- Source-language types have _implicit_ kind arguments,
+         -- so we must remove them here (Trac #8563)
+    to_hs_type (FunTy arg res) = ASSERT( not (isConstraintKind (typeKind arg)) )
+                                 nlHsFunTy (toHsType arg) (toHsType res)
+    to_hs_type t@(ForAllTy {}) = pprPanic "toHsType" (ppr t)
+    to_hs_type (LitTy (NumTyLit n)) = noLoc $ HsTyLit (HsNumTy n)
+    to_hs_type (LitTy (StrTyLit s)) = noLoc $ HsTyLit (HsStrTy s)
+
+    mk_hs_tvb tv = noLoc $ KindedTyVar (getRdrName tv) (toHsKind (tyVarKind tv))
+
+toHsKind :: Kind -> LHsKind RdrName
+toHsKind = toHsType
+
+\end{code}
+
 \begin{code}
 --------- HsWrappers: type args, dict args, casts ---------
 mkLHsWrap :: HsWrapper -> LHsExpr id -> LHsExpr id
@@ -388,12 +445,10 @@ mkHsWrap co_fn e | isIdHsWrapper co_fn = e
 		 | otherwise	       = HsWrap co_fn e
 
 mkHsWrapCo :: TcCoercion -> HsExpr id -> HsExpr id
-mkHsWrapCo co e | isTcReflCo co = e
-                | otherwise     = mkHsWrap (WpCast co) e
+mkHsWrapCo co e = mkHsWrap (coToHsWrapper co) e
 
 mkLHsWrapCo :: TcCoercion -> LHsExpr id -> LHsExpr id
-mkLHsWrapCo co (L loc e) | isTcReflCo co = L loc e
-                         | otherwise     = L loc (mkHsWrap (WpCast co) e)
+mkLHsWrapCo co (L loc e) = L loc (mkHsWrapCo co e)
 
 mkHsCmdCast :: TcCoercion -> HsCmd id -> HsCmd id
 mkHsCmdCast co cmd | isTcReflCo co = cmd
@@ -401,7 +456,7 @@ mkHsCmdCast co cmd | isTcReflCo co = cmd
 
 coToHsWrapper :: TcCoercion -> HsWrapper
 coToHsWrapper co | isTcReflCo co = idHsWrapper
-                 | otherwise     = WpCast co
+                 | otherwise     = mkWpCast (mkTcSubCo co)
 
 mkHsWrapPat :: HsWrapper -> Pat id -> Type -> Pat id
 mkHsWrapPat co_fn p ty | isIdHsWrapper co_fn = p
@@ -409,7 +464,7 @@ mkHsWrapPat co_fn p ty | isIdHsWrapper co_fn = p
 
 mkHsWrapPatCo :: TcCoercion -> Pat id -> Type -> Pat id
 mkHsWrapPatCo co pat ty | isTcReflCo co = pat
-                        | otherwise     = CoPat (WpCast co) pat ty
+                        | otherwise     = CoPat (mkWpCast co) pat ty
 
 mkHsDictLet :: TcEvBinds -> LHsExpr Id -> LHsExpr Id
 mkHsDictLet ev_binds expr = mkLHsWrap (mkWpLet ev_binds) expr
@@ -584,6 +639,7 @@ collect_lpat (L _ pat) bndrs
  				  
     go (SigPatIn pat _)	 	  = collect_lpat pat bndrs
     go (SigPatOut pat _)	  = collect_lpat pat bndrs
+    go (SplicePat _)              = bndrs
     go (QuasiQuotePat _)          = bndrs
     go (CoPat _ pat _)            = go pat
 \end{code}
@@ -639,31 +695,33 @@ hsTyClDeclsBinders tycl_decls inst_decls
 -------------------
 hsLTyClDeclBinders :: Eq name => Located (TyClDecl name) ->
                           ([Located name], [(Located RdrName, name, Located name)])
--- ^ Returns all the /binding/ names of the decl, along with their SrcLocs.
+-- ^ Returns all the /binding/ names of the decl.
 -- The first one is guaranteed to be the name of the decl. The first component
 -- represents all binding names except fields; the second represents fields as
 -- (label, selector name, tycon name) triples. For record fields
 -- mentioned in multiple constructors, the SrcLoc will be from the first
 -- occurence.  We use the equality to filter out duplicate field names.
 -- Note that the selector name will be an error thunk until after the renamer.
-hsLTyClDeclBinders (L _ d) = hsTyClDeclBinders d
+--
+-- Each returned (Located name) is wrapped in a @SrcSpan@ of the whole
+-- /declaration/, not just the name itself (which is how it appears in
+-- the syntax tree).  This SrcSpan (for the entire declaration) is used
+-- as the SrcSpan for the Name that is finally produced, and hence for
+-- error messages.  (See Trac #8607.)
 
--------------------
-hsTyClDeclBinders :: Eq name => TyClDecl name ->
-                         ([Located name], [(Located RdrName, name, Located name)])
-hsTyClDeclBinders (FamDecl { tcdFam = FamilyDecl { fdLName = name} }) = ([name], [])
-hsTyClDeclBinders (ForeignType {tcdLName = name}) = ([name], [])
-hsTyClDeclBinders (SynDecl     {tcdLName = name}) = ([name], [])
-
-hsTyClDeclBinders (ClassDecl { tcdLName = cls_name, tcdSigs = sigs
-                             , tcdATs = ats })
-  = (cls_name : 
-      map (fdLName . unLoc) ats ++ 
-      [n | L _ (TypeSig ns _) <- sigs, n <- ns]
+hsLTyClDeclBinders (L loc (FamDecl { tcdFam = FamilyDecl { fdLName = L _ name } }))
+  = ([L loc name], [])
+hsLTyClDeclBinders (L loc (ForeignType { tcdLName = L _ name })) = ([L loc name], [])
+hsLTyClDeclBinders (L loc (SynDecl     { tcdLName = L _ name })) = ([L loc name], [])
+hsLTyClDeclBinders (L loc (ClassDecl   { tcdLName = L _ cls_name
+                                       , tcdSigs = sigs, tcdATs = ats }))
+  = (L loc cls_name :
+       [ L fam_loc fam_name | L fam_loc (FamilyDecl { fdLName = L _ fam_name }) <- ats ] ++
+       [ L mem_loc mem_name | L mem_loc (TypeSig ns _) <- sigs, L _ mem_name <- ns ]
     , [])
-
-hsTyClDeclBinders (DataDecl { tcdLName = name, tcdDataDefn = defn }) 
-  = (\ (xs, ys) -> (name : xs, ys)) $ withTyCon name $ hsDataDefnBinders defn
+hsLTyClDeclBinders (L loc (DataDecl    { tcdLName = L _ name, tcdDataDefn = defn }))
+  = (\ (xs, ys) -> (L loc name : xs, ys)) $ withTyCon (L loc name) $ hsDataDefnBinders defn
+-- AMG TODO check the above: is loc right location for name here?
 
 -------------------
 hsInstDeclBinders :: Eq name => InstDecl name ->
@@ -674,6 +732,7 @@ hsInstDeclBinders (DataFamInstD { dfid_inst = fi }) = hsDataFamInstBinders fi
 hsInstDeclBinders (TyFamInstD {}) = mempty
 
 -------------------
+-- the SrcLoc returned are for the whole declarations, not just the names
 hsDataFamInstBinders :: Eq name => DataFamInstDecl name ->
                             ([Located name], [(Located RdrName, name, Located name)])
 hsDataFamInstBinders (DataFamInstDecl { dfid_tycon = tycon_name, dfid_defn = defn })
@@ -681,6 +740,7 @@ hsDataFamInstBinders (DataFamInstDecl { dfid_tycon = tycon_name, dfid_defn = def
   -- There can't be repeated symbols because only data instances have binders
 
 -------------------
+-- the SrcLoc returned are for the whole declarations, not just the names
 hsDataDefnBinders :: Eq name => HsDataDefn name ->
                          ([Located name], [(Located RdrName, name)])
 hsDataDefnBinders (HsDataDefn { dd_cons = cons }) = hsConDeclsBinders cons
@@ -689,20 +749,25 @@ hsDataDefnBinders (HsDataDefn { dd_cons = cons }) = hsConDeclsBinders cons
 -------------------
 hsConDeclsBinders :: (Eq name) => [LConDecl name] ->
                          ([Located name], [(Located RdrName, name)])
-  -- See hsTyClDeclBinders for what this does
+  -- See hsLTyClDeclBinders for what this does
   -- The function is boringly complicated because of the records
   -- And since we only have equality, we have to be a little careful
 hsConDeclsBinders cons
   = foldl do_one ([], []) cons
   where
-    do_one (acc, flds_seen) (L _ (ConDecl { con_name = lname, con_details = RecCon flds }))
-	= (lname : acc, map cd_fld_lfld new_flds ++ flds_seen)
-	where
-	  new_flds = filterOut (\ x -> unLoc (cd_fld_lbl x) `elem` map (unLoc . fst) flds_seen) flds
+    -- AMG TODO check
+    do_one (acc, flds_seen) (L loc (ConDecl { con_name = L _ name
+                                            , con_details = RecCon flds }))
+        = (L loc name : acc, map cd_fld_lfld new_flds ++ flds_seen)
+        where
+          -- AMG TODO check this comment
+          -- don't re-mangle the location of field names, because we don't
+          -- have a record of the full location of the field declaration anyway
+          new_flds = filterOut (\ x -> unLoc (cd_fld_lbl x) `elem` map (unLoc . fst) flds_seen) flds
           cd_fld_lfld x = (cd_fld_lbl x, cd_fld_sel x)
 
-    do_one (acc, flds_seen) (L _ (ConDecl { con_name = lname }))
-	= (lname:acc, flds_seen)
+    do_one (acc, flds_seen) (L loc (ConDecl { con_name = L _ name }))
+        = (L loc name : acc, flds_seen)
 
 withTyCon :: name' -> (a, [(r, name)]) -> (a, [(r, name, name')])
 withTyCon tycon_name (xs, ys) = (xs, map (\ (r, n) -> (r, n, tycon_name)) ys)
