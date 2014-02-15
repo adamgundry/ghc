@@ -970,7 +970,6 @@ emptyModDetails
 type ImportedMods = ModuleEnv [ImportedModsVal]
 type ImportedModsVal = (ModuleName, Bool, SrcSpan, IsSafeImport)
 
-
 -- | A ModGuts is carried through the compiler, accumulating stuff as it goes
 -- There is only one ModGuts at any time, the one for the module
 -- being compiled right now.  Once it is compiled, a 'ModIface' and
@@ -995,9 +994,11 @@ data ModGuts
         mg_tcs       :: ![TyCon],        -- ^ TyCons declared in this module
                                          -- (includes TyCons for classes)
         mg_insts     :: ![ClsInst],      -- ^ Class instances declared in this module
-        mg_fam_insts :: ![FamInst],      -- ^ Family instances declared in this module
-        mg_axioms    :: ![CoAxiom Branched], -- ^ Axioms without family instances
-                                             -- See Note [Instance scoping for OverloadedRecordFields] in TcFldInsts
+        mg_fam_insts :: ![FamInst],
+                                         -- ^ Family instances declared in this module
+        mg_axioms    :: ![CoAxiom Branched],
+                                         -- ^ Axioms without family instances
+                                         -- See Note [Instance scoping for OverloadedRecordFields] in TcFldInsts
         mg_rules     :: ![CoreRule],     -- ^ Before the core pipeline starts, contains
                                          -- See Note [Overall plumbing for rules] in Rules.lhs
         mg_binds     :: !CoreProgram,    -- ^ Bindings for this module
@@ -1351,28 +1352,6 @@ setInteractivePrintName ic n = ic{ic_int_print = n}
 
 -- | Add TyThings to the GlobalRdrEnv, earlier ones in the list shadowing
 -- later ones, and shadowing existing entries in the GlobalRdrEnv.
-{-
--- AMG TODO need to check new shadowing story with ORF
-<<<<<<< HEAD
-icPlusGblRdrEnv :: [TyThing] -> GlobalRdrEnv -> GlobalRdrEnv
-icPlusGblRdrEnv tythings env = plusOccEnv_C combine (mkOccEnv list) env
-  where
-    new_gres = gresFromAvails LocalDef (map tyThingAvailInfo tythings)
-    list = [ (greOccName gre, [gre]) | gre <- new_gres ]
-
-    -- Don't shadow old record fields when using -XOverloadedRecordFields
-    combine :: [GlobalRdrElt] -> [GlobalRdrElt] -> [GlobalRdrElt]
-    combine gres1@(gre1:_) gres2@(gre2:_)
-              | isRecFldGRE gre2 && isOverloadedRecFldGRE gre1
-              = gres1 ++ gres2
-    combine gres1 _ = gres1
-||||||| merged common ancestors
-icPlusGblRdrEnv :: [TyThing] -> GlobalRdrEnv -> GlobalRdrEnv
-icPlusGblRdrEnv tythings env = extendOccEnvList env list
-  where new_gres = gresFromAvails LocalDef (map tyThingAvailInfo tythings)
-        list = [ (nameOccName (gre_name gre), [gre]) | gre <- new_gres ]
-=======
--}
 icExtendGblRdrEnv :: GlobalRdrEnv -> [TyThing] -> GlobalRdrEnv
 icExtendGblRdrEnv env tythings
   = foldr add env tythings  -- Foldr makes things in the front of
@@ -1381,7 +1360,6 @@ icExtendGblRdrEnv env tythings
     add thing env = extendGlobalRdrEnv True {- Shadowing please -} env
                                        [tyThingAvailInfo thing]
        -- One at a time, to ensure each shadows the previous ones
--- >>>>>>> master
 
 substInteractiveContext :: InteractiveContext -> TvSubst -> InteractiveContext
 substInteractiveContext ictxt@InteractiveContext{ ic_tythings = tts } subst
