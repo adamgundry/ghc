@@ -8,7 +8,7 @@ OverloadedRecFldsFail06_A.hs:9:42: Warning:
 [2 of 2] Compiling Main             ( overloadedrecfldsfail06.hs, overloadedrecfldsfail06.o )
 
 overloadedrecfldsfail06.hs:4:1: Warning:
-    The import of ‛V(x), MkV, Unused(unused), Unused, U(y)’
+    The import of ‛Unused, Unused(unused), MkV, V(x), U(y)’
     from module ‛OverloadedRecFldsFail06_A’ is redundant
 
 <no location info>: 
