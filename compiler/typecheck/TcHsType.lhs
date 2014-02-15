@@ -381,10 +381,9 @@ tc_hs_type hs_ty@(HsAppTy ty1 (L loc (HsRecTy flds))) exp_kind
     checkRecordField :: Type -> ConDeclField Name -> TcM Type
     checkRecordField r (ConDeclField lbl _ ty _)
       = do { ty'      <- tc_lhs_type ty ekLifted
-           ; ty''     <- zonkTcType ty' -- Make sure it really has kind * (AMG TODO: is this still needed?)
            ; hasClass <- tcLookupClass recordHasClassName
            ; let n = mkStrLitTy (occNameFS (rdrNameOcc (unLoc lbl)))
-           ; return $ mkClassPred hasClass [r, n, ty''] }
+           ; return $ mkClassPred hasClass [r, n, ty'] }
 
 tc_hs_type hs_ty@(HsAppTy ty1 ty2) exp_kind
 --  | L _ (HsTyVar fun) <- fun_ty
