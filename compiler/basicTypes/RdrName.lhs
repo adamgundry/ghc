@@ -737,7 +737,6 @@ extendGlobalRdrEnv do_shadowing env avails
          -- don't shadow each other; that would conceal genuine errors
          -- E.g. in GHCi   data T = A | A
 
-    -- AMG TODO: review and document
     add_avail env avail = foldl (add_fld_name avail)
                                (foldl (add_name avail) env (availNonFldNames avail))
                                (availFlds avail)

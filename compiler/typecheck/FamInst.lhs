@@ -235,6 +235,8 @@ tcLookupFamInst tycon tys
        }
 
 
+-- See Note [Instance scoping for OverloadedRecordFields] in TcFldInsts
+-- and the section on "Looking up record field instances" in RnEnv
 tcLookupRecordsFamInst :: TyCon -> [Type] -> TcM (Maybe FamInstMatch)
 tcLookupRecordsFamInst fam tys
   | Just (lbl, tc, args) <- tcSplitRecordsArgs tys

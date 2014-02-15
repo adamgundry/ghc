@@ -2143,7 +2143,8 @@ constraint solving.
 
 
 \begin{code}
--- AMG TODO: comment?
+-- See Note [Instance scoping for OverloadedRecordFields] in TcFldInsts
+-- and the section on "Looking up record field instances" in RnEnv
 matchRecordsClassInst :: Class -> [Type] -> CtLoc -> TcS LookupInstResult
 matchRecordsClassInst clas tys loc
   | Just (lbl, tc, args) <- tcSplitRecordsArgs tys

@@ -721,7 +721,6 @@ hsLTyClDeclBinders (L loc (ClassDecl   { tcdLName = L _ cls_name
     , [])
 hsLTyClDeclBinders (L loc (DataDecl    { tcdLName = L _ name, tcdDataDefn = defn }))
   = (\ (xs, ys) -> (L loc name : xs, ys)) $ withTyCon (L loc name) $ hsDataDefnBinders defn
--- AMG TODO check the above: is loc right location for name here?
 
 -------------------
 hsInstDeclBinders :: Eq name => InstDecl name ->
@@ -755,12 +754,10 @@ hsConDeclsBinders :: (Eq name) => [LConDecl name] ->
 hsConDeclsBinders cons
   = foldl do_one ([], []) cons
   where
-    -- AMG TODO check
     do_one (acc, flds_seen) (L loc (ConDecl { con_name = L _ name
                                             , con_details = RecCon flds }))
         = (L loc name : acc, map cd_fld_lfld new_flds ++ flds_seen)
         where
-          -- AMG TODO check this comment
           -- don't re-mangle the location of field names, because we don't
           -- have a record of the full location of the field declaration anyway
           new_flds = filterOut (\ x -> unLoc (cd_fld_lbl x) `elem` map (unLoc . fst) flds_seen) flds
