@@ -23,3 +23,4 @@ test('overloadedrecfldsrun12',
      extra_clean(['OverloadedRecFldsRun12_A.hi', 'OverloadedRecFldsRun12_A.o',
                   'OverloadedRecFldsRun12_B.hi', 'OverloadedRecFldsRun12_B.o']),
      multimod_compile_and_run, ['overloadedrecfldsrun12', ''])
+test('overloadedrecfldsrun13', normal, compile_and_run, [''])
