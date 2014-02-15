@@ -702,22 +702,10 @@ lookupOccRn_overloaded rdr_name
        ; case mb_name of {
            Just name -> return (Just name) ;
            Nothing   -> do
-       { -- We allow qualified names on the command line to refer to
-         --  *any* name exported by any module in scope, just as if there
-         -- was an "import qualified M" declaration for every module.
-         -- But we DONT allow it under Safe Haskell as we need to check
-         -- imports. We can and should instead check the qualified import
-         -- but at the moment this requires some refactoring so leave as a TODO
-       ; dflags <- getDynFlags
-       ; let allow_qual = gopt Opt_ImplicitImportQualified dflags &&
-                          not (safeDirectImpsReq dflags)
-       ; is_ghci <- getIsGHCi
-               -- This test is not expensive,
-               -- and only happens for failed lookups
-       ; if isQual rdr_name && allow_qual && is_ghci
-         then lookupQualifiedName_overloaded rdr_name
-         else do { traceRn (text "lookupOccRn_overloaded" <+> ppr rdr_name)
-                 ; return Nothing } } } } } }
+       { dflags  <- getDynFlags
+       ; is_ghci <- getIsGHCi   -- This test is not expensive,
+                                -- and only happens for failed lookups
+       ; lookupQualifiedNameGHCi_overloaded dflags is_ghci rdr_name } } } } }
 
 lookupGlobalOccRn_overloaded :: RdrName -> RnM (Maybe (Either Name (FieldLabelString, [(Name, Name)])))
 lookupGlobalOccRn_overloaded rdr_name
@@ -1042,30 +1030,41 @@ lookupQualifiedNameGHCi dflags is_ghci rdr_name
   where
     doc = ptext (sLit "Need to find") <+> ppr rdr_name
 
-lookupQualifiedName_overloaded :: RdrName -> RnM (Maybe (Either Name (FieldLabelString, [(Name, Name)])))
-lookupQualifiedName_overloaded rdr_name
+-- Overloaded counterpart to lookupQualifiedNameGHCi: a qualified name
+-- should never be overloaded, so when we check for overloaded field
+-- matches, generate name clash errors if we find more than one.
+lookupQualifiedNameGHCi_overloaded :: DynFlags -> Bool -> RdrName
+                                   -> RnM (Maybe (Either Name (FieldLabelString, [(Name, Name)])))
+lookupQualifiedNameGHCi_overloaded dflags is_ghci rdr_name
   | Just (mod,occ) <- isQual_maybe rdr_name
-   -- Note: we want to behave as we would for a source file import here,
-   -- and respect hiddenness of modules/packages, hence loadSrcInterface.
-   = do { iface <- loadSrcInterface doc mod False Nothing
+  , is_ghci
+  , gopt Opt_ImplicitImportQualified dflags   -- Enables this GHCi behaviour
+  , not (safeDirectImpsReq dflags)            -- See Note [Safe Haskell and GHCi]
+  = -- We want to behave as we would for a source file import here,
+    -- and respect hiddenness of modules/packages, hence loadSrcInterface.
+    do { res <- loadSrcInterface_maybe doc mod False Nothing
+       ; case res of
+           Succeeded iface
+             | (n:ns) <- [ name
+                         | avail <- mi_exports iface
+                         , name  <- availNames avail
+                         , nameOccName name == occ ]
+             -> ASSERT(null ns) return (Just (Left n))
 
-        ; case  [ name
-                | avail <- mi_exports iface,
-                  name  <- availNames avail,
-                  nameOccName name == occ ] of
-              (n:ns) -> ASSERT(null ns) return (Just (Left n))
-              _ -> case [ (availName avail, lbl, sel)
-                        | avail <- mi_exports iface,
-                          (lbl, sel) <- availOverloadedFlds avail,
-                          lbl == occNameFS occ ] of
-                       [] -> do { traceRn (text "lookupQualified overloaded" <+> ppr rdr_name)
-                                ; return Nothing }
-                       xs@((p, lbl, sel):ys)
-                          -> do { when (not (null ys)) $
-                                      addNameClashErrRn rdr_name (map (toFakeGRE mod) xs)
-                                ; return (Just (Right (lbl, [(p, sel)]))) } }
+             | xs@((p, lbl, sel):ys) <- [ (availName avail, lbl, sel)
+                                        | avail <- mi_exports iface
+                                        , (lbl, sel) <- availOverloadedFlds avail
+                                        , lbl == occNameFS occ ]
+             -> do { when (not (null ys)) $
+                         addNameClashErrRn rdr_name (map (toFakeGRE mod) xs)
+                   ; return (Just (Right (lbl, [(p, sel)]))) }
+
+           _ -> -- Either we couldn't load the interface, or
+                -- we could but we didn't find the name in it
+                do { traceRn (text "lookupQualifiedNameGHCI_overloaded" <+> ppr rdr_name)
+                   ; return Nothing } }
   | otherwise
-  = pprPanic "RnEnv.lookupQualifiedName_overloaded" (ppr rdr_name)
+  = return Nothing
   where
     doc = ptext (sLit "Need to find") <+> ppr rdr_name
 
