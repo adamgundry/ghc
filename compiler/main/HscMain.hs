@@ -1448,12 +1448,14 @@ hscDeclsWithLocation hsc_env0 str source linenumber =
 
         ext_ids = [ id | id <- bindersOfBinds core_binds
                        , isExternalName (idName id)
-                       , not (isDFunId id || isImplicitId id) ]
+                       , not (isInstDFunId id || isImplicitId id) ]
             -- We only need to keep around the external bindings
             -- (as decided by TidyPgm), since those are the only ones
             -- that might be referenced elsewhere.
-            -- The DFunIds are in 'insts' (see Note [ic_tythings] in HscTypes
+            -- Most DFunIds are in 'insts' (see Note [ic_tythings] in HscTypes
             -- Implicit Ids are implicit in tcs
+
+        isInstDFunId id = isDFunId id && id `elem` map is_dfun insts
 
         tythings =  map AnId ext_ids ++ map ATyCon tcs
                  ++ map ACoAxiom axioms

@@ -1187,12 +1187,15 @@ The ic_tythings field contains
     *don't* come from 'implicitTyThings', notably:
        - record selectors
        - class ops
+       - DFunIds for OverloadedRecordFields classes
     The implicitTyThings are readily obtained from the TyThings
     but record selectors etc are not
 
 It does *not* contain
-  * DFunIds (they can be gotten from ic_instances)
-  * CoAxioms (ditto)
+  * CoAxioms (they can be gotten from ic_instances)
+  * DFunIds (ditto), except for OverloadedRecordFields classes
+    (see Note [Instance scoping for OverloadedRecordFields] in TcFldInsts)
+
 
 See also Note [Interactively-bound Ids in GHCi]
 
