@@ -17,6 +17,7 @@ module TcEnv(
         tcExtendGlobalValEnv,
         tcLookupLocatedGlobal, tcLookupGlobal, 
         tcLookupTyCon, tcLookupClass, tcLookupDataCon,
+        tcLookupConLike,
         tcLookupLocatedGlobalId, tcLookupLocatedTyCon,
         tcLookupLocatedClass, tcLookupInstance, tcLookupAxiom,
 
@@ -72,6 +73,7 @@ import VarSet
 import RdrName
 import InstEnv
 import DataCon
+import ConLike
 import TyCon
 import CoAxiom
 import TypeRep
@@ -138,8 +140,15 @@ tcLookupDataCon :: Name -> TcM DataCon
 tcLookupDataCon name = do
     thing <- tcLookupGlobal name
     case thing of
-        ADataCon con -> return con
-        _            -> wrongThingErr "data constructor" (AGlobal thing) name
+        AConLike (RealDataCon con) -> return con
+        _                          -> wrongThingErr "data constructor" (AGlobal thing) name
+
+tcLookupConLike :: Name -> TcM ConLike
+tcLookupConLike name = do
+    thing <- tcLookupGlobal name
+    case thing of
+        AConLike cl -> return cl
+        _           -> wrongThingErr "constructor-like thing" (AGlobal thing) name
 
 tcLookupClass :: Name -> TcM Class
 tcLookupClass name = do
@@ -235,7 +244,8 @@ tcExtendGlobalEnv :: [TyThing] -> TcM r -> TcM r
   -- module being compiled, extend the global environment
 tcExtendGlobalEnv things thing_inside
   = do { env <- getGblEnv
-       ; let env' = env { tcg_tcs = [tc | ATyCon tc <- things] ++ tcg_tcs env }
+       ; let env' = env { tcg_tcs = [tc | ATyCon tc <- things] ++ tcg_tcs env,
+                          tcg_patsyns = [ps | AConLike (PatSynCon ps) <- things] ++ tcg_patsyns env }
        ; setGblEnv env' $
             tcExtendGlobalEnvImplicit things thing_inside
        }
@@ -691,6 +701,10 @@ data InstBindings a
       { ib_binds :: (LHsBinds a)  -- Bindings for the instance methods
       , ib_pragmas :: [LSig a]    -- User pragmas recorded for generating 
                                   -- specialised instances
+      , ib_extensions :: [ExtensionFlag] -- any extra extensions that should
+                                         -- be enabled when type-checking this
+                                         -- instance; needed for
+                                         -- GeneralizedNewtypeDeriving
                       
       , ib_standalone_deriving :: Bool
            -- True <=> This code came from a standalone deriving clause

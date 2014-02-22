@@ -10,10 +10,11 @@ test('haddock.base',
           ,(platform('i386-unknown-mingw32'), 163, 10)
             # 2013-02-10:                     133 (x86/Windows)
             # 2013-11-13:                     163 (x86/Windows, 64bit machine)
-          ,(wordsize(32), 139, 1)])
+          ,(wordsize(32), 168, 1)])
             # 2012-08-14: 144 (x86/OSX)
             # 2012-10-30: 113 (x86/Windows)
             # 2013-02-10: 139 (x86/OSX)
+            # 2014-01-22: 168 (x86/Linux - new haddock)
      ,stats_num_field('max_bytes_used',
           [(wordsize(64), 115113864, 10)
             # 2012-08-14: 87374568 (amd64/Linux)
@@ -25,8 +26,9 @@ test('haddock.base',
           ,(platform('i386-unknown-mingw32'), 58557136, 10)
             # 2013-02-10:                     47988488 (x86/Windows)
             # 2013-11-13:                     58557136 (x86/Windows, 64bit machine)
-          ,(wordsize(32), 52237984, 1)])
+          ,(wordsize(32), 62189068, 1)])
             # 2013-02-10: 52237984 (x86/OSX)
+            # 2014-01-22: 62189068 (x86/Linux)
      ,stats_num_field('bytes allocated',
           [(wordsize(64), 7128342344,  5)
             # 2012-08-14: 5920822352 (amd64/Linux)
@@ -41,10 +43,11 @@ test('haddock.base',
           ,(platform('i386-unknown-mingw32'), 3097751052, 1)
             # 2013-02-10:                     3358693084 (x86/Windows)
             # 2013-11-13:                     3097751052 (x86/Windows, 64bit machine)
-          ,(wordsize(32), 3146596848, 1)])
+          ,(wordsize(32), 3554624600, 1)])
             # 2012-08-14: 3046487920 (x86/OSX)
             # 2012-10-30: 2955470952 (x86/Windows)
             # 2013-02-10: 3146596848 (x86/OSX)
+            # 2014-02-22: 3554624600 (x86/Linux - new haddock)
       ],
      stats,
      ['../../../../libraries/base/dist-install/doc/html/base/base.haddock.t'])
@@ -60,14 +63,15 @@ test('haddock.Cabal',
             # 2013-06-07: 246 (amd64/Linux) (reason unknown)
             # 2013-11-21: 269
             # 2013-11-22: 278 (amd64/Linux) (TH refactoring; weird)
-          ,(platform('i386-unknown-mingw32'), 129, 1)
+          ,(platform('i386-unknown-mingw32'), 136, 1)
             # 2012-10-30:                      83 (x86/Windows)
             # 2013-02-10:                     116 (x86/Windows)
-            # 2013-11-13:                     129(x86/Windows, 64bit machine)
-          ,(wordsize(32), 89, 1)])
+            # 2013-11-13:                     129 (x86/Windows, 64bit machine)
+            # 2014-01-28:                     136
+          ,(wordsize(32), 139, 1)])
            # 2012-08-14: 116 (x86/OSX)
            # 2013-02-10:  89 (x86/Windows)
-
+           # 2014-01-22: 139 (x86/Linux - new haddock, but out of date before)
      ,stats_num_field('max_bytes_used',
           [(wordsize(64), 95356616, 15)
             # 2012-08-14: 74119424 (amd64/Linux)
@@ -78,9 +82,10 @@ test('haddock.Cabal',
           ,(platform('i386-unknown-mingw32'), 49391436, 15)
             # 2012-10-30: 44224896 (x86/Windows)
             # 2013-11-13: 49391436 (x86/Windows, 64bit machine)
-          ,(wordsize(32), 46563344, 1)])
+          ,(wordsize(32), 52718512, 1)])
             # 2012-08-14: 47461532 (x86/OSX)
             # 2013-02-10: 46563344 (x86/OSX)
+            # 2014-01-22: 52718512 (x86/Linux)
      ,stats_num_field('bytes allocated',
           [(wordsize(64), 3979151552, 5)
             # 2012-08-14: 3255435248 (amd64/Linux)
@@ -93,11 +98,13 @@ test('haddock.Cabal',
             # 2013-11-21: 3908586784 (amd64/Linux) Cabal updated
             # 2013-12-12: 3828567272 (amd64/Linux)
             # 2014-01-12: 3979151552 (amd64/Linux) new parser
-          ,(platform('i386-unknown-mingw32'), 1906532680, 1)
+          ,(platform('i386-unknown-mingw32'), 1966911336, 1)
             # 2012-10-30:                     1733638168 (x86/Windows)
             # 2013-02-10:                     1906532680 (x86/Windows)
-          ,(wordsize(32), 1733638168, 1)])
+            # 2014-01-28:                     1966911336 (x86/Windows)
+          ,(wordsize(32), 1986290624, 1)])
             # 2012-08-14: 1648610180 (x86/OSX)
+            # 2014-01-22: 1986290624 (x86/Linux)
       ],
      stats,
      ['../../../../libraries/Cabal/Cabal/dist-install/doc/html/Cabal/Cabal.haddock.t'])
@@ -117,9 +124,10 @@ test('haddock.compiler',
             # 2012-10-30:                     606 (x86/Windows)
             # 2013-02-10:                     653 (x86/Windows)
             # 2013-11-13:                     735 (x86/Windows, 64bit machine)
-          ,(wordsize(32), 663, 1)])
+          ,(wordsize(32), 727, 1)])
             # 2012-08-14: 631 (x86/OSX)
             # 2013-02-10: 663 (x86/OSX)
+            # 2014-01-22: 727 (x86/Linux - new haddock, but out of date before)
      ,stats_num_field('max_bytes_used',
           [(wordsize(64), 541926264, 10)
             # 2012-08-14: 428775544 (amd64/Linux)
@@ -129,13 +137,15 @@ test('haddock.compiler',
             # 2013-06-08: 477593712 (amd64/Linux) (reason unknown)
             # 2013-11-21: 502920176 (amd64/Linux)
             # 2013-11-22: 541926264 (amd64/Linux) (TH refactoring; weird)
-          ,(platform('i386-unknown-mingw32'), 269147084, 1)
+          ,(platform('i386-unknown-mingw32'), 283814088, 1)
             # 2012-10-30:                     220847924 (x86/Windows)
             # 2013-02-10:                     238529512 (x86/Windows)
-            # 2013-11-13:                     269147084  (x86/Windows, 64bit machine)
-          ,(wordsize(32), 241785276, 1)])
+            # 2013-11-13:                     269147084 (x86/Windows, 64bit machine)
+            # 2014-01-28:                     283814088 (x86/Windows)
+          ,(wordsize(32), 278124612, 1)])
             # 2012-08-14: 231064920 (x86/OSX)
             # 2013-02-10: 241785276 (x86/Windows)
+            # 2014-01-22: 278124612 (x86/Linux - new haddock)
      ,stats_num_field('bytes allocated',
           [(wordsize(64), 28708374824, 10)
             # 2012-08-14: 26070600504 (amd64/Linux)
@@ -147,8 +157,9 @@ test('haddock.compiler',
             # 2012-10-30:                     13773051312 (x86/Windows)
             # 2013-02-10:                     14925262356 (x86/Windows)
             # 2013-11-13:                     14328363592 (x86/Windows, 64bit machine)
-          ,(wordsize(32), 13773051312, 1)])
+          ,(wordsize(32), 14581475024, 1)])
             # 2012-08-14: 13471797488 (x86/OSX)
+            # 2014-01-22: 14581475024 (x86/Linux - new haddock)
       ],
      stats,
      ['../../../../compiler/stage2/doc/html/ghc/ghc.haddock.t'])

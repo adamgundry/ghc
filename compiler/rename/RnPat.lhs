@@ -23,6 +23,7 @@ module RnPat (-- main entry points
               NameMaker, applyNameMaker,     -- a utility for making names:
               localRecNameMaker, topRecNameMaker,  --   sometimes we want to make local names,
                                              --   sometimes we want to make top (qualified) names.
+              isTopRecNameMaker,
 
               rnHsRecFields1, HsRecFieldContext(..),
 
@@ -52,6 +53,7 @@ import RnTypes
 import DynFlags
 import PrelNames
 import TyCon               ( tyConName )
+import ConLike
 import DataCon             ( dataConTyCon )
 import TypeRep             ( TyThing(..) )
 import Name
@@ -136,13 +138,14 @@ wrapSrcSpanCps fn (L loc a)
 lookupConCps :: Located RdrName -> CpsRn (Located Name)
 lookupConCps con_rdr 
   = CpsRn (\k -> do { con_name <- lookupLocatedOccRn con_rdr
-                    ; k con_name })
-    -- We do not add the constructor name to the free vars
-    -- See Note [Patterns are not uses]
+                    ; (r, fvs) <- k con_name
+                    ; return (r, addOneFV fvs (unLoc con_name)) })
+    -- We add the constructor name to the free vars
+    -- See Note [Patterns are uses]
 \end{code}
 
-Note [Patterns are not uses]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Note [Patterns are uses]
+~~~~~~~~~~~~~~~~~~~~~~~~
 Consider
   module Foo( f, g ) where
   data T = T1 | T2
@@ -152,9 +155,21 @@ Consider
 
   g _ = T1
 
-Arguaby we should report T2 as unused, even though it appears in a
+Arguably we should report T2 as unused, even though it appears in a
 pattern, because it never occurs in a constructed position.  See
 Trac #7336.
+However, implementing this in the face of pattern synonyms would be
+less straightforward, since given two pattern synonyms
+
+  pattern P1 <- P2
+  pattern P2 <- ()
+
+we need to observe the dependency between P1 and P2 so that type
+checking can be done in the correct order (just like for value
+bindings). Dependencies between bindings is analyzed in the renamer,
+where we don't know yet whether P2 is a constructor or a pattern
+synonym. So for now, we do report conid occurrences in patterns as
+uses.
 
 %*********************************************************
 %*                                                      *
@@ -179,6 +194,10 @@ data NameMaker
 
 topRecNameMaker :: MiniFixityEnv -> NameMaker
 topRecNameMaker fix_env = LetMk TopLevel fix_env
+
+isTopRecNameMaker :: NameMaker -> Bool
+isTopRecNameMaker (LetMk TopLevel _) = True
+isTopRecNameMaker _ = False
 
 localRecNameMaker :: MiniFixityEnv -> NameMaker
 localRecNameMaker fix_env = LetMk NotTopLevel fix_env 
@@ -620,7 +639,7 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
     -- That is, the parent of the data constructor.  
     -- That's the parent to use for looking up record fields.
     find_tycon env con 
-      | Just (ADataCon dc) <- wiredInNameTyThing_maybe con
+      | Just (AConLike (RealDataCon dc)) <- wiredInNameTyThing_maybe con
       = tyConName (dataConTyCon dc)   -- Special case for [], which is built-in syntax
                                       -- and not in the GlobalRdrEnv (Trac #8448)
       | [GRE { gre_par = ParentIs p }] <- lookupGRE_Name env con
@@ -636,7 +655,7 @@ rnHsRecFields1 ctxt mk_arg (HsRecFields { rec_flds = flds, rec_dotdot = dotdot }
     (_, dup_flds) = removeDups compare (getFieldLbls flds)
 
 getFieldIds :: [HsRecField id arg] -> [id]
-getFieldIds flds = mapCatMaybes (fmap unLoc . hsRecFieldId_maybe) flds
+getFieldIds flds = mapMaybe (fmap unLoc . hsRecFieldId_maybe) flds
 
 getFieldLbls :: [HsRecField id arg] -> [RdrName]
 getFieldLbls flds = map (unLoc . hsRecFieldLbl) flds

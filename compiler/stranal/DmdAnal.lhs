@@ -31,6 +31,7 @@ import TyCon
 import Type		( eqType )
 -- import Pair
 -- import Coercion         ( coercionKind )
+import FamInstEnv
 import Util
 import Maybes		( isJust )
 import TysWiredIn	( unboxedPairDataCon )
@@ -47,8 +48,8 @@ import Data.Function    ( on )
 %************************************************************************
 
 \begin{code}
-dmdAnalProgram :: DynFlags -> CoreProgram -> IO CoreProgram
-dmdAnalProgram dflags binds
+dmdAnalProgram :: DynFlags -> FamInstEnvs -> CoreProgram -> IO CoreProgram
+dmdAnalProgram dflags fam_envs binds
   = do {
 	let { binds_plus_dmds = do_prog binds } ;
         dumpIfSet_dyn dflags Opt_D_dump_strsigs "Strictness signatures" $
@@ -57,7 +58,7 @@ dmdAnalProgram dflags binds
     }
   where
     do_prog :: CoreProgram -> CoreProgram
-    do_prog binds = snd $ mapAccumL dmdAnalTopBind (emptyAnalEnv dflags) binds
+    do_prog binds = snd $ mapAccumL dmdAnalTopBind (emptyAnalEnv dflags fam_envs) binds
 
 -- Analyse a (group of) top-level binding(s)
 dmdAnalTopBind :: AnalEnv
@@ -601,17 +602,18 @@ dmdAnalRhs top_lvl rec_flag env id rhs
   | otherwise
   = (sig_ty, lazy_fv, id', mkLams bndrs' body')
   where
-    (bndrs, body)        = collectBinders rhs
-    env_body             = foldl extendSigsWithLam env bndrs
-    (DmdType body_fv _      body_res, body')  = dmdAnal env_body body_dmd body
-    (DmdType rhs_fv rhs_dmds rhs_res, bndrs') = annotateLamBndrs env (isDFunId id)
-                                                  (DmdType body_fv [] body_res) bndrs
-    sig_ty               = mkStrictSig (mkDmdType sig_fv rhs_dmds rhs_res')
-    id'		         = set_idStrictness env id sig_ty
+    (bndrs, body)    = collectBinders rhs
+    env_body         = foldl extendSigsWithLam env bndrs
+    (body_ty, body') = dmdAnal env_body body_dmd body
+    body_ty'         = removeDmdTyArgs body_ty -- zap possible deep CPR info
+    (DmdType rhs_fv rhs_dmds rhs_res, bndrs')
+                     = annotateLamBndrs env (isDFunId id) body_ty' bndrs
+    sig_ty           = mkStrictSig (mkDmdType sig_fv rhs_dmds rhs_res')
+    id'		     = set_idStrictness env id sig_ty
 	-- See Note [NOINLINE and strictness]
 
     -- See Note [Product demands for function body]
-    body_dmd = case deepSplitProductType_maybe (exprType body) of
+    body_dmd = case deepSplitProductType_maybe (ae_fam_envs env) (exprType body) of
                  Nothing            -> cleanEvalDmd
                  Just (dc, _, _, _) -> cleanEvalProdDmd (dataConRepArity dc)
 
@@ -1006,6 +1008,7 @@ data AnalEnv
        , ae_virgin :: Bool    -- True on first iteration only
 		              -- See Note [Initialising strictness]
        , ae_rec_tc :: RecTcChecker
+       , ae_fam_envs :: FamInstEnvs
  }
 
 	-- We use the se_env to tell us whether to
@@ -1023,9 +1026,14 @@ instance Outputable AnalEnv where
          [ ptext (sLit "ae_virgin =") <+> ppr virgin
          , ptext (sLit "ae_sigs =") <+> ppr env ])
 
-emptyAnalEnv :: DynFlags -> AnalEnv
-emptyAnalEnv dflags = AE { ae_dflags = dflags, ae_sigs = emptySigEnv
-                         , ae_virgin = True, ae_rec_tc = initRecTc }
+emptyAnalEnv :: DynFlags -> FamInstEnvs -> AnalEnv
+emptyAnalEnv dflags fam_envs
+    = AE { ae_dflags = dflags
+         , ae_sigs = emptySigEnv
+         , ae_virgin = True
+         , ae_rec_tc = initRecTc
+         , ae_fam_envs = fam_envs
+         }
 
 emptySigEnv :: SigEnv
 emptySigEnv = emptyVarEnv
@@ -1071,7 +1079,7 @@ extendSigsWithLam env id
   , isStrictDmd (idDemandInfo id) || ae_virgin env  
        -- See Note [Optimistic CPR in the "virgin" case]
        -- See Note [Initial CPR for strict binders]
-  , Just (dc,_,_,_) <- deepSplitProductType_maybe $ idType id
+  , Just (dc,_,_,_) <- deepSplitProductType_maybe (ae_fam_envs env) $ idType id
   = extendAnalEnv NotTopLevel env id (cprProdSig (dataConRepArity dc))
 
   | otherwise 

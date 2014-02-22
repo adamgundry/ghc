@@ -22,6 +22,7 @@ import SrcLoc
 import Type
 import qualified Coercion ( Role(..) )
 import TysWiredIn
+import TysPrim (eqPrimTyCon)
 import BasicTypes as Hs
 import ForeignCall
 import Unique
@@ -304,7 +305,9 @@ cvt_ci_decs doc decs
         ; let (binds', prob_fams')   = partitionWith is_bind prob_binds'
         ; let (fams', bads)          = partitionWith is_fam_decl prob_fams'
         ; unless (null bads) (failWith (mkBadDecMsg doc bads))
-        ; return (listToBag binds', sigs', fams', ats', adts') }
+          --We use FromSource as the origin of the bind
+          -- because the TH declaration is user-written
+        ; return (listToBag (map (\bind -> (FromSource, bind)) binds'), sigs', fams', ats', adts') }
 
 ----------------
 cvt_tycl_hdr :: TH.Cxt -> TH.Name -> [TH.TyVarBndr]
@@ -540,7 +543,9 @@ cvtLocalDecs doc ds
        ; let (binds, prob_sigs) = partitionWith is_bind ds'
        ; let (sigs, bads) = partitionWith is_sig prob_sigs
        ; unless (null bads) (failWith (mkBadDecMsg doc bads))
-       ; return (HsValBinds (ValBindsIn (listToBag binds) sigs)) }
+       ; return (HsValBinds (ValBindsIn (toBindBag binds) sigs)) }
+  where
+    toBindBag = listToBag . map (\bind -> (FromSource, bind))
 
 cvtClause :: TH.Clause -> CvtM (Hs.LMatch RdrName (LHsExpr RdrName))
 cvtClause (Clause ps body wheres)
@@ -899,16 +904,7 @@ cvtContext :: TH.Cxt -> CvtM (LHsContext RdrName)
 cvtContext tys = do { preds' <- mapM cvtPred tys; returnL preds' }
 
 cvtPred :: TH.Pred -> CvtM (LHsType RdrName)
-cvtPred (TH.ClassP cla tys)
-  = do { cla' <- if isVarName cla then tName cla else tconName cla
-       ; tys' <- mapM cvtType tys
-       ; mk_apps (HsTyVar cla') tys'
-       }
-cvtPred (TH.EqualP ty1 ty2)
-  = do { ty1' <- cvtType ty1
-       ; ty2' <- cvtType ty2
-       ; returnL $ HsEqTy ty1' ty2'
-       }
+cvtPred = cvtType
 
 cvtType :: TH.Type -> CvtM (LHsType RdrName)
 cvtType = cvtTypeKind "type"
@@ -987,6 +983,10 @@ cvtTypeKind ty_str ty
 
            ConstraintT
              -> returnL (HsTyVar (getRdrName constraintKindTyCon))
+
+           EqualityT
+             | [x',y'] <- tys' -> returnL (HsEqTy x' y')
+             | otherwise       -> mk_apps (HsTyVar (getRdrName eqPrimTyCon)) tys'
 
            _ -> failWith (ptext (sLit ("Malformed " ++ ty_str)) <+> text (show ty))
     }

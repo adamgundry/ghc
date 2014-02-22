@@ -40,7 +40,7 @@ module CoreSubst (
 
 	-- ** Simple expression optimiser
         simpleOptPgm, simpleOptExpr, simpleOptExprWith,
-        exprIsConApp_maybe, exprIsLiteral_maybe
+        exprIsConApp_maybe, exprIsLiteral_maybe, exprIsLambda_maybe,
     ) where
 
 #include "HsVersions.h"
@@ -61,7 +61,7 @@ import Coercion hiding ( substTy, substCo, extendTvSubst, substTyVarBndr, substC
 
 import TyCon       ( tyConArity )
 import DataCon
-import PrelNames   ( eqBoxDataConKey )
+import PrelNames   ( eqBoxDataConKey, coercibleDataConKey )
 import OptCoercion ( optCoercion )
 import PprCore     ( pprCoreBindings, pprRules )
 import Module	   ( Module )
@@ -769,7 +769,7 @@ Note [Worker inlining]
 A worker can get sustituted away entirely.
 	- it might be trivial
 	- it might simply be very small
-We do not treat an InlWrapper as an 'occurrence' in the occurence 
+We do not treat an InlWrapper as an 'occurrence' in the occurrence 
 analyser, so it's possible that the worker is not even in scope any more.
 
 In all all these cases we simply drop the special case, returning to
@@ -843,7 +843,7 @@ simpleOptExpr :: CoreExpr -> CoreExpr
 -- We also inline bindings that bind a Eq# box: see
 -- See Note [Optimise coercion boxes agressively].
 --
--- The result is NOT guaranteed occurence-analysed, because
+-- The result is NOT guaranteed occurrence-analysed, because
 -- in  (let x = y in ....) we substitute for x; so y's occ-info
 -- may change radically
 
@@ -966,6 +966,10 @@ simple_app subst (Lam b e) (a:as)
   where
     (subst', b') = subst_opt_bndr subst b
     b2 = add_info subst' b b'
+simple_app subst (Var v) as
+  | isCompulsoryUnfolding (idUnfolding v)
+  -- See Note [Unfold compulsory unfoldings in LHSs]
+  =  simple_app subst (unfoldingTemplate (idUnfolding v)) as
 simple_app subst e as
   = foldl App (simple_opt_expr subst e) as
 
@@ -1039,7 +1043,7 @@ maybe_substitute subst b r
     trivial | exprIsTrivial r = True
             | (Var fun, args) <- collectArgs r
             , Just dc <- isDataConWorkId_maybe fun
-            , dc `hasKey` eqBoxDataConKey
+            , dc `hasKey` eqBoxDataConKey || dc `hasKey` coercibleDataConKey
             , all exprIsTrivial args = True -- See Note [Optimise coercion boxes agressively]
             | otherwise = False
 
@@ -1112,6 +1116,13 @@ we don't know what phase we're in.  Here's an example
 When inlining 'foo' in 'bar' we want the let-binding for 'inner' 
 to remain visible until Phase 1
 
+Note [Unfold compulsory unfoldings in LHSs]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When the user writes `map coerce = coerce` as a rule, the rule will only ever
+match if we replace coerce by its unfolding on the LHS, because that is the
+core that the rule matching engine will find. So do that for everything that
+has a compulsory unfolding. Also see Note [Desugaring coerce as cast]
 
 %************************************************************************
 %*                                                                      *
@@ -1289,4 +1300,78 @@ exprIsLiteral_maybe env@(_, id_unf) e
       Var v     | Just rhs <- expandUnfolding_maybe (id_unf v)
                 -> exprIsLiteral_maybe env rhs
       _         -> Nothing
-\end{code}       
+\end{code}
+
+Note [exprIsLiteral_maybe]
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+This function will, given an expression `e`, try to turn it into the form
+`Lam v e'` (returned as `Just (v,e')`). Besides using lambdas, it looks through
+casts (using the Push rule), and it unfolds function calls if the unfolding
+has a greater arity than arguments are present.
+
+Currently, it is used in Rules.match, and is required to make
+"map coerce = coerce" match.
+
+\begin{code}
+-- See Note [exprIsLiteral_maybe]
+exprIsLambda_maybe :: InScopeEnv -> CoreExpr -> Maybe (Var, CoreExpr)
+
+-- The simpe case: It is a lambda
+exprIsLambda_maybe _ (Lam x e)
+    = Just (x, e)
+
+-- Also possible: A casted lambda. Push the coercion inside
+exprIsLambda_maybe (in_scope_set, id_unf) (Cast casted_e co)
+    | Just (x, e) <- exprIsLambda_maybe (in_scope_set, id_unf) casted_e
+    -- Only do value lambdas.
+    -- this implies that x is not in scope in gamma (makes this code simpler)
+    , not (isTyVar x) && not (isCoVar x)
+    , ASSERT( not $ x `elemVarSet` tyCoVarsOfCo co) True
+    , let res = pushCoercionIntoLambda in_scope_set x e co
+    = -- pprTrace "exprIsLambda_maybe:Cast" (vcat [ppr casted_e, ppr co, ppr res])
+      res
+
+-- Another attempt: See if we find a partial unfolding
+exprIsLambda_maybe (in_scope_set, id_unf) e
+    | (Var f, as) <- collectArgs e
+    , let unfolding = id_unf f
+    , Just rhs <- expandUnfolding_maybe unfolding
+    -- Make sure there is hope to get a lambda
+    , unfoldingArity unfolding > length (filter isValArg as)
+    -- Optimize, for beta-reduction
+    , let e' =  simpleOptExprWith (mkEmptySubst in_scope_set) (rhs `mkApps` as)
+    -- Recurse, because of possible casts
+    , Just (x', e'') <- exprIsLambda_maybe (in_scope_set, id_unf) e'
+    , let res = Just (x', e'')
+    = -- pprTrace "exprIsLambda_maybe:Unfold" (vcat [ppr e, ppr res])
+      res
+
+exprIsLambda_maybe _ _e
+    = -- pprTrace "exprIsLambda_maybe:Fail" (vcat [ppr _e])
+      Nothing
+
+
+pushCoercionIntoLambda
+    :: InScopeSet -> Var -> CoreExpr -> Coercion -> Maybe (Var, CoreExpr)
+pushCoercionIntoLambda in_scope x e co
+    -- This implements the Push rule from the paper on coercions
+    -- Compare with simplCast in Simplify
+    | ASSERT(not (isTyVar x) && not (isCoVar x)) True
+    , Pair s1s2 t1t2 <- coercionKind co
+    , Just (_s1,_s2) <- splitFunTy_maybe s1s2
+    , Just (t1,_t2) <- splitFunTy_maybe t1t2
+    = let [co1, co2] = decomposeCo 2 co
+          -- Should we optimize the coercions here?
+          -- Otherwise they might not match too well
+          x' = x `setIdType` t1
+          in_scope' = in_scope `extendInScopeSet` x'
+          subst = extendIdSubst (mkEmptySubst in_scope')
+                                x
+                                (mkCast (Var x') co1)
+      in Just (x', subst_expr subst e `mkCast` co2)
+    | otherwise
+    = pprTrace "exprIsLambda_maybe: Unexpected lambda in case" (ppr (Lam x e))
+      Nothing
+
+\end{code}

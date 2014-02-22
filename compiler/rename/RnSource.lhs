@@ -36,7 +36,7 @@ import Avail
 import DataCon
 import Outputable
 import Bag
-import BasicTypes       ( RuleName )
+import BasicTypes       ( RuleName, Origin(..) )
 import FastString
 import SrcLoc
 import DynFlags
@@ -61,7 +61,7 @@ for undefined tyvars, and tyvars in contexts that are ambiguous.
 (Some of this checking has now been moved to module @TcMonoType@,
 since we don't have functional dependency information at this point.)
 \item
-Checks that all variable occurences are defined.
+Checks that all variable occurrences are defined.
 \item
 Checks the @(..)@ etc constraints in the export list.
 \end{enumerate}
@@ -624,8 +624,8 @@ type variable environment iff -fglasgow-exts
 
 \begin{code}
 extendTyVarEnvForMethodBinds :: [Name]
-                             -> RnM (Bag (LHsBind Name), FreeVars)
-                             -> RnM (Bag (LHsBind Name), FreeVars)
+                             -> RnM (LHsBinds Name, FreeVars)
+                             -> RnM (LHsBinds Name, FreeVars)
 extendTyVarEnvForMethodBinds ktv_names thing_inside
   = do  { scoped_tvs <- xoptM Opt_ScopedTypeVariables
         ; if scoped_tvs then
@@ -1350,23 +1350,6 @@ deprecRecSyntax decl
 
 badRecResTy :: SDoc -> SDoc
 badRecResTy doc = ptext (sLit "Malformed constructor signature") $$ doc
-
--- This data decl will parse OK
---      data T = a Int
--- treating "a" as the constructor.
--- It is really hard to make the parser spot this malformation.
--- So the renamer has to check that the constructor is legal
---
--- We can get an operator as the constructor, even in the prefix form:
---      data T = :% Int Int
--- from interface files, which always print in prefix form
-
-checkConName :: RdrName -> TcRn ()
-checkConName name = checkErr (isRdrDataCon name) (badDataCon name)
-
-badDataCon :: RdrName -> SDoc
-badDataCon name
-   = hsep [ptext (sLit "Illegal data constructor name"), quotes (ppr name)]
 \end{code}
 
 Note [Infix GADT constructors]
@@ -1521,7 +1504,7 @@ add_role_annot d (tycls@(TyClGroup { group_roles = roles }) : rest)
   = tycls { group_roles = d : roles } : rest
 
 add_bind :: LHsBind a -> HsValBinds a -> HsValBinds a
-add_bind b (ValBindsIn bs sigs) = ValBindsIn (bs `snocBag` b) sigs
+add_bind b (ValBindsIn bs sigs) = ValBindsIn (bs `snocBag` (FromSource, b)) sigs
 add_bind _ (ValBindsOut {})     = panic "RdrHsSyn:add_bind"
 
 add_sig :: LSig a -> HsValBinds a -> HsValBinds a

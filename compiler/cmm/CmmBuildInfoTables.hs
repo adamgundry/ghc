@@ -1,10 +1,6 @@
-{-# LANGUAGE GADTs, NoMonoLocalBinds #-}
+{-# LANGUAGE GADTs #-}
 
--- Norman likes local bindings
--- If this module lives on I'd like to get rid of the NoMonoLocalBinds
--- extension in due course
-
--- Todo: remove -fno-warn-warnings-deprecations
+-- See Note [Deprecations in Hoopl] in Hoopl module
 {-# OPTIONS_GHC -fno-warn-warnings-deprecations #-}
 module CmmBuildInfoTables
     ( CAFSet, CAFEnv, cafAnal

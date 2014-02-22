@@ -58,13 +58,13 @@ module OccName (
 
 	-- ** Derived 'OccName's
         isDerivedOccName,
-	mkDataConWrapperOcc, mkWorkerOcc, mkDefaultMethodOcc, 
+	mkDataConWrapperOcc, mkWorkerOcc, mkMatcherOcc, mkDefaultMethodOcc,
         mkGenDefMethodOcc, 
 	mkDerivedTyConOcc, mkNewTyCoOcc, mkClassOpAuxOcc,
         mkCon2TagOcc, mkTag2ConOcc, mkMaxTagOcc,
-  	mkClassDataConOcc, mkDictOcc, mkIPOcc, 
- 	mkSpecOcc, mkForeignExportOcc, mkGenOcc1, mkGenOcc2,
- 	mkGenD, mkGenR, mkGen1R, mkGenRCo, mkGenC, mkGenS,
+	mkClassDataConOcc, mkDictOcc, mkIPOcc,
+	mkSpecOcc, mkForeignExportOcc, mkRepEqOcc, mkGenOcc1, mkGenOcc2,
+	mkGenD, mkGenR, mkGen1R, mkGenRCo, mkGenC, mkGenS,
         mkDataTOcc, mkDataCOcc, mkDataConWorkerOcc,
 	mkSuperDictSelOcc, mkLocalOcc, mkMethodOcc, mkInstTyTcOcc,
 	mkInstTyCoOcc, mkEqPredCoOcc,
@@ -571,9 +571,9 @@ isDerivedOccName occ =
 \end{code}
 
 \begin{code}
-mkDataConWrapperOcc, mkWorkerOcc, mkDefaultMethodOcc, 
+mkDataConWrapperOcc, mkWorkerOcc, mkMatcherOcc, mkDefaultMethodOcc,
         mkGenDefMethodOcc, mkDerivedTyConOcc, mkClassDataConOcc, mkDictOcc,
- 	mkIPOcc, mkSpecOcc, mkForeignExportOcc, mkGenOcc1, mkGenOcc2,
+	mkIPOcc, mkSpecOcc, mkForeignExportOcc, mkRepEqOcc, mkGenOcc1, mkGenOcc2,
  	mkGenD, mkGenR, mkGen1R, mkGenRCo,
 	mkDataTOcc, mkDataCOcc, mkDataConWorkerOcc, mkNewTyCoOcc,
 	mkInstTyCoOcc, mkEqPredCoOcc, mkClassOpAuxOcc,
@@ -583,6 +583,7 @@ mkDataConWrapperOcc, mkWorkerOcc, mkDefaultMethodOcc,
 -- These derived variables have a prefix that no Haskell value could have
 mkDataConWrapperOcc = mk_simple_deriv varName  "$W"
 mkWorkerOcc         = mk_simple_deriv varName  "$w"
+mkMatcherOcc        = mk_simple_deriv varName  "$m"
 mkDefaultMethodOcc  = mk_simple_deriv varName  "$dm"
 mkGenDefMethodOcc   = mk_simple_deriv varName  "$gdm"
 mkClassOpAuxOcc     = mk_simple_deriv varName  "$c"
@@ -593,6 +594,7 @@ mkDictOcc	    = mk_simple_deriv varName  "$d"
 mkIPOcc		    = mk_simple_deriv varName  "$i"
 mkSpecOcc	    = mk_simple_deriv varName  "$s"
 mkForeignExportOcc  = mk_simple_deriv varName  "$f"
+mkRepEqOcc          = mk_simple_deriv tvName   "$r"      -- In RULES involving Coercible
 mkNewTyCoOcc        = mk_simple_deriv tcName   "NTCo:"	-- Coercion for newtypes
 mkInstTyCoOcc       = mk_simple_deriv tcName   "TFCo:"   -- Coercion for type functions
 mkEqPredCoOcc	    = mk_simple_deriv tcName   "$co"

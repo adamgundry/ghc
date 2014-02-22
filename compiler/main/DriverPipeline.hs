@@ -139,10 +139,13 @@ compileOne' m_tc_result mHscMessage
        input_fnpp  = ms_hspp_file summary
        mod_graph   = hsc_mod_graph hsc_env0
        needsTH     = any (xopt Opt_TemplateHaskell . ms_hspp_opts) mod_graph
+       needsQQ     = any (xopt Opt_QuasiQuotes     . ms_hspp_opts) mod_graph
+       needsLinker = needsTH || needsQQ
        isDynWay    = any (== WayDyn) (ways dflags0)
+       isProfWay   = any (== WayProf) (ways dflags0)
    -- #8180 - when using TemplateHaskell, switch on -dynamic-too so
    -- the linker can correctly load the object files.
-   let dflags1 = if needsTH && dynamicGhc && not isDynWay
+   let dflags1 = if needsLinker && dynamicGhc && not isDynWay && not isProfWay
                   then gopt_set dflags0 Opt_BuildDynamicToo
                   else dflags0
 
@@ -1784,6 +1787,15 @@ linkBinary' staticLink dflags o_files dep_packages = do
                               then []
                               else ["-Wl,-rpath-link", "-Wl," ++ l]
               in ["-L" ++ l] ++ rpathlink ++ rpath
+         | osMachOTarget (platformOS platform) &&
+           dynLibLoader dflags == SystemDependent &&
+           not (gopt Opt_Static dflags) &&
+           gopt Opt_RPath dflags
+            = let libpath = if gopt Opt_RelativeDynlibPaths dflags
+                            then "@loader_path" </>
+                                 (l `makeRelativeTo` full_output_fn)
+                            else l
+              in ["-L" ++ l] ++ ["-Wl,-rpath", "-Wl," ++ libpath]
          | otherwise = ["-L" ++ l]
 
     let lib_paths = libraryPaths dflags
@@ -1917,13 +1929,6 @@ linkBinary' staticLink dflags o_files dep_packages = do
                              platformArch platform == ArchX86 &&
                              not staticLink
                           then ["-Wl,-read_only_relocs,suppress"]
-                          else [])
-
-                      ++ (if platformOS platform == OSDarwin &&
-                             not staticLink &&
-                             not (gopt Opt_Static dflags) &&
-                             gopt Opt_RPath dflags
-                          then ["-Wl,-rpath","-Wl," ++ topDir dflags]
                           else [])
 
                       ++ o_files
@@ -2124,12 +2129,16 @@ joinObjectFiles :: DynFlags -> [FilePath] -> FilePath -> IO ()
 joinObjectFiles dflags o_files output_fn = do
   let mySettings = settings dflags
       ldIsGnuLd = sLdIsGnuLd mySettings
+      osInfo = platformOS (targetPlatform dflags)
       ld_r args ccInfo = SysTools.runLink dflags ([
                             SysTools.Option "-nostdlib",
                             SysTools.Option "-Wl,-r"
                             ]
                          ++ (if ccInfo == Clang then []
                               else [SysTools.Option "-nodefaultlibs"])
+                         ++ (if osInfo == OSFreeBSD
+                              then [SysTools.Option "-L/usr/lib"]
+                              else [])
                             -- gcc on sparc sets -Wl,--relax implicitly, but
                             -- -r and --relax are incompatible for ld, so
                             -- disable --relax explicitly.

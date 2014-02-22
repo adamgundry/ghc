@@ -18,9 +18,11 @@ import Id
 import Name
 import Type
 import FamInstEnv
+import Coercion
 import InstEnv
 import Class
 import Avail
+import PatSyn
 import CoreSyn
 import CoreSubst
 import PprCore
@@ -32,8 +34,11 @@ import Module
 import NameSet
 import NameEnv
 import Rules
+import TysPrim (eqReprPrimTyCon)
+import TysWiredIn (coercibleTyCon )
 import BasicTypes       ( Activation(.. ) )
 import CoreMonad        ( endPass, CoreToDo(..) )
+import MkCore
 import FastString
 import ErrUtils
 import Outputable
@@ -45,6 +50,8 @@ import OrdList
 import Data.List
 import Data.IORef
 import Control.Monad( when )
+import Data.Maybe ( mapMaybe )
+import UniqFM
 \end{code}
 
 %************************************************************************
@@ -80,6 +87,7 @@ deSugar hsc_env
                             tcg_fords        = fords,
                             tcg_rules        = rules,
                             tcg_vects        = vects,
+                            tcg_patsyns      = patsyns,
                             tcg_tcs          = tcs,
                             tcg_insts        = insts,
                             tcg_fam_insts    = fam_insts,
@@ -116,21 +124,27 @@ deSugar hsc_env
                           ; let hpc_init
                                   | gopt Opt_Hpc dflags = hpcInitCode mod ds_hpc_info
                                   | otherwise = empty
+                          ; let patsyn_defs = [(patSynId ps, ps) | ps <- patsyns]
                           ; return ( ds_ev_binds
                                    , foreign_prs `appOL` core_prs `appOL` spec_prs
                                    , spec_rules ++ ds_rules, ds_vects
-                                   , ds_fords `appendStubC` hpc_init ) }
+                                   , ds_fords `appendStubC` hpc_init
+                                   , patsyn_defs) }
 
         ; case mb_res of {
            Nothing -> return (msgs, Nothing) ;
-           Just (ds_ev_binds, all_prs, all_rules, vects0, ds_fords) ->
+           Just (ds_ev_binds, all_prs, all_rules, vects0, ds_fords, patsyn_defs) -> do
 
      do {       -- Add export flags to bindings
           keep_alive <- readIORef keep_var
         ; let (rules_for_locals, rules_for_imps)
                    = partition isLocalRule all_rules
+              final_patsyns = addExportFlagsAndRules target export_set keep_alive [] patsyn_defs
+              exp_patsyn_wrappers = mapMaybe (patSynWrapper . snd) final_patsyns
+              exp_patsyn_matchers = map (patSynMatcher . snd) final_patsyns
+              keep_alive' = addListToUFM keep_alive (map (\x -> (x, getName x)) (exp_patsyn_wrappers ++ exp_patsyn_matchers))
               final_prs = addExportFlagsAndRules target
-                              export_set keep_alive rules_for_locals (fromOL all_prs)
+                              export_set keep_alive' rules_for_locals (fromOL all_prs)
 
               final_pgm = combineEvBinds ds_ev_binds final_prs
         -- Notice that we put the whole lot in a big Rec, even the foreign binds
@@ -175,6 +189,7 @@ deSugar hsc_env
                 mg_axioms       = axioms,
                 mg_inst_env     = inst_env,
                 mg_fam_inst_env = fam_inst_env,
+                mg_patsyns      = map snd . filter (isExportedId . fst) $ final_patsyns,
                 mg_rules        = ds_rules_for_imps,
                 mg_binds        = ds_binds,
                 mg_foreign      = ds_fords,
@@ -338,6 +353,7 @@ Reason
 %************************************************************************
 
 \begin{code}
+
 dsRule :: LRuleDecl Id -> DsM (Maybe CoreRule)
 dsRule (L loc (HsRule name act vars lhs _tv_lhs rhs _fv_rhs))
   = putSrcSpanDs loc $
@@ -350,9 +366,11 @@ dsRule (L loc (HsRule name act vars lhs _tv_lhs rhs _fv_rhs))
         ; rhs' <- dsLExpr rhs
         ; dflags <- getDynFlags
 
+        ; (bndrs'', lhs'', rhs'') <- unfold_coerce bndrs' lhs' rhs'
+
         -- Substitute the dict bindings eagerly,
         -- and take the body apart into a (f args) form
-        ; case decomposeRuleLhs bndrs' lhs' of {
+        ; case decomposeRuleLhs bndrs'' lhs'' of {
                 Left msg -> do { warnDs msg; return Nothing } ;
                 Right (final_bndrs, fn_id, args) -> do
 
@@ -361,7 +379,7 @@ dsRule (L loc (HsRule name act vars lhs _tv_lhs rhs _fv_rhs))
                 -- we don't want to attach rules to the bindings of implicit Ids,
                 -- because they don't show up in the bindings until just before code gen
               fn_name   = idName fn_id
-              final_rhs = simpleOptExpr rhs'    -- De-crap it
+              final_rhs = simpleOptExpr rhs''    -- De-crap it
               rule      = mkRule False {- Not auto -} is_local
                                  name act fn_name final_bndrs args final_rhs
 
@@ -389,6 +407,27 @@ dsRule (L loc (HsRule name act vars lhs _tv_lhs rhs _fv_rhs))
 
         ; return (Just rule)
         } } }
+
+-- See Note [Desugaring coerce as cast]
+unfold_coerce :: [Id] -> CoreExpr -> CoreExpr -> DsM ([Var], CoreExpr, CoreExpr)
+unfold_coerce bndrs lhs rhs = do
+    (bndrs', wrap) <- go bndrs
+    return (bndrs', wrap lhs, wrap rhs)
+  where
+    go :: [Id] -> DsM ([Id], CoreExpr -> CoreExpr)
+    go []     = return ([], id)
+    go (v:vs)
+        | Just (tc, args) <- splitTyConApp_maybe (idType v)
+        , tc == coercibleTyCon = do
+            let ty' = mkTyConApp eqReprPrimTyCon args
+            v' <- mkDerivedLocalM mkRepEqOcc v ty'
+
+            (bndrs, wrap) <- go vs
+            return (v':bndrs, mkCoreLet (NonRec v (mkEqBox (mkCoVarCo v'))) . wrap)
+        | otherwise = do
+            (bndrs,wrap) <- go vs
+            return (v:bndrs, wrap)
+
 \end{code}
 
 Note [Desugaring RULE left hand sides]
@@ -407,6 +446,20 @@ Nor do we want to warn of conversion identities on the LHS;
 the rule is precisly to optimise them:
   {-# RULES "fromRational/id" fromRational = id :: Rational -> Rational #-}
 
+
+Note [Desugaring coerce as cast]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+We want the user to express a rule saying roughly “mapping a coercion over a
+list can be replaced by a coercion”. But the cast operator of Core (▷) cannot
+be written in Haskell. So we use `coerce` for that (#2110). The user writes
+    map coerce = coerce
+as a RULE, and this optimizes any kind of mapped' casts aways, including `map
+MkNewtype`.
+
+For that we replace any forall'ed `c :: Coercible a b` value in a RULE by
+corresponding `co :: a ~#R b` and wrap the LHS and the RHS in
+`let c = MkCoercible co in ...`. This is later simplified to the desired form
+by simpleOptExpr (for the LHS) resp. the simplifiers (for the RHS).
 
 %************************************************************************
 %*                                                                      *

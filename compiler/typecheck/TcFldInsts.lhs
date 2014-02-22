@@ -257,9 +257,9 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
              ; return (InstInfo cls_inst inst_bind) }
       where
         args = [t, n, mkTyVarTy b]
-        inst_bind = InstBindings bind [] True
+        inst_bind = InstBindings bind [] [] True
           where
-            bind  = unitBag $ noLoc $ (mkTopFunBind (noLoc getFieldName) [match])
+            bind  = unitBag $ (,) Generated $ noLoc $ (mkTopFunBind (noLoc getFieldName) [match])
                                           { bind_fvs = placeHolderNames }
             match = mkSimpleMatch [nlWildPat]
                         (noLoc (HsSingleRecFld (mkVarUnqual lbl) sel_name))
@@ -289,9 +289,9 @@ makeRecFldInstsFor (lbl, sel_name, tycon_name)
                ; return $ mkSimpleMatch [nlWildPat, nlConVarPat con_name vars, nlVarPat x]
                                         (nlHsVarApps con_name vars') }
 
-        inst_bind matches = InstBindings bind [] True
+        inst_bind matches = InstBindings bind [] [] True
           where
-            bind = unitBag $ noLoc $ (mkTopFunBind (noLoc setFieldName) all_matches)
+            bind = unitBag $ (,) Generated $ noLoc $ (mkTopFunBind (noLoc setFieldName) all_matches)
                                          { bind_fvs = placeHolderNames }
             all_matches | all dealt_with cons = matches
                         | otherwise           = matches ++ [default_match]
@@ -457,7 +457,7 @@ tcFldInsts fld_insts
     bogus_insts = concatMap bogus fld_insts
 
     mkBogusId :: Name -> (LSig Name, (RecFlag, LHsBinds Name))
-    mkBogusId n = (noLoc (IdSig bogus_id), (NonRecursive, unitBag (noLoc bind)))
+    mkBogusId n = (noLoc (IdSig bogus_id), (NonRecursive, unitBag (Generated, noLoc bind)))
       where
         bogus_id = mkExportedLocalVar VanillaId n unitTy vanillaIdInfo
         bind     = mkTopFunBind (noLoc n) [mkSimpleMatch [] (mkLHsTupleExpr [])]

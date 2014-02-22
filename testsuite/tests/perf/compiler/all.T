@@ -47,9 +47,10 @@ test('T1969',
                                  # 2013-02-10 5159748 (x86/Windows)
                                  # 2013-02-10 5030080 (x86/Windows)
                                  # 2013-11-13 7295012 (x86/Windows, 64bit machine)
-           (wordsize(32), 6149572, 1),
+           (wordsize(32), 6429864, 1),
              #            6707308 (x86/OS X)
              # 2009-12-31 6149572 (x86/Linux)
+             # 2014-01-22 6429864 (x86/Linux)
            (wordsize(64), 11000000, 20)]),
                # looks like the peak is around ~10M, but we're
                # unlikely to GC exactly on the peak.
@@ -62,12 +63,13 @@ test('T1969',
                                  # 2012-10-29 298921816 (x86/Windows)
                                  # 2013-02-10 310633884 (x86/Windows)
                                  # 2013-11-13 317975916 (x86/Windows, 64bit machine)
-           (wordsize(32), 322937684, 1),
+           (wordsize(32), 316103268, 1),
              #            221667908 (x86/OS X)
              #            274932264 (x86/Linux)
              # 2012-10-08 303930948 (x86/Linux, new codegen)
              # 2013-02-10 322937684 (x86/OSX)
-           (wordsize(64), 698612512, 5)]),
+             # 2014-01-22 316103268 (x86/Linux)
+           (wordsize(64), 660922376, 5)]),
              # 17/11/2009 434845560 (amd64/Linux)
              # 08/12/2009 459776680 (amd64/Linux)
              # 17/05/2010 519377728 (amd64/Linux)
@@ -75,19 +77,14 @@ test('T1969',
              # 16/07/2012 589168872 (amd64/Linux)
              # 20/07/2012 595936240 (amd64/Linux)
              # 23/08/2012 606230880 (amd64/Linux)
-             # 29/08/2012 633334184 (amd64/Linux)
-             #            (^ new codegen)
+             # 29/08/2012 633334184 (amd64/Linux) new codegen
              # 18/09/2012 641959976 (amd64/Linux)
-             # 19/10/2012 661832592 (amd64/Linux)
-             #            (^ -fPIC turned on)
-             # 23/10/2012 642594312 (amd64/Linux)
-             #            (^ -fPIC turned off again)
-             # 12/11/2012 658786936 (amd64/Linux)
-             #            (^ UNKNOWN REASON )
-             # 17/1/13:   667160192 (x86_64/Linux)
-             #            (^ new demand analyser)
-             # 18/10/2013 698612512 (x86_64/Linux)
-             #            (fix for #8456)
+             # 19/10/2012 661832592 (amd64/Linux) -fPIC turned on
+             # 23/10/2012 642594312 (amd64/Linux) -fPIC turned off again
+             # 12/11/2012 658786936 (amd64/Linux) UNKNOWN REASON
+             # 17/1/13:   667160192 (x86_64/Linux) new demand analyser
+             # 18/10/2013 698612512 (x86_64/Linux) fix for #8456
+             # 10/02/2014 660922376 (x86_64/Linux) call artiy analysis
       only_ways(['normal']),
 
       extra_hc_opts('-dcore-lint -static')
@@ -130,20 +127,20 @@ test('T3294',
              #  (reason for increase back to earlier value unknown)
 
       compiler_stats_num_field('bytes allocated',
-          [(wordsize(32), 1478325844, 5),
+          [(wordsize(32), 1565185140, 5),
            # previous:     815479800  (x86/Linux)
            # (^ increase due to new codegen, see #7198)
            # 2012-10-08:  1373514844 (x86/Linux)
-           # 2013-11-13: 1478325844 (x86/Windows, 64bit machine)
-           (wordsize(64), 3083825616, 5)]),
+           # 2013-11-13: 1478325844  (x86/Windows, 64bit machine)
+           # 2014-01-12: 1565185140  (x86/Linux)
+           (wordsize(64), 2897630040, 5)]),
             # old:        1357587088 (amd64/Linux)
             # 29/08/2012: 2961778696 (amd64/Linux)
             # (^ increase due to new codegen, see #7198)
             # 18/09/2012: 2717327208 (amd64/Linux)
-            # 08/06/2013: 2901451552 (amd64/Linux)
-            # (^ reason unknown)
-            # 12/12/2013: 3083825616 (amd64/Linux)
-            # (^ reason unknown)
+            # 08/06/2013: 2901451552 (amd64/Linux) (reason unknown)
+            # 12/12/2013: 3083825616 (amd64/Linux) (reason unknown)
+            # 18/02/2014: 2897630040 (amd64/Linux) (call arity improvements)
       conf_3294
       ],
      compile,
@@ -170,9 +167,9 @@ test('T4801',
           [(platform('x86_64-apple-darwin'), 464872776, 5),
                            # expected value: 510938976 (amd64/OS X):
 
-           (wordsize(32), 185669232, 10),
-        # expected value: 228286660 (x86/OS X)
-
+           (wordsize(32), 211198056, 10),
+           # prev:        185669232 (x86/OSX)
+           # 2014-01-22:  211198056 (x86/Linux)
            (wordsize(64), 392409984, 10)]),
             # prev:       360243576 (amd64/Linux)
             # 19/10/2012: 447190832 (amd64/Linux) (-fPIC turned on)
@@ -187,7 +184,7 @@ test('T4801',
              # 2013-02-10:  11207828 (x86/OSX)
              # (some date): 11139444
              # 2013-11-13:  11829000 (x86/Windows, 64bit machine)
-           (wordsize(64), 22646000, 10)]),
+           (wordsize(64), 25002136, 10)]),
                 # prev:       20486256 (amd64/OS X)
                 # 30/08/2012: 17305600--20391920 (varies a lot)
                 # 19/10/2012: 26882576 (-fPIC turned on)
@@ -195,6 +192,7 @@ test('T4801',
                 # 24/12/2012: 21657520 (perhaps gc sampling time wibbles?)
                 # 10/01/2014: 25166280 
                 # 13/01/2014: 22646000 (mostly due to #8647)
+                # 18/02/2014: 25002136 (call arity analysis changes)
        only_ways(['normal']),
        extra_hc_opts('-static')
       ],
@@ -204,10 +202,10 @@ test('T4801',
 test('T3064',
      [# expect_broken( 3064 ),
       compiler_stats_num_field('peak_megabytes_allocated',# Note [residency]
-          [(wordsize(32), 18, 20),
+          [(wordsize(32), 23, 20),
             # expected value: 14 (x86/Linux 28-06-2012):
             # 2013-11-13:     18 (x86/Windows, 64bit machine)
-
+            # 2014-01-22:     23 (x86/Linux)
            (wordsize(64), 37, 20)]),
             # (amd64/Linux):            18
             # (amd64/Linux) 2012-02-07: 26
@@ -219,24 +217,25 @@ test('T3064',
             # (amd64/Linux) 2013-09-11: 37; better arity analysis (weird)
 
       compiler_stats_num_field('bytes allocated',
-          [(wordsize(32), 146626504, 10),
+          [(wordsize(32), 162457940, 10),
             # 2011-06-28: 56380288  (x86/Linux)
-            # 2012-10-30: 111189536 (x86/Windows) 
+            # 2012-10-30: 111189536 (x86/Windows)
             # 2013-11-13: 146626504 (x86/Windows, 64bit machine)
-           (wordsize(64), 329795912, 5)]),
+            # 2014-01-22: 162457940 (x86/Linux)
+           (wordsize(64), 308422280, 5)]),
             # (amd64/Linux) (28/06/2011):  73259544
             # (amd64/Linux) (07/02/2013): 224798696
             # (amd64/Linux) (02/08/2013): 236404384, increase from roles
             # (amd64/Linux) (11/09/2013): 290165632, increase from AMP warnings
             # (amd64/Linux) (22/11/2013): 308300448, GND via Coercible and counters for constraints solving
-	    # (amd64/Linux) (02/12/2013): 329795912, Coercible refactor
+	        # (amd64/Linux) (02/12/2013): 329795912, Coercible refactor
+            # (amd64/Linux) (11/02/2014): 308422280, optimize Coercions in simpleOptExpr
 
       compiler_stats_num_field('max_bytes_used',
           [(wordsize(32), 7218200 , 20),
             # 2011-06-28: 2247016 (x86/Linux) (28/6/2011):
             #(some date): 5511604
             # 2013-11-13: 7218200 (x86/Windows, 64bit machine)
-      
            (wordsize(64), 19821544, 20)]),
             # (amd64/Linux, intree) (28/06/2011):  4032024
             # (amd64/Linux, intree) (07/02/2013):  9819288
@@ -284,9 +283,10 @@ test('T5631',
      [compiler_stats_num_field('bytes allocated',
           [(wordsize(32), 392904228, 10),
         # expected value: 392904228 (x86/Linux)
-           (wordsize(64), 735486328, 5)]),
+           (wordsize(64), 690742040, 5)]),
         # expected value: 774595008 (amd64/Linux):
         # expected value: 735486328 (amd64/Linux) 2012/12/12:
+        # expected value: 690742040 (amd64/Linux) Call Arity improvements
        only_ways(['normal'])
       ],
      compile,
@@ -392,8 +392,9 @@ test('T6048',
           [(wordsize(32), 48887164, 10),
             # prev:       38000000 (x86/Linux)
             # 2012-10-08: 48887164 (x86/Linux)
-           (wordsize(64), 108578664, 10)])
+           (wordsize(64), 95960720, 10)])
              # 18/09/2012 97247032 amd64/Linux
-             # 16/01/2014 108578664 amd64/Linux (unknown)
+             # 16/01/2014 108578664 amd64/Linux (unknown, likely foldl-via-foldr)
+             # 18/01/2014 95960720 amd64/Linux Call Arity improvements
       ],
       compile,[''])

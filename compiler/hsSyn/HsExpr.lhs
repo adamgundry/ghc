@@ -1501,6 +1501,7 @@ data HsMatchContext id  -- Context of a Match
 
   | ThPatSplice                 -- A Template Haskell pattern splice
   | ThPatQuote                  -- A Template Haskell pattern quotation [p| (a,b) |]
+  | PatSyn                      -- A pattern synonym declaration
   deriving (Data, Typeable)
 
 data HsStmtContext id
@@ -1548,6 +1549,7 @@ matchSeparator (StmtCtxt _) = ptext (sLit "<-")
 matchSeparator RecUpd       = panic "unused"
 matchSeparator ThPatSplice  = panic "unused"
 matchSeparator ThPatQuote   = panic "unused"
+matchSeparator PatSyn       = panic "unused"
 \end{code}
 
 \begin{code}
@@ -1573,6 +1575,7 @@ pprMatchContextNoun LambdaExpr      = ptext (sLit "lambda abstraction")
 pprMatchContextNoun ProcExpr        = ptext (sLit "arrow abstraction")
 pprMatchContextNoun (StmtCtxt ctxt) = ptext (sLit "pattern binding in")
                                       $$ pprStmtContext ctxt
+pprMatchContextNoun PatSyn          = ptext (sLit "pattern synonym declaration")
 
 -----------------
 pprAStmtContext, pprStmtContext :: Outputable id => HsStmtContext id -> SDoc
@@ -1621,6 +1624,7 @@ matchContextErrString LambdaExpr                 = ptext (sLit "lambda")
 matchContextErrString ProcExpr                   = ptext (sLit "proc")
 matchContextErrString ThPatSplice                = panic "matchContextErrString"  -- Not used at runtime
 matchContextErrString ThPatQuote                 = panic "matchContextErrString"  -- Not used at runtime
+matchContextErrString PatSyn                     = panic "matchContextErrString"  -- Not used at runtime
 matchContextErrString (StmtCtxt (ParStmtCtxt c))   = matchContextErrString (StmtCtxt c)
 matchContextErrString (StmtCtxt (TransStmtCtxt c)) = matchContextErrString (StmtCtxt c)
 matchContextErrString (StmtCtxt (PatGuard _))      = ptext (sLit "pattern guard")

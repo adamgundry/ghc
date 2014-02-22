@@ -130,7 +130,9 @@ Library
     Exposed-Modules:
         Avail
         BasicTypes
+        ConLike
         DataCon
+        PatSyn
         Demand
         Exception
         FieldLabel
@@ -182,7 +184,6 @@ Library
         CmmOpt
         CmmParse
         CmmProcPoint
-        CmmRewriteAssignments
         CmmSink
         CmmType
         CmmUtils
@@ -350,6 +351,7 @@ Library
         CoreToStg
         StgLint
         StgSyn
+        CallArity
         DmdAnal
         WorkWrap
         WwLib
@@ -374,6 +376,7 @@ Library
         TcValidity
         TcMatches
         TcPat
+        TcPatSyn
         TcRnDriver
         TcRnMonad
         TcRnTypes

@@ -42,3 +42,5 @@ test('T7710', normal, compile, [''])
 test('AutoDeriveTypeable', normal, compile, [''])
 
 test('T8138', reqlib('primitive'), compile, ['-O2'])
+test('T8631', normal, compile, [''])
+test('T8758', extra_clean(['T8758a.o', 'T8758a.hi']), multimod_compile, ['T8758a', '-v0'])

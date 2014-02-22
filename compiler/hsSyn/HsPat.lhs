@@ -19,8 +19,8 @@ module HsPat (
 
         mkPrefixConPat, mkCharLitPat, mkNilPat,
 
-        isBangHsBind, isLiftedPatBind,
-        isBangLPat, hsPatNeedsParens,
+        isStrictHsBind, looksLazyPatBind,
+        isStrictLPat, hsPatNeedsParens,
         isIrrefutableHsPat,
 
         pprParendLPat
@@ -38,6 +38,7 @@ import BasicTypes
 import PprCore          ( {- instance OutputableBndr TyVar -} )
 import TysWiredIn
 import Var
+import ConLike
 import DataCon
 import TyCon
 import Outputable
@@ -102,14 +103,15 @@ data Pat id
                 (HsConPatDetails id)
 
   | ConPatOut {
-        pat_con   :: Located DataCon,
+        pat_con   :: Located ConLike,
         pat_tvs   :: [TyVar],           -- Existentially bound type variables (tyvars only)
         pat_dicts :: [EvVar],           -- Ditto *coercion variables* and *dictionaries*
                                         -- One reason for putting coercion variable here, I think,
                                         --      is to ensure their kinds are zonked
         pat_binds :: TcEvBinds,         -- Bindings involving those dictionaries
         pat_args  :: HsConPatDetails id,
-        pat_ty    :: Type               -- The type of the pattern
+        pat_ty    :: Type,              -- The type of the pattern
+        pat_wrap  :: HsWrapper          -- Extra wrapper to pass to the matcher
     }
 
         ------------ View patterns ---------------
@@ -285,9 +287,10 @@ pprPat (ConPatOut { pat_con = con, pat_tvs = tvs, pat_dicts = dicts,
   = getPprStyle $ \ sty ->      -- Tiresome; in TcBinds.tcRhs we print out a
     if debugStyle sty then      -- typechecked Pat in an error message,
                                 -- and we want to make sure it prints nicely
-        ppr con <> braces (sep [ hsep (map pprPatBndr (tvs ++ dicts))
-                               , ppr binds])
-                <+> pprConArgs details
+        ppr con
+          <> braces (sep [ hsep (map pprPatBndr (tvs ++ dicts))
+                         , ppr binds])
+          <+> pprConArgs details
     else pprUserCon (unLoc con) details
 
 pprPat (LitPat s)           = ppr s
@@ -336,9 +339,9 @@ instance (OutputableBndr id, Outputable arg)
 mkPrefixConPat :: DataCon -> [OutPat id] -> Type -> OutPat id
 -- Make a vanilla Prefix constructor pattern
 mkPrefixConPat dc pats ty
-  = noLoc $ ConPatOut { pat_con = noLoc dc, pat_tvs = [], pat_dicts = [],
+  = noLoc $ ConPatOut { pat_con = noLoc (RealDataCon dc), pat_tvs = [], pat_dicts = [],
                         pat_binds = emptyTcEvBinds, pat_args = PrefixCon pats,
-                        pat_ty = ty }
+                        pat_ty = ty, pat_wrap = idHsWrapper }
 
 mkNilPat :: Type -> OutPat id
 mkNilPat ty = mkPrefixConPat nilDataCon [] ty
@@ -378,34 +381,34 @@ patterns are treated specially, of course.
 
 The 1.3 report defines what ``irrefutable'' and ``failure-free'' patterns are.
 \begin{code}
-isBangLPat :: LPat id -> Bool
-isBangLPat (L _ (BangPat {})) = True
-isBangLPat (L _ (ParPat p))   = isBangLPat p
-isBangLPat _                  = False
+isStrictLPat :: LPat id -> Bool
+isStrictLPat (L _ (ParPat p))             = isStrictLPat p
+isStrictLPat (L _ (BangPat {}))           = True
+isStrictLPat (L _ (TuplePat _ Unboxed _)) = True
+isStrictLPat _                            = False
 
-isBangHsBind :: HsBind id -> Bool
--- A pattern binding with an outermost bang
+isStrictHsBind :: HsBind id -> Bool
+-- A pattern binding with an outermost bang or unboxed tuple must be matched strictly
 -- Defined in this module because HsPat is above HsBinds in the import graph
-isBangHsBind (PatBind { pat_lhs = p }) = isBangLPat p
-isBangHsBind _                         = False
+isStrictHsBind (PatBind { pat_lhs = p }) = isStrictLPat p
+isStrictHsBind _                         = False
 
-isLiftedPatBind :: HsBind id -> Bool
--- A pattern binding with a compound pattern, not just a variable
---    (I# x)       yes
---    (# a, b #)   no, even if a::Int#
---    x            no, even if x::Int#
--- We want to warn about a missing bang-pattern on the yes's
-isLiftedPatBind (PatBind { pat_lhs = p }) = isLiftedLPat p
-isLiftedPatBind _                         = False
+looksLazyPatBind :: HsBind id -> Bool
+-- Returns True of anything *except*
+--     a StrictHsBind (as above) or 
+--     a VarPat
+-- In particular, returns True of a pattern binding with a compound pattern, like (I# x)
+looksLazyPatBind (PatBind { pat_lhs = p }) = looksLazyLPat p
+looksLazyPatBind _                         = False
 
-isLiftedLPat :: LPat id -> Bool
-isLiftedLPat (L _ (ParPat p))   = isLiftedLPat p
-isLiftedLPat (L _ (BangPat p))  = isLiftedLPat p
-isLiftedLPat (L _ (AsPat _ p))  = isLiftedLPat p
-isLiftedLPat (L _ (TuplePat _ Unboxed _)) = False
-isLiftedLPat (L _ (VarPat {}))            = False
-isLiftedLPat (L _ (WildPat {}))           = False
-isLiftedLPat _                            = True
+looksLazyLPat :: LPat id -> Bool
+looksLazyLPat (L _ (ParPat p))             = looksLazyLPat p
+looksLazyLPat (L _ (AsPat _ p))            = looksLazyLPat p
+looksLazyLPat (L _ (BangPat {}))           = False
+looksLazyLPat (L _ (TuplePat _ Unboxed _)) = False
+looksLazyLPat (L _ (VarPat {}))            = False
+looksLazyLPat (L _ (WildPat {}))           = False
+looksLazyLPat _                            = True
 
 isIrrefutableHsPat :: OutputableBndr id => LPat id -> Bool
 -- (isIrrefutableHsPat p) is true if matching against p cannot fail,
@@ -436,11 +439,13 @@ isIrrefutableHsPat pat
     go1 (PArrPat {})        = False     -- ?
 
     go1 (ConPatIn {})       = False     -- Conservative
-    go1 (ConPatOut{ pat_con = L _ con, pat_args = details })
+    go1 (ConPatOut{ pat_con = L _ (RealDataCon con), pat_args = details })
         =  isJust (tyConSingleDataCon_maybe (dataConTyCon con))
            -- NB: tyConSingleDataCon_maybe, *not* isProductTyCon, because
            -- the latter is false of existentials. See Trac #4439
         && all go (hsConPatArgs details)
+    go1 (ConPatOut{ pat_con = L _ (PatSynCon _pat) })
+        = False -- Conservative
 
     go1 (LitPat {})    = False
     go1 (NPat {})      = False
@@ -480,4 +485,3 @@ conPatNeedsParens (PrefixCon args) = not (null args)
 conPatNeedsParens (InfixCon {})    = True
 conPatNeedsParens (RecCon {})      = True
 \end{code}
-

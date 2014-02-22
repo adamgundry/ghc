@@ -43,7 +43,7 @@ module TcRnTypes(
 
         -- Canonical constraints
         Xi, Ct(..), Cts, emptyCts, andCts, andManyCts, dropDerivedWC,
-        singleCt, listToCts, ctsElts, extendCts, extendCtsList, 
+        singleCt, listToCts, ctsElts, extendCts, extendCtsList,
         isEmptyCts, isCTyEqCan, isCFunEqCan,
         isCDictCan_Maybe, isCFunEqCan_maybe,
         isCIrredEvCan, isCNonCanonical, isWantedCt, isDerivedCt,
@@ -92,6 +92,8 @@ import Class    ( Class )
 import TyCon    ( TyCon )
 import DataCon  ( DataCon, FieldLabel, dataConUserType, dataConOrigArgTys )
 import CoAxiom
+import ConLike  ( ConLike(..) )
+import PatSyn   ( PatSyn, patSynId )
 import TcType
 import Annotations
 import InstEnv
@@ -144,14 +146,14 @@ type TcId        = Id
 type TcIdSet     = IdSet
 
 
-type TcRnIf a b c = IOEnv (Env a b) c
-type IfM lcl a  = TcRnIf IfGblEnv lcl a         -- Iface stuff
+type TcRnIf a b = IOEnv (Env a b)
+type IfM lcl  = TcRnIf IfGblEnv lcl         -- Iface stuff
 
-type IfG a  = IfM () a                          -- Top level
-type IfL a  = IfM IfLclEnv a                    -- Nested
-type TcRn a = TcRnIf TcGblEnv TcLclEnv a
-type RnM  a = TcRn a            -- Historical
-type TcM  a = TcRn a            -- Historical
+type IfG  = IfM ()                          -- Top level
+type IfL  = IfM IfLclEnv                    -- Nested
+type TcRn = TcRnIf TcGblEnv TcLclEnv
+type RnM  = TcRn            -- Historical
+type TcM  = TcRn            -- Historical
 \end{code}
 
 Representation of type bindings to uninstantiated meta variables used during
@@ -338,6 +340,7 @@ data TcGblEnv
         tcg_rules     :: [LRuleDecl Id],    -- ...Rules
         tcg_fords     :: [LForeignDecl Id], -- ...Foreign import & exports
         tcg_vects     :: [LVectDecl Id],    -- ...Vectorisation declarations
+        tcg_patsyns   :: [PatSyn],          -- ...Pattern synonyms
 
         tcg_doc_hdr   :: Maybe LHsDocString, -- ^ Maybe Haddock header docs
         tcg_hpc       :: AnyHpcUsage,        -- ^ @True@ if any part of the
@@ -1699,7 +1702,7 @@ data SkolemInfo
   | DataSkol            -- Bound at a data type declaration
   | FamInstSkol         -- Bound at a family instance decl
   | PatSkol             -- An existential type variable bound by a pattern for
-      DataCon           -- a data constructor with an existential type.
+      ConLike           -- a data constructor with an existential type.
       (HsMatchContext Name)
              -- e.g.   data T = forall a. Eq a => MkT a
              --        f (MkT x) = ...
@@ -1744,10 +1747,15 @@ pprSkolInfo FamInstSkol     = ptext (sLit "the family instance declaration")
 pprSkolInfo BracketSkol     = ptext (sLit "a Template Haskell bracket")
 pprSkolInfo (RuleSkol name) = ptext (sLit "the RULE") <+> doubleQuotes (ftext name)
 pprSkolInfo ArrowSkol       = ptext (sLit "the arrow form")
-pprSkolInfo (PatSkol dc mc)  = sep [ ptext (sLit "a pattern with constructor")
-                                   , nest 2 $ ppr dc <+> dcolon
-                                              <+> ppr (dataConUserType dc) <> comma
-                                  , ptext (sLit "in") <+> pprMatchContext mc ]
+pprSkolInfo (PatSkol cl mc) = case cl of
+    RealDataCon dc -> sep [ ptext (sLit "a pattern with constructor")
+                          , nest 2 $ ppr dc <+> dcolon
+                            <+> ppr (dataConUserType dc) <> comma
+                          , ptext (sLit "in") <+> pprMatchContext mc ]
+    PatSynCon ps -> sep [ ptext (sLit "a pattern with pattern synonym")
+                        , nest 2 $ ppr ps <+> dcolon
+                          <+> ppr (varType (patSynId ps)) <> comma
+                        , ptext (sLit "in") <+> pprMatchContext mc ]
 pprSkolInfo (InferSkol ids) = sep [ ptext (sLit "the inferred type of")
                                   , vcat [ ppr name <+> dcolon <+> ppr ty
                                          | (name,ty) <- ids ]]
@@ -1872,4 +1880,3 @@ pprO ListOrigin            = ptext (sLit "an overloaded list")
 instance Outputable CtOrigin where
   ppr = pprO
 \end{code}
-

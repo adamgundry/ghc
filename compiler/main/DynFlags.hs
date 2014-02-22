@@ -240,6 +240,7 @@ data DumpFlag
    | Opt_D_dump_spec
    | Opt_D_dump_prep
    | Opt_D_dump_stg
+   | Opt_D_dump_call_arity
    | Opt_D_dump_stranal
    | Opt_D_dump_strsigs
    | Opt_D_dump_tc
@@ -288,6 +289,7 @@ data GeneralFlag
    | Opt_PrintExplicitKinds
 
    -- optimisation opts
+   | Opt_CallArity
    | Opt_Strictness
    | Opt_LateDmdAnal
    | Opt_KillAbsence
@@ -582,6 +584,7 @@ data ExtensionFlag
    | Opt_NegativeLiterals
    | Opt_OverloadedRecordFields
    | Opt_EmptyCase
+   | Opt_PatternSynonyms
    deriving (Eq, Enum, Show)
 
 -- | Contains not only a collection of 'GeneralFlag's but also a plethora of
@@ -1732,10 +1735,7 @@ combineSafeFlags a b | a == Sf_SafeInferred = return b
 --     * function to test if the flag is on
 --     * function to turn the flag off
 unsafeFlags :: [(String, DynFlags -> SrcSpan, DynFlags -> Bool, DynFlags -> DynFlags)]
-unsafeFlags = [("-XGeneralizedNewtypeDeriving", newDerivOnLoc,
-                   xopt Opt_GeneralizedNewtypeDeriving,
-                   flip xopt_unset Opt_GeneralizedNewtypeDeriving),
-               ("-XTemplateHaskell", thOnLoc,
+unsafeFlags = [("-XTemplateHaskell", thOnLoc,
                    xopt Opt_TemplateHaskell,
                    flip xopt_unset Opt_TemplateHaskell)]
 
@@ -2322,6 +2322,7 @@ dynamic_flags = [
   , Flag "ddump-spec"              (setDumpFlag Opt_D_dump_spec)
   , Flag "ddump-prep"              (setDumpFlag Opt_D_dump_prep)
   , Flag "ddump-stg"               (setDumpFlag Opt_D_dump_stg)
+  , Flag "ddump-call-arity"        (setDumpFlag Opt_D_dump_call_arity)
   , Flag "ddump-stranal"           (setDumpFlag Opt_D_dump_stranal)
   , Flag "ddump-strsigs"           (setDumpFlag Opt_D_dump_strsigs)
   , Flag "ddump-tc"                (setDumpFlag Opt_D_dump_tc)
@@ -2623,6 +2624,7 @@ fFlags = [
   ( "error-spans",                      Opt_ErrorSpans, nop ),
   ( "print-explicit-foralls",           Opt_PrintExplicitForalls, nop ),
   ( "print-explicit-kinds",             Opt_PrintExplicitKinds, nop ),
+  ( "call-arity",                       Opt_CallArity, nop ),
   ( "strictness",                       Opt_Strictness, nop ),
   ( "late-dmd-anal",                    Opt_LateDmdAnal, nop ),
   ( "specialise",                       Opt_Specialise, nop ),
@@ -2863,7 +2865,8 @@ xFlags = [
   ( "PackageImports",                   Opt_PackageImports, nop ),
   ( "NegativeLiterals",                 Opt_NegativeLiterals, nop ),
   ( "OverloadedRecordFields",           Opt_OverloadedRecordFields, nop ),
-  ( "EmptyCase",                        Opt_EmptyCase, nop )
+  ( "EmptyCase",                        Opt_EmptyCase, nop ),
+  ( "PatternSynonyms",                  Opt_PatternSynonyms, nop )
   ]
 
 defaultFlags :: Settings -> [GeneralFlag]
@@ -2964,6 +2967,7 @@ optLevelFlags
                                          --              in PrelRules
     , ([1,2],   Opt_DoEtaReduction)
     , ([1,2],   Opt_CaseMerge)
+    , ([1,2],   Opt_CallArity)
     , ([1,2],   Opt_Strictness)
     , ([1,2],   Opt_CSE)
     , ([1,2],   Opt_FullLaziness)
@@ -3656,7 +3660,7 @@ makeDynFlagsConsistent dflags
             warn = "No native code generator, so using LLVM"
         in loop dflags' warn
  | hscTarget dflags == HscLlvm &&
-   not ((arch == ArchX86_64) && (os == OSLinux || os == OSDarwin)) &&
+   not ((arch == ArchX86_64) && (os == OSLinux || os == OSDarwin || os == OSFreeBSD)) &&
    not ((isARM arch) && (os == OSLinux)) &&
    (not (gopt Opt_Static dflags) || gopt Opt_PIC dflags)
     = if cGhcWithNativeCodeGen == "YES"

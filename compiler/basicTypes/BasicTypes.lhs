@@ -35,6 +35,7 @@ module BasicTypes(
         compareFixity,
 
         RecFlag(..), isRec, isNonRec, boolToRecFlag,
+        Origin(..), isGenerated,
 
         RuleName,
 
@@ -419,6 +420,25 @@ instance Outputable RecFlag where
 
 %************************************************************************
 %*                                                                      *
+                Code origin
+%*                                                                      *
+%************************************************************************
+\begin{code}
+data Origin = FromSource
+            | Generated
+            deriving( Eq, Data, Typeable )
+
+isGenerated :: Origin -> Bool
+isGenerated Generated = True
+isGenerated FromSource = False
+
+instance Outputable Origin where
+  ppr FromSource  = ptext (sLit "FromSource")
+  ppr Generated   = ptext (sLit "Generated")
+\end{code}
+
+%************************************************************************
+%*                                                                      *
                 Instance overlap flag
 %*                                                                      *
 %************************************************************************
@@ -546,7 +566,7 @@ defn of OccInfo here, safely at the bottom
 \begin{code}
 -- | Identifier occurrence information
 data OccInfo
-  = NoOccInfo           -- ^ There are many occurrences, or unknown occurences
+  = NoOccInfo           -- ^ There are many occurrences, or unknown occurrences
 
   | IAmDead             -- ^ Marks unused variables.  Sometimes useful for
                         -- lambda and case-bound variables.

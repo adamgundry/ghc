@@ -70,6 +70,8 @@ import Class
 import Inst
 import TyCon
 import CoAxiom
+import PatSyn ( patSynId )
+import ConLike
 import DataCon
 import TcEvidence( TcEvBinds(..) )
 import Id
@@ -341,7 +343,7 @@ tcTypedBracket brack@(TExpBr expr) res_ty
        -- Throw away the typechecked expression but return its type.
        -- We'll typecheck it again when we splice it in somewhere
        ; (_tc_expr, expr_ty) <- setStage (Brack cur_stage (TcPending ps_ref lie_var)) $
-                                tcInferRhoNC expr 
+                                tcInferRhoNC expr
                                 -- NC for no context; tcBracket does that
 
        ; meta_ty <- tcTExpTy expr_ty
@@ -1014,7 +1016,7 @@ reifyInstances th_nm th_tys
                      ; let matches = lookupFamInstEnv inst_envs tc tys
                      ; traceTc "reifyInstances2" (ppr matches)
                      ; mapM (reifyFamilyInstance . fim_instance) matches }
-            _  -> bale_out (hang (ptext (sLit "reifyInstances:") <+> quotes (ppr ty)) 
+            _  -> bale_out (hang (ptext (sLit "reifyInstances:") <+> quotes (ppr ty))
                                2 (ptext (sLit "is not a class constraint or type family application"))) }
   where
     doc = ClassInstanceCtx
@@ -1165,13 +1167,15 @@ reifyThing (AGlobal (AnId id))
     }
 
 reifyThing (AGlobal (ATyCon tc))   = reifyTyCon tc
-reifyThing (AGlobal (ADataCon dc))
+reifyThing (AGlobal (AConLike (RealDataCon dc)))
   = do  { let name = dataConName dc
         ; ty <- reifyType (idType (dataConWrapId dc))
         ; fix <- reifyFixity name
         ; return (TH.DataConI (reifyName name) ty
                               (reifyName (dataConOrigTyCon dc)) fix)
         }
+reifyThing (AGlobal (AConLike (PatSynCon ps)))
+  = noTH (sLit "pattern synonyms") (ppr $ patSynId ps)
 
 reifyThing (ATcId {tct_id = id})
   = do  { ty1 <- zonkTcType (idType id) -- Make use of all the info we have, even
@@ -1305,7 +1309,7 @@ reifyClassInstance i
 
 ------------------------------
 reifyFamilyInstance :: FamInst -> TcM TH.Dec
-reifyFamilyInstance (FamInst { fi_flavor = flavor 
+reifyFamilyInstance (FamInst { fi_flavor = flavor
                              , fi_fam = fam
                              , fi_tys = lhs
                              , fi_rhs = rhs })
@@ -1395,7 +1399,7 @@ reifyFamFlavour tc
   | Just ax <- isClosedSynFamilyTyCon_maybe tc
   = do { eqns <- brListMapM reifyAxBranch $ coAxiomBranches ax
        ; return $ Right eqns }
-                   
+
   | otherwise
   = panic "TcSplice.reifyFamFlavour: not a type family"
 
@@ -1422,6 +1426,7 @@ reify_tc_app tc tys
          | tc `hasKey` listTyConKey   = TH.ListT
          | tc `hasKey` nilDataConKey  = TH.PromotedNilT
          | tc `hasKey` consDataConKey = TH.PromotedConsT
+         | tc `hasKey` eqTyConKey     = TH.EqualityT
          | otherwise                  = TH.ConT (reifyName tc)
     removeKinds :: Kind -> [TypeRep.Type] -> [TypeRep.Type]
     removeKinds (FunTy k1 k2) (h:t)
@@ -1437,17 +1442,7 @@ reifyPred ty
   -- We could reify the implicit paramter as a class but it seems
   -- nicer to support them properly...
   | isIPPred ty = noTH (sLit "implicit parameters") (ppr ty)
-  | otherwise
-   = case classifyPredType ty of
-  ClassPred cls tys -> do { tys' <- reifyTypes tys 
-                          ; return $ TH.ClassP (reifyName cls) tys' }
-  EqPred ty1 ty2    -> do { ty1' <- reifyType ty1
-                          ; ty2' <- reifyType ty2
-                          ; return $ TH.EqualP ty1' ty2'
-                          }
-  TuplePred _ -> noTH (sLit "tuple predicates") (ppr ty)
-  IrredPred _ -> noTH (sLit "irreducible predicates") (ppr ty)
-
+  | otherwise   = reifyType ty
 
 ------------------------------
 reifyName :: NamedThing n => n -> TH.Name

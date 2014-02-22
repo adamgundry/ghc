@@ -74,6 +74,7 @@ import SrcLoc
 import HscTypes
 import ListSetOps
 import Outputable
+import ConLike
 import DataCon
 import Type
 import Class
@@ -83,8 +84,9 @@ import Annotations
 import Data.List ( sortBy )
 import Data.IORef ( readIORef )
 import Data.Ord
-
-#ifdef GHCI
+#ifndef GHCI
+import BasicTypes ( Origin(..) )
+#else
 import BasicTypes hiding( SuccessFlag(..) )
 import TcType   ( isUnitTy, isTauTy )
 import TcHsType
@@ -376,6 +378,7 @@ tcRnExtCore hsc_env (HsExtCore this_mod decls src_binds)
                                 mg_axioms    = tcg_axioms tcg_env,
                                 mg_inst_env  = tcg_inst_env tcg_env,
                                 mg_fam_inst_env = tcg_fam_inst_env tcg_env,
+                                mg_patsyns      = [], -- TODO
                                 mg_rules        = [],
                                 mg_vect_decls   = [],
                                 mg_anns         = [],
@@ -676,7 +679,7 @@ checkHiBootIface
         ; mb_dfun_prs <- mapM check_inst boot_insts
         ; let dfun_prs   = catMaybes mb_dfun_prs
               boot_dfuns = map fst dfun_prs
-              dfun_binds = listToBag [ mkVarBind boot_dfun (nlHsVar dfun)
+              dfun_binds = listToBag [ (Generated, mkVarBind boot_dfun (nlHsVar dfun))
                                      | (boot_dfun, dfun) <- dfun_prs ]
               type_env'  = extendTypeEnvWithIds local_type_env boot_dfuns
               tcg_env'   = tcg_env { tcg_binds = binds `unionBags` dfun_binds }
@@ -759,7 +762,7 @@ checkBootDecl (AnId id1) (AnId id2)
 checkBootDecl (ATyCon tc1) (ATyCon tc2)
   = checkBootTyCon tc1 tc2
 
-checkBootDecl (ADataCon dc1) (ADataCon _)
+checkBootDecl (AConLike (RealDataCon dc1)) (AConLike (RealDataCon _))
   = pprPanic "checkBootDecl" (ppr dc1)
 
 checkBootDecl _ _ = False -- probably shouldn't happen
@@ -1378,7 +1381,7 @@ check_main dflags tcg_env
 
         ; return (tcg_env { tcg_main  = Just main_name,
                             tcg_binds = tcg_binds tcg_env
-                                        `snocBag` main_bind,
+                                        `snocBag` (Generated, main_bind),
                             tcg_dus   = tcg_dus tcg_env
                                         `plusDU` usesOnly (unitFV main_name)
                         -- Record the use of 'main', so that we don't
@@ -1620,7 +1623,7 @@ tcUserStmt (L loc (BodyStmt expr _ _ _))
 
               -- [let it = expr]
               let_stmt  = L loc $ LetStmt $ HsValBinds $
-                          ValBindsOut [(NonRecursive,unitBag the_bind)] []
+                          ValBindsOut [(NonRecursive,unitBag (FromSource, the_bind))] []
 
               -- [it <- e]
               bind_stmt = L loc $ BindStmt (L loc (VarPat fresh_it))

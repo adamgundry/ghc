@@ -36,7 +36,8 @@ import LiberateCase     ( liberateCase )
 import SAT              ( doStaticArgs )
 import Specialise       ( specProgram)
 import SpecConstr       ( specConstrProgram)
-import DmdAnal       ( dmdAnalProgram )
+import DmdAnal          ( dmdAnalProgram )
+import CallArity        ( callArityAnalProgram )
 import WorkWrap         ( wwTopBinds )
 import Vectorise        ( vectorise )
 import FastString
@@ -114,6 +115,7 @@ getCoreToDo dflags
     phases        = simplPhases        dflags
     max_iter      = maxSimplIterations dflags
     rule_check    = ruleCheck          dflags
+    call_arity    = gopt Opt_CallArity                    dflags
     strictness    = gopt Opt_Strictness                   dflags
     full_laziness = gopt Opt_FullLaziness                 dflags
     do_specialise = gopt Opt_Specialise                   dflags
@@ -258,6 +260,11 @@ getCoreToDo dflags
                 -- Don't stop now!
         simpl_phase 0 ["main"] (max max_iter 3),
 
+        runWhen call_arity $ CoreDoPasses
+            [ CoreDoCallArity
+            , simpl_phase 0 ["post-call-arity"] max_iter
+            ],
+
         runWhen strictness demand_analyser,
 
         runWhen full_laziness $
@@ -373,54 +380,57 @@ runCorePasses passes guts
        = do { hsc_env <- getHscEnv
             ; let dflags = hsc_dflags hsc_env
             ; liftIO $ showPass dflags pass
-            ; guts' <- doCorePass dflags pass guts
+            ; guts' <- doCorePass pass guts
             ; liftIO $ endPass hsc_env pass (mg_binds guts') (mg_rules guts')
             ; return guts' }
 
-doCorePass :: DynFlags -> CoreToDo -> ModGuts -> CoreM ModGuts
-doCorePass _      pass@(CoreDoSimplify {})  = {-# SCC "Simplify" #-}
-                                              simplifyPgm pass
+doCorePass :: CoreToDo -> ModGuts -> CoreM ModGuts
+doCorePass pass@(CoreDoSimplify {})  = {-# SCC "Simplify" #-}
+                                       simplifyPgm pass
 
-doCorePass _      CoreCSE                   = {-# SCC "CommonSubExpr" #-}
-                                              doPass cseProgram
+doCorePass CoreCSE                   = {-# SCC "CommonSubExpr" #-}
+                                       doPass cseProgram
 
-doCorePass _      CoreLiberateCase          = {-# SCC "LiberateCase" #-}
-                                              doPassD liberateCase
+doCorePass CoreLiberateCase          = {-# SCC "LiberateCase" #-}
+                                       doPassD liberateCase
 
-doCorePass dflags CoreDoFloatInwards        = {-# SCC "FloatInwards" #-}
-                                              doPass (floatInwards dflags)
+doCorePass CoreDoFloatInwards        = {-# SCC "FloatInwards" #-}
+                                       doPassD floatInwards
 
-doCorePass _      (CoreDoFloatOutwards f)   = {-# SCC "FloatOutwards" #-}
-                                              doPassDUM (floatOutwards f)
+doCorePass (CoreDoFloatOutwards f)   = {-# SCC "FloatOutwards" #-}
+                                       doPassDUM (floatOutwards f)
 
-doCorePass _      CoreDoStaticArgs          = {-# SCC "StaticArgs" #-}
-                                              doPassU doStaticArgs
+doCorePass CoreDoStaticArgs          = {-# SCC "StaticArgs" #-}
+                                       doPassU doStaticArgs
 
-doCorePass _      CoreDoStrictness          = {-# SCC "NewStranal" #-}
-                                              doPassDM dmdAnalProgram
+doCorePass CoreDoCallArity           = {-# SCC "CallArity" #-}
+                                       doPassD callArityAnalProgram
 
-doCorePass dflags CoreDoWorkerWrapper       = {-# SCC "WorkWrap" #-}
-                                              doPassU (wwTopBinds dflags)
+doCorePass CoreDoStrictness          = {-# SCC "NewStranal" #-}
+                                       doPassDFM dmdAnalProgram
 
-doCorePass dflags CoreDoSpecialising        = {-# SCC "Specialise" #-}
-                                              specProgram dflags
+doCorePass CoreDoWorkerWrapper       = {-# SCC "WorkWrap" #-}
+                                       doPassDFU wwTopBinds
 
-doCorePass _      CoreDoSpecConstr          = {-# SCC "SpecConstr" #-}
-                                              specConstrProgram
+doCorePass CoreDoSpecialising        = {-# SCC "Specialise" #-}
+                                       specProgram
 
-doCorePass _      CoreDoVectorisation       = {-# SCC "Vectorise" #-}
-                                              vectorise
+doCorePass CoreDoSpecConstr          = {-# SCC "SpecConstr" #-}
+                                       specConstrProgram
 
-doCorePass _      CoreDoPrintCore              = observe   printCore
-doCorePass _      (CoreDoRuleCheck phase pat)  = ruleCheckPass phase pat
-doCorePass _      CoreDoNothing                = return
-doCorePass _      (CoreDoPasses passes)        = runCorePasses passes
+doCorePass CoreDoVectorisation       = {-# SCC "Vectorise" #-}
+                                       vectorise
+
+doCorePass CoreDoPrintCore              = observe   printCore
+doCorePass (CoreDoRuleCheck phase pat)  = ruleCheckPass phase pat
+doCorePass CoreDoNothing                = return
+doCorePass (CoreDoPasses passes)        = runCorePasses passes
 
 #ifdef GHCI
-doCorePass _      (CoreDoPluginPass _ pass) = {-# SCC "Plugin" #-} pass
+doCorePass (CoreDoPluginPass _ pass) = {-# SCC "Plugin" #-} pass
 #endif
 
-doCorePass _      pass = pprPanic "doCorePass" (ppr pass)
+doCorePass pass = pprPanic "doCorePass" (ppr pass)
 \end{code}
 
 %************************************************************************
@@ -461,6 +471,21 @@ doPassDU do_pass = doPassDUM (\dflags us -> return . do_pass dflags us)
 
 doPassU :: (UniqSupply -> CoreProgram -> CoreProgram) -> ModGuts -> CoreM ModGuts
 doPassU do_pass = doPassDU (const do_pass)
+
+doPassDFM :: (DynFlags -> FamInstEnvs -> CoreProgram -> IO CoreProgram) -> ModGuts -> CoreM ModGuts
+doPassDFM do_pass guts = do
+    dflags <- getDynFlags
+    p_fam_env <- getPackageFamInstEnv
+    let fam_envs = (p_fam_env, mg_fam_inst_env guts)
+    doPassM (liftIO . do_pass dflags fam_envs) guts
+
+doPassDFU :: (DynFlags -> FamInstEnvs -> UniqSupply -> CoreProgram -> CoreProgram) -> ModGuts -> CoreM ModGuts
+doPassDFU do_pass guts = do
+    dflags <- getDynFlags
+    us     <- getUniqueSupplyM
+    p_fam_env <- getPackageFamInstEnv
+    let fam_envs = (p_fam_env, mg_fam_inst_env guts)
+    doPass (do_pass dflags fam_envs us) guts
 
 -- Most passes return no stats and don't change rules: these combinators
 -- let us lift them to the full blown ModGuts+CoreM world
@@ -613,7 +638,7 @@ simplifyPgmIO pass@(CoreDoSimplify max_iterations mode)
       , sz == sz     -- Force it
       = do {
                 -- Occurrence analysis
-           let {   -- Note [Vectorisation declarations and occurences]
+           let {   -- Note [Vectorisation declarations and occurrences]
                    -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                    -- During the 'InitialPhase' (i.e., before vectorisation), we need to make sure
                    -- that the right-hand sides of vectorisation declarations are taken into

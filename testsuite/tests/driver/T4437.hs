@@ -34,7 +34,8 @@ expectedGhcOnlyExtensions = ["RelaxedLayout",
                              "AlternativeLayoutRule",
                              "AlternativeLayoutRuleTransitional",
                              "OverloadedRecordFields",
-                             "JavaScriptFFI"]
+                             "JavaScriptFFI",
+                             "PatternSynonyms"]
 
 expectedCabalOnlyExtensions :: [String]
 expectedCabalOnlyExtensions = ["Generics",

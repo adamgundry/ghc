@@ -30,6 +30,7 @@ module Id (
         mkGlobalId, mkVanillaGlobal, mkVanillaGlobalWithInfo,
         mkLocalId, mkLocalIdWithInfo, mkExportedLocalId,
         mkSysLocal, mkSysLocalM, mkUserLocal, mkUserLocalM,
+        mkDerivedLocalM,
         mkTemplateLocals, mkTemplateLocalsNum, mkTemplateLocal,
         mkWorkerId, mkWiredInIdName,
 
@@ -71,7 +72,8 @@ module Id (
         isStateHackType, stateHackOneShot, typeOneShot,
 
         -- ** Reading 'IdInfo' fields
-        idArity, 
+        idArity,
+        idCallArity,
         idUnfolding, realIdUnfolding,
         idSpecialisation, idCoreRules, idHasRules,
         idCafInfo,
@@ -82,6 +84,7 @@ module Id (
         setIdUnfoldingLazily,
         setIdUnfolding,
         setIdArity,
+        setIdCallArity,
 
         setIdSpecialisation,
         setIdCafInfo,
@@ -131,6 +134,7 @@ import StaticFlags
 infixl  1 `setIdUnfoldingLazily`,
           `setIdUnfolding`,
           `setIdArity`,
+          `setIdCallArity`,
           `setIdOccInfo`,
           `setIdOneShotInfo`,
 
@@ -268,6 +272,10 @@ mkUserLocal occ uniq ty loc = mkLocalId (mkInternalName uniq occ loc) ty
 
 mkUserLocalM :: MonadUnique m => OccName -> Type -> SrcSpan -> m Id
 mkUserLocalM occ ty loc = getUniqueM >>= (\uniq -> return (mkUserLocal occ uniq ty loc))
+
+mkDerivedLocalM :: MonadUnique m => (OccName -> OccName) -> Id -> Type -> m Id
+mkDerivedLocalM deriv_name id ty
+    = getUniqueM >>= (\uniq -> return (mkLocalId (mkDerivedInternalName deriv_name uniq (getName id)) ty))
 
 mkWiredInIdName :: Module -> FastString -> Unique -> Id -> Name
 mkWiredInIdName mod fs uniq id
@@ -465,6 +473,12 @@ idArity id = arityInfo (idInfo id)
 
 setIdArity :: Id -> Arity -> Id
 setIdArity id arity = modifyIdInfo (`setArityInfo` arity) id
+
+idCallArity :: Id -> Arity
+idCallArity id = callArityInfo (idInfo id)
+
+setIdCallArity :: Id -> Arity -> Id
+setIdCallArity id arity = modifyIdInfo (`setCallArityInfo` arity) id
 
 idRepArity :: Id -> RepArity
 idRepArity x = typeRepArity (idArity x) (idType x)

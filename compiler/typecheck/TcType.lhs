@@ -947,7 +947,7 @@ tcGetTyVar :: String -> Type -> TyVar
 tcGetTyVar msg ty = expectJust msg (tcGetTyVar_maybe ty)
 
 tcIsTyVarTy :: Type -> Bool
-tcIsTyVarTy ty = maybeToBool (tcGetTyVar_maybe ty)
+tcIsTyVarTy ty = isJust (tcGetTyVar_maybe ty)
 
 -----------------------
 tcSplitDFunTy :: Type -> ([TyVar], [Type], Class, [Type])
@@ -994,7 +994,7 @@ tcInstHeadTyAppAllTyVars ty
         -- and that each is distinct
     ok tys = equalLength tvs tys && hasNoDups tvs
            where
-             tvs = mapCatMaybes get_tv tys
+             tvs = mapMaybe get_tv tys
 
     get_tv (TyVarTy tv)  = Just tv      -- through synonyms
     get_tv _             = Nothing

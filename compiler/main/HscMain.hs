@@ -1575,6 +1575,7 @@ mkModGuts mod safe binds =
         mg_insts        = [],
         mg_fam_insts    = [],
         mg_axioms       = [],
+        mg_patsyns      = [],
         mg_rules        = [],
         mg_vect_decls   = [],
         mg_binds        = binds,
