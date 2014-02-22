@@ -1436,9 +1436,9 @@ freeNamesIfClsSig :: IfaceClassOp -> NameSet
 freeNamesIfClsSig (IfaceClassOp _n _dm ty) = freeNamesIfType ty
 
 freeNamesIfConDecls :: IfaceConDecls -> NameSet
-freeNamesIfConDecls (IfDataTyCon c fs) = fnList freeNamesIfConDecl c
-freeNamesIfConDecls (IfNewTyCon c fs)  = freeNamesIfConDecl c
-freeNamesIfConDecls _                  = emptyNameSet
+freeNamesIfConDecls (IfDataTyCon c _) = fnList freeNamesIfConDecl c
+freeNamesIfConDecls (IfNewTyCon  c _) = freeNamesIfConDecl c
+freeNamesIfConDecls _                 = emptyNameSet
 
 freeNamesIfConDecl :: IfaceConDecl -> NameSet
 freeNamesIfConDecl c =

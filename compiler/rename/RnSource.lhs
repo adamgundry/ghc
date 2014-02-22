@@ -1079,8 +1079,8 @@ orphanRoleAnnotErr (L loc decl)
 
 rnDataDefn :: HsDocContext -> HsDataDefn RdrName -> RnM (HsDataDefn Name, FreeVars)
 rnDataDefn doc (HsDataDefn { dd_ND = new_or_data, dd_cType = cType
-                                 , dd_ctxt = context, dd_cons = condecls 
-                                 , dd_kindSig = sig, dd_derivs = derivs })
+                           , dd_ctxt = context, dd_cons = condecls
+                           , dd_kindSig = sig, dd_derivs = derivs })
   = do  { checkTc (h98_style || null (unLoc context)) 
                   (badGadtStupidTheta doc)
 
@@ -1254,9 +1254,9 @@ rnConDecls = mapFvRn (wrapLocFstM rnConDecl)
 
 rnConDecl :: ConDecl RdrName -> RnM (ConDecl Name, FreeVars)
 rnConDecl decl@(ConDecl { con_name = name, con_qvars = tvs
-                              , con_cxt = lcxt@(L loc cxt), con_details = details
-                              , con_res = res_ty, con_doc = mb_doc
-                              , con_old_rec = old_rec, con_explicit = expl })
+                        , con_cxt = lcxt@(L loc cxt), con_details = details
+                        , con_res = res_ty, con_doc = mb_doc
+                        , con_old_rec = old_rec, con_explicit = expl })
   = do  { addLocM checkConName name
         ; when old_rec (addWarn (deprecRecSyntax decl))
         ; new_name <- lookupLocatedTopBndrRn name

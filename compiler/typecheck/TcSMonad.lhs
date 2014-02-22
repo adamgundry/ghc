@@ -140,7 +140,6 @@ import Unique
 import UniqFM
 import Maybes ( orElse, catMaybes, firstJusts )
 import Pair ( pSnd )
-import BasicTypes
 
 import TrieMap
 import Control.Monad( ap, when )

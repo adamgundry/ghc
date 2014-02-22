@@ -4,6 +4,11 @@
 
 TcFldInsts: Creating instances for OverloadedRecordFields
 
+For notes on the implementation of OverloadedRecordFields, see
+https://ghc.haskell.org/trac/ghc/wiki/Records/OverloadedRecordFields/Implementation
+
+See also GHC.Records in the base library.
+
 \begin{code}
 module TcFldInsts ( makeOverloadedRecFldInsts ) where
 
@@ -34,7 +39,6 @@ import PrelNames
 
 import Bag
 import BasicTypes
-import DynFlags
 import FastString
 import Id
 import MkId
