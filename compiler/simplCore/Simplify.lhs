@@ -28,7 +28,7 @@ import DataCon          ( DataCon, dataConWorkId, dataConRepStrictness
 --import TyCon            ( isEnumerationTyCon ) -- temporalily commented out. See #8326
 import CoreMonad        ( Tick(..), SimplifierMode(..) )
 import CoreSyn
-import Demand           ( StrictSig(..), dmdTypeDepth )
+import Demand           ( StrictSig(..), dmdTypeDepth, isStrictDmd )
 import PprCore          ( pprParendExpr, pprCoreExpr )
 import CoreUnfold
 import CoreUtils
@@ -730,53 +730,51 @@ simplUnfolding :: SimplEnv-> TopLevelFlag
                -> OutExpr
                -> Unfolding -> SimplM Unfolding
 -- Note [Setting the new unfolding]
-simplUnfolding env _ _ _ df@(DFunUnfolding { df_bndrs = bndrs, df_args = args })
-  = do { (env', bndrs') <- simplBinders env bndrs
-       ; args' <- mapM (simplExpr env') args
-       ; return (df { df_bndrs = bndrs', df_args  = args' }) }
+simplUnfolding env top_lvl id new_rhs unf
+  = case unf of
+      DFunUnfolding { df_bndrs = bndrs, df_con = con, df_args = args }
+        -> do { (env', bndrs') <- simplBinders rule_env bndrs
+              ; args' <- mapM (simplExpr env') args
+              ; return (mkDFunUnfolding bndrs' con args') }
 
-simplUnfolding env top_lvl id _
-    (CoreUnfolding { uf_tmpl = expr, uf_arity = arity
-                   , uf_src = src, uf_guidance = guide })
-  | isStableSource src
-  = do { expr' <- simplExpr rule_env expr
-       ; let is_top_lvl = isTopLevel top_lvl
-       ; case guide of
-           UnfWhen sat_ok _    -- Happens for INLINE things
-              -> let guide' = UnfWhen sat_ok (inlineBoringOk expr')
-                     -- Refresh the boring-ok flag, in case expr'
-                     -- has got small. This happens, notably in the inlinings
-                     -- for dfuns for single-method classes; see
-                     -- Note [Single-method classes] in TcInstDcls.
-                     -- A test case is Trac #4138
-                 in return (mkCoreUnfolding src is_top_lvl expr' arity guide')
-                 -- See Note [Top-level flag on inline rules] in CoreUnfold
+      CoreUnfolding { uf_tmpl = expr, uf_arity = arity
+                    , uf_src = src, uf_guidance = guide }
+        | isStableSource src
+        -> do { expr' <- simplExpr rule_env expr
+              ; case guide of
+                  UnfWhen sat_ok _    -- Happens for INLINE things
+                     -> let guide' = UnfWhen sat_ok (inlineBoringOk expr')
+                        -- Refresh the boring-ok flag, in case expr'
+                        -- has got small. This happens, notably in the inlinings
+                        -- for dfuns for single-method classes; see
+                        -- Note [Single-method classes] in TcInstDcls.
+                        -- A test case is Trac #4138
+                        in return (mkCoreUnfolding src is_top_lvl expr' arity guide')
+                            -- See Note [Top-level flag on inline rules] in CoreUnfold
 
-           _other              -- Happens for INLINABLE things
-              -> let bottoming = isBottomingId id
-                 in bottoming `seq` -- See Note [Force bottoming field]
-                    do dflags <- getDynFlags
-                       return (mkUnfolding dflags src is_top_lvl bottoming expr')
+                  _other              -- Happens for INLINABLE things
+                     -> bottoming `seq` -- See Note [Force bottoming field]
+                        do { dflags <- getDynFlags
+                           ; return (mkUnfolding dflags src is_top_lvl bottoming expr') } }
                 -- If the guidance is UnfIfGoodArgs, this is an INLINABLE
                 -- unfolding, and we need to make sure the guidance is kept up
                 -- to date with respect to any changes in the unfolding.
-       }
+
+      _other -> bottoming `seq`  -- See Note [Force bottoming field]
+                do { dflags <- getDynFlags
+                   ; return (mkUnfolding dflags InlineRhs is_top_lvl bottoming new_rhs) }
+                     -- We make an  unfolding *even for loop-breakers*.
+                     -- Reason: (a) It might be useful to know that they are WHNF
+                     --         (b) In TidyPgm we currently assume that, if we want to
+                     --             expose the unfolding then indeed we *have* an unfolding
+                     --             to expose.  (We could instead use the RHS, but currently
+                     --             we don't.)  The simple thing is always to have one.
   where
+    bottoming = isBottomingId id
+    is_top_lvl = isTopLevel top_lvl
     act      = idInlineActivation id
     rule_env = updMode (updModeForInlineRules act) env
                -- See Note [Simplifying inside InlineRules] in SimplUtils
-
-simplUnfolding _ top_lvl id new_rhs _
-  = let bottoming = isBottomingId id
-    in bottoming `seq`  -- See Note [Force bottoming field]
-       do dflags <- getDynFlags
-          return (mkUnfolding dflags InlineRhs (isTopLevel top_lvl) bottoming new_rhs)
-          -- We make an  unfolding *even for loop-breakers*.
-          -- Reason: (a) It might be useful to know that they are WHNF
-          --         (b) In TidyPgm we currently assume that, if we want to
-          --             expose the unfolding then indeed we *have* an unfolding
-          --             to expose.  (We could instead use the RHS, but currently
-          --             we don't.)  The simple thing is always to have one.
 \end{code}
 
 Note [Force bottoming field]
@@ -1703,22 +1701,26 @@ comparison operations (e.g. in (>=) for Int.Int32)
 
 Note [Case elimination: lifted case]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-We also make sure that we deal with this very common case,
-where x has a lifted type:
+If a case over a lifted type has a single alternative, and is being used
+as a strict 'let' (all isDeadBinder bndrs), we may want to do this
+transformation:
 
-        case e of
-          x -> ...x...
+    case e of r       ===>   let r = e in ...r...
+      _ -> ...r...
 
-Here we are using the case as a strict let; if x is used only once
-then we want to inline it.  We have to be careful that this doesn't
-make the program terminate when it would have diverged before, so we
-check that
         (a) 'e' is already evaluated (it may so if e is a variable)
-            Specifically we check (exprIsHNF e)
+            Specifically we check (exprIsHNF e).  In this case
+            we can just allocate the WHNF directly with a let.
 or
         (b) 'x' is not used at all and e is ok-for-speculation
+             The ok-for-spec bit checks that we don't lose any
+             exceptions or divergence
+or
+        (c) 'x' is used strictly in the body, and 'e' is a variable
+            Then we can just substitute 'e' for 'x' in the body.
+            See Note [Eliminating redundant seqs]
 
-For the (b), consider
+For (b), the "not used at all" test is important.  Consider
    case (case a ># b of { True -> (p,q); False -> (q,p) }) of
      r -> blah
 The scrutinee is ok-for-speculation (it looks inside cases), but we do
@@ -1727,33 +1729,42 @@ not want to transform to
    in blah
 because that builds an unnecessary thunk.
 
-Note [Case binder next]
-~~~~~~~~~~~~~~~~~~~~~~~
-If we have
-   case e of f { _ -> f e1 e2 }
-then we can safely do CaseElim.   The main criterion is that the
-case-binder is evaluated *next*.  Previously we just asked that
-the case-binder is used strictly; but that can change
+Note [Eliminating redundant seqs]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+If we have this:
+   case x of r { _ -> ..r.. }
+where 'r' is used strictly in (..r..), the case is effectively a 'seq'
+on 'x', but since 'r' is used strictly anyway, we can safely transform to
+   (...x...)
+
+Note that this can change the error behaviour.  For example, we might
+transform
     case x of { _ -> error "bad" }
     --> error "bad"
-which is very puzzling if 'x' is later bound to (error "good").
-Where the order of evaluation is specified (via seq or case)
-we should respect it.
+which is might be puzzling if 'x' currently lambda-bound, but later gets
+let-bound to (error "good").
+
+Nevertheless, the paper "A semantics for imprecise exceptions" allows
+this transformation. If you want to fix the evaluation order, use
+'pseq'.  See Trac #8900 for an example where the loss of this
+transformation bit us in practice. 
+
 See also Note [Empty case alternatives] in CoreSyn.
 
-So instead we use case_bndr_evald_next to see when f is the *next*
-thing to be eval'd.  This came up when fixing Trac #7542.
-See also Note [Eta reduction of an eval'd function] in CoreUtils.
+Just for reference, the original code (added Jan 13) looked like this:
+     || case_bndr_evald_next rhs
 
-  For reference, the old code was an extra disjunct in elim_lifted
-       || (strict_case_bndr && scrut_is_var scrut)
-      strict_case_bndr = isStrictDmd (idDemandInfo case_bndr)
-      scrut_is_var (Cast s _) = scrut_is_var s
-      scrut_is_var (Var _)    = True
-      scrut_is_var _          = False
+    case_bndr_evald_next :: CoreExpr -> Bool
+      -- See Note [Case binder next]
+    case_bndr_evald_next (Var v)         = v == case_bndr
+    case_bndr_evald_next (Cast e _)      = case_bndr_evald_next e
+    case_bndr_evald_next (App e _)       = case_bndr_evald_next e
+    case_bndr_evald_next (Case e _ _ _)  = case_bndr_evald_next e
+    case_bndr_evald_next _               = False
 
-      -- True if evaluation of the case_bndr is the next
-      -- thing to be eval'd.  Then dropping the case
+(This came up when fixing Trac #7542. See also Note [Eta reduction of
+an eval'd function] in CoreUtils.)
+
 
 Note [Case elimination: unlifted case]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1877,8 +1888,9 @@ rebuildCase env scrut case_bndr [(_, bndrs, rhs)] cont
     elim_lifted   -- See Note [Case elimination: lifted case]
       = exprIsHNF scrut
      || (is_plain_seq && ok_for_spec)
-              -- Note: not the same as exprIsHNF
-     || case_bndr_evald_next rhs
+            -- Note: not the same as exprIsHNF
+     || (strict_case_bndr && scrut_is_var scrut)
+            -- See Note [Eliminating redundant seqs]
 
     elim_unlifted
       | is_plain_seq = exprOkForSideEffects scrut
@@ -1891,16 +1903,13 @@ rebuildCase env scrut case_bndr [(_, bndrs, rhs)] cont
 
     ok_for_spec      = exprOkForSpeculation scrut
     is_plain_seq     = isDeadBinder case_bndr -- Evaluation *only* for effect
+    strict_case_bndr = isStrictDmd (idDemandInfo case_bndr)
 
-    case_bndr_evald_next :: CoreExpr -> Bool
-      -- See Note [Case binder next]
-    case_bndr_evald_next (Var v)         = v == case_bndr
-    case_bndr_evald_next (Cast e _)      = case_bndr_evald_next e
-    case_bndr_evald_next (App e _)       = case_bndr_evald_next e
-    case_bndr_evald_next (Case e _ _ _)  = case_bndr_evald_next e
-    case_bndr_evald_next _               = False
-      -- Could add a case for Let,
-      -- but I'm worried it could become expensive
+    scrut_is_var :: CoreExpr -> Bool
+    scrut_is_var (Cast s _) = scrut_is_var s
+    scrut_is_var (Var _)    = True
+    scrut_is_var _          = False
+
 
 --------------------------------------------------
 --      3. Try seq rules; see Note [User-defined RULES for seq] in MkId

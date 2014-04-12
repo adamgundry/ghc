@@ -95,10 +95,11 @@ TargetElf = YES
 endif
 
 # Some platforms don't support shared libraries
-NoSharedLibsPlatformList = arm-unknown-linux \
-	powerpc-unknown-linux \
+NoSharedLibsPlatformList = powerpc-unknown-linux \
 	x86_64-unknown-mingw32 \
-	i386-unknown-mingw32
+	i386-unknown-mingw32 \
+	sparc-sun-solaris2 \
+	sparc-unknown-linux
 
 ifeq "$(SOLARIS_BROKEN_SHLD)" "YES"
 NoSharedLibsPlatformList += i386-unknown-solaris2
@@ -387,8 +388,8 @@ endif
 BIN_DIST_NAME         = ghc-$(ProjectVersion)
 BIN_DIST_PREP_DIR     = bindistprep/$(BIN_DIST_NAME)
 BIN_DIST_PREP_TAR     = bindistprep/$(BIN_DIST_NAME)-$(TARGETPLATFORM).tar
-BIN_DIST_PREP_TAR_BZ2 = $(BIN_DIST_PREP_TAR).bz2
-BIN_DIST_TAR_BZ2      = $(BIN_DIST_NAME)-$(TARGETPLATFORM).tar.bz2
+BIN_DIST_PREP_TAR_COMP = $(BIN_DIST_PREP_TAR).$(TAR_COMP_EXT)
+BIN_DIST_TAR_COMP     = $(BIN_DIST_NAME)-$(TARGETPLATFORM).tar.$(TAR_COMP_EXT)
 
 # -----------------------------------------------------------------------------
 # Utilities programs: flags
@@ -652,7 +653,7 @@ PIC			= pic
 RANLIB_CMD = @RANLIB_CMD@
 REAL_RANLIB_CMD = @REAL_RANLIB_CMD@
 SED			= @SedCmd@
-SHELL			= /bin/sh
+SHELL			= @SHELL@
 
 HaveDtrace		= @HaveDtrace@
 USE_DTRACE = $(HaveDtrace)
@@ -660,6 +661,7 @@ DTRACE			= @DtraceCmd@
 
 LD = @LdCmd@
 NM = @NmCmd@
+AR = @ArCmd@
 OBJDUMP = @ObjdumpCmd@
 
 LLC = @LlcCmd@
@@ -697,6 +699,24 @@ PATCH_CMD      = @PatchCmd@
 TAR_CMD        = @TarCmd@
 BZIP2_CMD      = bzip2
 GZIP_CMD       = gzip
+XZ_CMD         = xz -9e
+
+# bzip2 is default compression
+TAR_COMP      = bzip2
+
+# select compression command and .tar extension based on TAR_COMP value
+ifeq "$(TAR_COMP)" "bzip2"
+TAR_COMP_CMD  = $(BZIP2_CMD)
+TAR_COMP_EXT  = bz2
+else ifeq "$(TAR_COMP)" "gzip"
+TAR_COMP_CMD  = $(GZIP_CMD)
+TAR_COMP_EXT  = gz
+else ifeq "$(TAR_COMP)" "xz"
+TAR_COMP_CMD  = $(XZ_CMD)
+TAR_COMP_EXT  = xz
+else
+$(error $$(TAR_COMP) set to unknown value "$(TAR_COMP)" (supported: "bzip2", "gzip", "xz"))
+endif
 
 ifeq "$(Windows_Host)" "YES"
 TOUCH_CMD      = $(utils/touchy_dist_INPLACE)

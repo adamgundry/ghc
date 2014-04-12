@@ -745,7 +745,7 @@
           </row>
           <row>
             <entry><option>-XAutoDeriveTypeable</option></entry>
-            <entry>Automatically <link linkend="auto-derive-typeable">derive Typeable instances for every datatype and type class declaration</link>.
+            <entry>Automatically <link linkend="deriving-typeable">derive Typeable instances for every datatype and type class declaration</link>.
             Implies <option>-XDeriveDataTypeable</option>.</entry>
             <entry>dynamic</entry>
             <entry><option>-XNoAutoDeriveTypeable</option></entry>
@@ -1887,6 +1887,43 @@
             <entry><option>-fno-unfolding-use-threshold</option></entry>
           </row>
 
+          <row>
+            <entry><option>-fmax-inline-alloc-size</option>=<replaceable>n</replaceable></entry>
+            <entry>Set the maximum size of inline array allocations to
+            <replaceable>n</replaceable> bytes (default: 128). GHC
+            will allocate non-pinned arrays of statically known size
+            in the current nursery block if they're no bigger than
+            <replaceable>n</replaceable> bytes, ignoring GC overheap.
+            This value should be quite a bit smaller than the block
+            size (typically: 4096).</entry>
+            <entry>dynamic</entry>
+            <entry>-</entry>
+          </row>
+
+          <row>
+            <entry>
+            <option>-fmax-inline-memcpy-insns</option>=<replaceable>n</replaceable>
+            </entry>
+            <entry>Inline memcpy calls if they would generate no more
+            than <replaceable>n</replaceable> pseudo instructions
+            (default: 32).
+            </entry>
+            <entry>dynamic</entry>
+            <entry>-</entry>
+          </row>
+
+          <row>
+            <entry>
+            <option>-fmax-inline-memset-insns</option>=<replaceable>n</replaceable>
+            </entry>
+            <entry>Inline memset calls if they would generate no more
+            than <replaceable>n</replaceable> pseudo instructions
+            (default: 32).
+            </entry>
+            <entry>dynamic</entry>
+            <entry>-</entry>
+          </row>
+
         </tbody>
       </tgroup>
     </informaltable>
@@ -3020,7 +3057,7 @@
         </thead>
         <tbody>
           <row>
-            <entry><option>-j <replaceable>N</replaceable></option></entry>
+            <entry><option>-j<replaceable>N</replaceable></option></entry>
             <entry>When compiling with <literal>--make</literal>, compile <replaceable>N</replaceable> modules in parallel.</entry>
             <entry>dynamic</entry>
             <entry>-</entry>

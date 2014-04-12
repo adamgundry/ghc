@@ -782,7 +782,8 @@ tcDataDefn rec_info tc_name tvs kind
   = do { extra_tvs <- tcDataKindSig kind
        ; let final_tvs  = tvs ++ extra_tvs
              roles      = rti_roles rec_info tc_name
-       ; stupid_theta <- tcHsContext ctxt
+       ; stupid_tc_theta <- tcHsContext ctxt
+       ; stupid_theta    <- zonkTcTypeToTypes emptyZonkEnv stupid_tc_theta
        ; kind_signatures <- xoptM Opt_KindSignatures
        ; is_boot         <- tcIsHsBoot  -- Are we compiling an hs-boot file?
 
@@ -1021,7 +1022,9 @@ tcFamTyPats :: Name -- of the family ToCon
             -> Kind -- of the family TyCon
             -> HsWithBndrs [LHsType Name] -- patterns
             -> (TcKind -> TcM ())         -- kind-checker for RHS
-            -> ([TKVar] -> [TcType] -> Kind -> TcM a)
+            -> ([TKVar]              -- Kind and type variables
+                -> [TcType]          -- Kind and type arguments
+                -> Kind -> TcM a)
             -> TcM a
 tcFamTyPats fam_tc_name kind pats kind_checker thing_inside
   = do { (fam_arg_kinds, typats, res_kind)
@@ -1156,7 +1159,7 @@ tcConDecl new_or_data rep_tycon tmpl_tvs res_tmpl        -- Data types
                        (arg_tys, stricts) = unzip btys
                  ; return (ctxt, arg_tys, res_ty, is_infix, field_lbls, stricts) }
 
-             -- Generalise the kind variables (returning quantifed TcKindVars)
+             -- Generalise the kind variables (returning quantified TcKindVars)
              -- and quantify the type variables (substituting their kinds)
              -- REMEMBER: 'tkvs' are:
              --    ResTyH98:  the *existential* type variables only

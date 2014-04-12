@@ -856,9 +856,11 @@ y)</literal> will not be coalesced.
 </title>
 
 <para>
-Pattern synonyms are enabled by the flag <literal>-XPatternSynonyms</literal>.
-More information and examples of view patterns can be found on the
-<ulink url="http://ghc.haskell.org/trac/ghc/wiki/PatternSynonyms">Wiki
+Pattern synonyms are enabled by the flag
+<literal>-XPatternSynonyms</literal>, which is required for both
+defining them <emphasis>and</emphasis> using them.  More information
+and examples of view patterns can be found on the <ulink
+url="http://ghc.haskell.org/trac/ghc/wiki/PatternSynonyms">Wiki
 page</ulink>.
 </para>
 
@@ -3752,19 +3754,21 @@ GHC now allows stand-alone <literal>deriving</literal> declarations, enabled by 
 </programlisting>
 The syntax is identical to that of an ordinary instance declaration apart from (a) the keyword
 <literal>deriving</literal>, and (b) the absence of the <literal>where</literal> part.
-Note the following points:
+</para>
+<para>
+However, standalone deriving differs from a <literal>deriving</literal> clause in a number
+of important ways:
 <itemizedlist>
+<listitem><para>The standalone deriving declaration does not need to be in the
+same module as the data type declaration.  (But be aware of the dangers of
+orphan instances (<xref linkend="orphan-modules"/>).
+</para></listitem>
+
 <listitem><para>
 You must supply an explicit context (in the example the context is <literal>(Eq a)</literal>),
 exactly as you would in an ordinary instance declaration.
 (In contrast, in a <literal>deriving</literal> clause
 attached to a data type declaration, the context is inferred.)
-</para></listitem>
-
-<listitem><para>
-A <literal>deriving instance</literal> declaration
-must obey the same rules concerning form and termination as ordinary instance declarations,
-controlled by the same flags; see <xref linkend="instance-decls"/>.
 </para></listitem>
 
 <listitem><para>
@@ -3789,6 +3793,8 @@ declaration attached to a <literal>data</literal> declaration,
 GHC does not restrict the form of the data type.  Instead, GHC simply generates the appropriate
 boilerplate code for the specified class, and typechecks it. If there is a type error, it is
 your problem. (GHC will show you the offending code if it has a type error.)
+</para>
+<para>
 The merit of this is that you can derive instances for GADTs and other exotic
 data types, providing only that the boilerplate code does indeed typecheck.  For example:
 <programlisting>
@@ -3803,7 +3809,24 @@ data type declaration for <literal>T</literal>,
 because <literal>T</literal> is a GADT, but you <emphasis>can</emphasis> generate
 the instance declaration using stand-alone deriving.
 </para>
+<para>
+The down-side is that,
+if the boilerplate code fails to typecheck, you will get an error message about that
+code, which you did not write.  Whereas, with a <literal>deriving</literal> clause
+the side-conditions are necessarily more conservative, but any error message
+may be more comprehensible.
+</para>
 </listitem>
+</itemizedlist></para>
+
+<para>
+In other ways, however, a standalone deriving obeys the same rules as ordinary deriving:
+<itemizedlist>
+<listitem><para>
+A <literal>deriving instance</literal> declaration
+must obey the same rules concerning form and termination as ordinary instance declarations,
+controlled by the same flags; see <xref linkend="instance-decls"/>.
+</para></listitem>
 
 <listitem>
 <para>The stand-alone syntax is generalised for newtypes in exactly the same
@@ -3821,9 +3844,8 @@ GHC always treats the <emphasis>last</emphasis> parameter of the instance
 
 </sect2>
 
-
-<sect2 id="deriving-typeable">
-<title>Deriving clause for extra classes (<literal>Typeable</literal>, <literal>Data</literal>, etc)</title>
+<sect2 id="deriving-extra">
+<title>Deriving instances of extra classes (<literal>Data</literal>, etc)</title>
 
 <para>
 Haskell 98 allows the programmer to add "<literal>deriving( Eq, Ord )</literal>" to a data type
@@ -3835,27 +3857,6 @@ classes <literal>Eq</literal>, <literal>Ord</literal>,
 <para>
 GHC extends this list with several more classes that may be automatically derived:
 <itemizedlist>
-<listitem><para> With <option>-XDeriveDataTypeable</option>, you can derive instances of the classes
-<literal>Typeable</literal>, and <literal>Data</literal>, defined in the library
-modules <literal>Data.Typeable</literal> and <literal>Data.Data</literal> respectively.
-</para>
-<para>Since GHC 7.8.1, <literal>Typeable</literal> is kind-polymorphic (see
-<xref linkend="kind-polymorphism"/>) and can be derived for any datatype and
-type class. Instances for datatypes can be derived by attaching a
-<literal>deriving Typeable</literal> clause to the datatype declaration, or by
-using standalone deriving (see <xref linkend="stand-alone-deriving"/>).
-Instances for type classes can only be derived using standalone deriving.
-For data families, <literal>Typeable</literal> should only be derived for the
-uninstantiated family type; each instance will then automatically have a
-<literal>Typeable</literal> instance too.
-See also <xref linkend="auto-derive-typeable"/>.
-</para>
-<para>
-Also since GHC 7.8.1, handwritten (ie. not derived) instances of
-<literal>Typeable</literal> are forbidden, and will result in an error.
-</para>
-</listitem>
-
 <listitem><para> With <option>-XDeriveGeneric</option>, you can derive
 instances of the classes <literal>Generic</literal> and
 <literal>Generic1</literal>, defined in <literal>GHC.Generics</literal>.
@@ -3868,6 +3869,12 @@ the class <literal>Functor</literal>,
 defined in <literal>GHC.Base</literal>.
 </para></listitem>
 
+<listitem><para> With <option>-XDeriveDataTypeable</option>, you can derive instances of
+the class <literal>Data</literal>,
+defined in <literal>Data.Data</literal>.  See <xref linkend="deriving-typeable"/> for 
+deriving <literal>Typeable</literal>.
+</para></listitem>
+
 <listitem><para> With <option>-XDeriveFoldable</option>, you can derive instances of
 the class <literal>Foldable</literal>,
 defined in <literal>Data.Foldable</literal>.
@@ -3878,21 +3885,66 @@ the class <literal>Traversable</literal>,
 defined in <literal>Data.Traversable</literal>.
 </para></listitem>
 </itemizedlist>
+You can also use a standalone deriving declaration instead
+(see <xref linkend="stand-alone-deriving"/>).
+</para>
+<para>
 In each case the appropriate class must be in scope before it
 can be mentioned in the <literal>deriving</literal> clause.
 </para>
 </sect2>
 
-<sect2 id="auto-derive-typeable">
-<title>Automatically deriving <literal>Typeable</literal> instances</title>
+<sect2 id="deriving-typeable">
+<title>Deriving <literal>Typeable</literal> instances</title>
 
-<para>
+<para>The class <literal>Typeable</literal> is very special:
+<itemizedlist>
+<listitem><para>
+<literal>Typeable</literal> is kind-polymorphic (see
+<xref linkend="kind-polymorphism"/>).
+</para></listitem>
+
+<listitem><para>
+Only derived instances of <literal>Typeable</literal> are allowed;
+i.e. handwritten instances are forbidden.  This ensures that the
+programmer cannot subert the type system by writing bogus instances.
+</para></listitem>
+
+<listitem><para>
+With <option>-XDeriveDataTypeable</option> 
+GHC allows you to derive instances of <literal>Typeable</literal> for data types or newtypes,
+using a <literal>deriving</literal> clause, or using 
+a standalone deriving declaration (<xref linkend="stand-alone-deriving"/>).
+</para></listitem>
+
+<listitem><para>
+With <option>-XDataKinds</option>, deriving <literal>Typeable</literal> for a data
+type (whether via a deriving clause or standalone deriving)
+also derives <literal>Typeable</literal> for the promoted data constructors (<xref linkend="promotion"/>).
+</para></listitem>
+
+<listitem><para>
+However, using standalone deriving, you can <emphasis>also</emphasis> derive
+a <literal>Typeable</literal> instance for a data family.
+You may not add a <literal>deriving(Typeable)</literal> clause to a
+<literal>data instance</literal> declaration; instead you must use a
+standalone deriving declaration for the data family.
+</para></listitem>
+
+<listitem><para>
+Using standalone deriving, you can <emphasis>also</emphasis> derive
+a <literal>Typeable</literal> instance for a type class.
+</para></listitem>
+
+<listitem><para>
 The flag <option>-XAutoDeriveTypeable</option> triggers the generation
-of derived <literal>Typeable</literal> instances for every datatype and type
-class declaration in the module it is used. It will also generate
-<literal>Typeable</literal> instances for any promoted data constructors
-(<xref linkend="promotion"/>). This flag implies
-<option>-XDeriveDataTypeable</option> (<xref linkend="deriving-typeable"/>).
+of derived <literal>Typeable</literal> instances for every datatype, data family, 
+and type class declaration in the module it is used, unless a manually-specified one is
+already provided.
+This flag implies <option>-XDeriveDataTypeable</option>.
+</para></listitem>
+</itemizedlist>
+
 </para>
 
 </sect2>
@@ -4018,47 +4070,52 @@ the newtype and its representation.
 
 <sect3> <title> A more precise specification </title>
 <para>
-Derived instance declarations are constructed as follows. Consider the
-declaration (after expansion of any type synonyms)
+A derived instance is derived only for declarations of these forms (after expansion of any type synonyms)
 
 <programlisting>
-  newtype T v1...vn = T' (t vk+1...vn) deriving (c1...cm)
+  newtype T v1..vn                   = MkT (t vk+1..vn) deriving (C t1..tj)
+  newtype instance T s1..sk vk+1..vn = MkT (t vk+1..vn) deriving (C t1..tj)
 </programlisting>
-
 where
  <itemizedlist>
 <listitem><para>
-  The <literal>ci</literal> are partial applications of
-  classes of the form <literal>C t1'...tj'</literal>, where the arity of <literal>C</literal>
+<literal>v1..vn</literal> are type variables, and <literal>t</literal>, 
+<literal>s1..sk</literal>, <literal>t1..tj</literal> are types.
+</para></listitem>
+<listitem><para>
+  The <literal>(C t1..tj)</literal> is a partial applications of the class <literal>C</literal>,
+  where the arity of <literal>C</literal>
   is exactly <literal>j+1</literal>.  That is, <literal>C</literal> lacks exactly one type argument.
 </para></listitem>
 <listitem><para>
-  The <literal>k</literal> is chosen so that <literal>ci (T v1...vk)</literal> is well-kinded.
+  <literal>k</literal> is chosen so that <literal>C t1..tj (T v1...vk)</literal> is well-kinded.
+(Or, in the case of a <literal>data instance</literal>, so that <literal>C t1..tj (T s1..sk)</literal> is
+well kinded.)
 </para></listitem>
 <listitem><para>
   The type <literal>t</literal> is an arbitrary type.
 </para></listitem>
 <listitem><para>
-  The type variables <literal>vk+1...vn</literal> do not occur in <literal>t</literal>,
-  nor in the <literal>ci</literal>, and
+  The type variables <literal>vk+1...vn</literal> do not occur in the types <literal>t</literal>,
+  <literal>s1..sk</literal>, or <literal>t1..tj</literal>.
 </para></listitem>
 <listitem><para>
-  None of the <literal>ci</literal> is <literal>Read</literal>, <literal>Show</literal>,
+  <literal>C</literal> is not <literal>Read</literal>, <literal>Show</literal>,
 		<literal>Typeable</literal>, or <literal>Data</literal>.  These classes
 		should not "look through" the type or its constructor.  You can still
 		derive these classes for a newtype, but it happens in the usual way, not
 		via this new mechanism.
 </para></listitem>
 <listitem><para>
-  It is safe to coerce each of the methods of <literal>ci</literal>. That is,
-  the missing last argument to each of the <literal>ci</literal> is not used
-  at a nominal role in any of the <literal>ci</literal>'s methods.
+  It is safe to coerce each of the methods of <literal>C</literal>. That is,
+  the missing last argument to <literal>C</literal> is not used
+  at a nominal role in any of the <literal>C</literal>'s methods.
   (See <xref linkend="roles"/>.)</para></listitem>
 </itemizedlist>
-Then, for each <literal>ci</literal>, the derived instance
+Then the derived instance is of form
 declaration is:
 <programlisting>
-  instance ci t => ci (T v1...vk)
+  instance C t1..tj t => C t1..tj (T v1...vk)
 </programlisting>
 As an example which does <emphasis>not</emphasis> work, consider
 <programlisting>
@@ -6569,50 +6626,6 @@ Note that this requires <option>-XTypeOperators</option>.
 </para>
 </sect2>
 
-<sect2 id="promoted-literals">
-<title>Promoted Literals</title>
-<para>
-Numeric and string literals are promoted to the type level, giving convenient
-access to a large number of predefined type-level constants.  Numeric literals
-are of kind <literal>Nat</literal>, while string literals are of kind
-<literal>Symbol</literal>.  These kinds are defined in the module
-<literal>GHC.TypeLits</literal>.
-</para>
-
-<para>
-Here is an exampe of using type-level numeric literals to provide a safe
-interface to a low-level function:
-<programlisting>
-import GHC.TypeLits
-import Data.Word
-import Foreign
-
-newtype ArrPtr (n :: Nat) a = ArrPtr (Ptr a)
-
-clearPage :: ArrPtr 4096 Word8 -> IO ()
-clearPage (ArrPtr p) = ...
-</programlisting>
-</para>
-
-<para>
-Here is an example of using type-level string literals to simulate
-simple record operations:
-<programlisting>
-data Label (l :: Symbol) = Get
-
-class Has a l b | a l -> b where
-  from :: a -> Label l -> b
-
-data Point = Point Int Int deriving Show
-
-instance Has Point "x" Int where from (Point x _) _ = x
-instance Has Point "y" Int where from (Point _ y) _ = y
-
-example = from (Point 1 2) (Get :: Label "x")
-</programlisting>
-</para>
-</sect2>
-
 <sect2 id="promotion-existentials">
 <title>Promoting existential data constructors</title>
 <para>
@@ -6667,6 +6680,142 @@ To avoid this quagmire, we simply forbid promoting type operators to the kind le
 
 </sect1>
 
+<sect1 id="type-level-literals">
+<title>Type-Level Literals</title>
+<para>
+GHC supports numeric and string literals at the type level, giving convenient
+access to a large number of predefined type-level constants.
+Numeric literals are of kind <literal>Nat</literal>, while string literals
+are of kind <literal>Symbol</literal>.
+This feature is enabled by the <literal>XDataKinds</literal>
+language extension.
+</para>
+
+<para>
+The kinds of the literals and all other low-level operations for this feature
+are defined in module <literal>GHC.TypeLits</literal>. Note that the module
+defines some type-level operators that clash with their value-level
+counterparts (e.g. <literal>(+)</literal>).  Import and export declarations
+referring to these operators require an explicit namespace
+annotation (see <xref linkend="explicit-namespaces"/>).
+</para>
+
+<para>
+Here is an exampe of using type-level numeric literals to provide a safe
+interface to a low-level function:
+<programlisting>
+import GHC.TypeLits
+import Data.Word
+import Foreign
+
+newtype ArrPtr (n :: Nat) a = ArrPtr (Ptr a)
+
+clearPage :: ArrPtr 4096 Word8 -> IO ()
+clearPage (ArrPtr p) = ...
+</programlisting>
+</para>
+
+<para>
+Here is an example of using type-level string literals to simulate
+simple record operations:
+<programlisting>
+data Label (l :: Symbol) = Get
+
+class Has a l b | a l -> b where
+  from :: a -> Label l -> b
+
+data Point = Point Int Int deriving Show
+
+instance Has Point "x" Int where from (Point x _) _ = x
+instance Has Point "y" Int where from (Point _ y) _ = y
+
+example = from (Point 1 2) (Get :: Label "x")
+</programlisting>
+</para>
+
+<sect2 id="typelit-runtime">
+<title>Runtime Values for Type-Level Literals</title>
+<para>
+Sometimes it is useful to access the value-level literal assocaited with
+a type-level literal.  This is done with the functions
+<literal>natVal</literal> and <literal>symbolVal</literal>. For example:
+<programlisting>
+GHC.TypeLits> natVal (Proxy :: Proxy 2)
+2
+</programlisting>
+These functions are overloaded because they need to return a different
+result, depending on the type at which they are instantiated.
+<programlisting>
+natVal :: KnownNat n => proxy n -> Integer
+
+-- instance KnownNat 0
+-- instance KnownNat 1
+-- instance KnownNat 2
+-- ...
+</programlisting>
+GHC discharges the constraint as soon as it knows what concrete
+type-level literal is being used in the program.  Note that this works
+only for <emphasis>literals</emphasis> and not arbitrary type expressions.
+For example, a constraint of the form <literal>KnownNat (a + b)</literal>
+will <emphasis>not</emphasis> be simplified to
+<literal>(KnownNat a, KnownNat b)</literal>; instead, GHC will keep the
+constraint as is, until it can simplify <literal>a + b</literal> to
+a constant value.
+</para>
+</sect2>
+
+<para>
+It is also possible to convert a run-time integer or string value to
+the corresponding type-level literal.  Of course, the resulting type
+literal will be unknown at compile-time, so it is hidden in an existential
+type.   The conversion may be performed using <literal>someNatVal</literal>
+for integers and <literal>someSymbolVal</literal> for strings:
+<programlisting>
+someNatVal :: Integer -> Maybe SomeNat
+SomeNat    :: KnownNat n => Proxy n -> SomeNat
+</programlisting>
+The operations on strings are similar.
+</para>
+
+<sect2 id="typelit-tyfuns">
+<title>Computing With Type-Level Naturals</title>
+<para>
+GHC 7.8 can evaluate arithmetic expressions involving type-level natural
+numbers.  Such expressions may be constructed using the type-families
+<literal>(+), (*), (^)</literal> for addition, multiplication,
+and exponentiation.  Numbers may be compared using <literal>(&lt;=?)</literal>,
+which returns a promoted boolean value, or <literal>(&lt;=)</literal>, which
+compares numbers as a constraint.  For example:
+<programlisting>
+GHC.TypeLits> natVal (Proxy :: Proxy (2 + 3))
+5
+</programlisting>
+</para>
+<para>
+At present, GHC is quite limited in its reasoning about arithmetic:
+it will only evalute the arithmetic type functions and compare the results---
+in the same way that it does for any other type function.  In particular,
+it does not know more general facts about arithmetic, such as the commutativity
+and associativity of <literal>(+)</literal>, for example.
+</para>
+
+<para>
+However, it is possible to perform a bit of "backwards" evaluation.
+For example, here is how we could get GHC to compute arbitrary logarithms
+at the type level:
+<programlisting>
+lg :: Proxy base -> Proxy (base ^ pow) -> Proxy pow
+lg _ _ = Proxy
+
+GHC.TypeLits> natVal (lg (Proxy :: Proxy 2) (Proxy :: Proxy 8))
+3
+</programlisting>
+</para>
+</sect2>
+
+
+</sect1>
+
 
   <sect1 id="equality-constraints">
     <title>Equality constraints</title>
@@ -6708,6 +6857,21 @@ class (F a ~ b) => C a b where
       with the class head.  Method signatures are not affected by that
       process.
     </para>
+
+  <sect2 id="coercible">
+  <title>The <literal>Coercible</literal> constraint</title>
+  <para>
+  The constraint <literal>Coercible t1 t2</literal> is similar to <literal>t1 ~
+  t2</literal>, but denotes representational equality between
+  <literal>t1</literal> and <literal>t2</literal> in the sense of Roles
+  (<xref linkend="roles"/>). It is exported by
+  <ulink url="&libraryBaseLocation;/Data-Coerce.html"><literal>Data.Coerce</literal></ulink>,
+  which also contains the documentation. More details and discussion can be found in
+  the paper
+  <ulink href="http://www.cis.upenn.edu/~eir/papers/2014/coercible/coercible.pdf">Safe Coercions"</ulink>.
+  </para>
+  </sect2>
+
   </sect1>
 
 <sect1 id="constraint-kind">
@@ -11917,14 +12081,18 @@ to be at role nominal. This would be done with a declaration</para>
 </programlisting>
 
 <para>Role annotations can also be used should a programmer wish to write
-a class with a representational (or phantom) role.</para>
+a class with a representational (or phantom) role. However, as a class
+with non-nominal roles can quickly lead to class instance incoherence,
+it is necessary to also specify <option>-XIncoherentInstances</option>
+to allow non-nominal roles for classes.</para>
 
 <para>The other place where role annotations may be necessary are in
 <literal>hs-boot</literal> files (<xref linkend="mutual-recursion"/>), where
 the right-hand sides of definitions can be omitted. As usual, the
 types/classes declared in an <literal>hs-boot</literal> file must match up
 with the definitions in the <literal>hs</literal> file, including down to the
-roles. The default role is representational in <literal>hs-boot</literal> files,
+roles. The default role for datatypes
+is representational in <literal>hs-boot</literal> files,
 corresponding to the common use case.</para>
 
 <para>
@@ -11953,7 +12121,7 @@ Here are some examples:</para>
   type role T4 nominal
   data T4 a = MkT4 (a Int) -- OK, but nominal is higher than necessary
 
-  type role C representational _
+  type role C representational _   -- OK, with -XIncoherentInstances
   class C a b where ...    -- OK, b will get a nominal role
 
   type role X nominal

@@ -252,6 +252,7 @@ gen_hs_source (Info defaults entries) =
     ++ "{-\n"
         ++ unlines (map opt defaults)
     ++ "-}\n"
+    ++ "import GHC.Types (Coercible)\n"
         ++ unlines (concatMap ent entries') ++ "\n\n\n"
      where entries' = concatMap desugarVectorSpec entries
 
@@ -268,8 +269,6 @@ gen_hs_source (Info defaults entries) =
            hdr (PseudoOpSpec { name = n })                       = wrapOp n ++ ","
            hdr (PrimTypeSpec { ty = TyApp (TyCon n) _ })         = wrapTy n ++ ","
            hdr (PrimTypeSpec {})                                 = error $ "Illegal type spec"
-           hdr (PrimClassSpec { cls = TyApp (TyCon n) _ })       = wrapTy n ++ ","
-           hdr (PrimClassSpec {})                                = error "Illegal class spec"
            hdr (PrimVecTypeSpec { ty = TyApp (VecTyCon n _) _ }) = wrapTy n ++ ","
            hdr (PrimVecTypeSpec {})                              = error $ "Illegal type spec"
 
@@ -277,7 +276,6 @@ gen_hs_source (Info defaults entries) =
            ent o@(PrimOpSpec {})      = spec o
            ent o@(PrimVecOpSpec {})   = spec o
            ent o@(PrimTypeSpec {})    = spec o
-           ent o@(PrimClassSpec {})   = spec o
            ent o@(PrimVecTypeSpec {}) = spec o
            ent o@(PseudoOpSpec {})    = spec o
 
@@ -301,8 +299,6 @@ gen_hs_source (Info defaults entries) =
                               wrapOp n ++ " = let x = x in x" ]
                         PrimTypeSpec { ty = t }   ->
                             [ "data " ++ pprTy t ]
-                        PrimClassSpec { cls = t }   ->
-                            [ "class " ++ pprTy t ]
                         PrimVecTypeSpec { ty = t }   ->
                             [ "data " ++ pprTy t ]
                         Section { } -> []
@@ -491,13 +487,6 @@ gen_latex_doc (Info defaults entries)
                  ++ d ++ "}\n"
            mk_entry (PrimTypeSpec {ty=t,desc=d,opts=o}) =
                  "\\primtypespec{"
-                 ++ latex_encode (mk_source_ty t) ++ "}{"
-                 ++ latex_encode (mk_core_ty t) ++ "}{"
-                 ++ d ++ "}{"
-                 ++ mk_options o
-                 ++ "}\n"
-           mk_entry (PrimClassSpec {cls=t,desc=d,opts=o}) =
-                 "\\primclassspec{"
                  ++ latex_encode (mk_source_ty t) ++ "}{"
                  ++ latex_encode (mk_core_ty t) ++ "}{"
                  ++ d ++ "}{"
@@ -904,10 +893,13 @@ ppType (TyApp (TyCon "MutVar#") [x,y])          = "mkMutVarPrimTy " ++ ppType x
 ppType (TyApp (TyCon "MutableArray#") [x,y])    = "mkMutableArrayPrimTy " ++ ppType x
                                                    ++ " " ++ ppType y
 ppType (TyApp (TyCon "MutableArrayArray#") [x]) = "mkMutableArrayArrayPrimTy " ++ ppType x
+ppType (TyApp (TyCon "SmallMutableArray#") [x,y]) = "mkSmallMutableArrayPrimTy " ++ ppType x
+                                                    ++ " " ++ ppType y
 ppType (TyApp (TyCon "MutableByteArray#") [x])  = "mkMutableByteArrayPrimTy " 
                                                    ++ ppType x
 ppType (TyApp (TyCon "Array#") [x])             = "mkArrayPrimTy " ++ ppType x
 ppType (TyApp (TyCon "ArrayArray#") [])         = "mkArrayArrayPrimTy"
+ppType (TyApp (TyCon "SmallArray#") [x])        = "mkSmallArrayPrimTy " ++ ppType x
 
 
 ppType (TyApp (TyCon "Weak#")       [x]) = "mkWeakPrimTy " ++ ppType x

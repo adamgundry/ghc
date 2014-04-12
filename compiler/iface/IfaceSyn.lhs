@@ -57,6 +57,7 @@ import TysWiredIn ( eqTyConName )
 import Fingerprint
 import Binary
 import BooleanFormula ( BooleanFormula )
+import HsBinds
 
 import Control.Monad
 import System.IO.Unsafe
@@ -1048,7 +1049,7 @@ instance Outputable IfaceDecl where
 pprIfaceDecl :: IfaceDecl -> SDoc
 pprIfaceDecl (IfaceId {ifName = var, ifType = ty,
                        ifIdDetails = details, ifIdInfo = info})
-  = sep [ ppr var <+> dcolon <+> ppr ty,
+  = sep [ pprPrefixOcc var <+> dcolon <+> ppr ty,
           nest 2 (ppr details),
           nest 2 (ppr info) ]
 
@@ -1101,32 +1102,27 @@ pprIfaceDecl (IfaceClass {ifCtxt = context, ifName = clas, ifTyVars = tyvars,
                 sep (map ppr sigs)])
 
 pprIfaceDecl (IfaceAxiom {ifName = name, ifTyCon = tycon, ifAxBranches = branches })
-  = hang (ptext (sLit "axiom") <+> ppr name <> colon)
+  = hang (ptext (sLit "axiom") <+> ppr name <> dcolon)
        2 (vcat $ map (pprAxBranch $ Just tycon) branches)
 
 pprIfaceDecl (IfacePatSyn { ifName = name, ifPatHasWrapper = has_wrap,
                             ifPatIsInfix = is_infix,
-                            ifPatUnivTvs = univ_tvs, ifPatExTvs = ex_tvs,
+                            ifPatUnivTvs = _univ_tvs, ifPatExTvs = _ex_tvs,
                             ifPatProvCtxt = prov_ctxt, ifPatReqCtxt = req_ctxt,
                             ifPatArgs = args,
                             ifPatTy = ty })
-  = hang (text "pattern" <+> header)
-       4 details
+  = pprPatSynSig name has_wrap args' ty' (pprCtxt prov_ctxt) (pprCtxt req_ctxt)
   where
-    header = ppr name <+> dcolon <+>
-             (pprIfaceForAllPart univ_tvs req_ctxt $
-              pprIfaceForAllPart ex_tvs prov_ctxt $
-              pp_tau)
+    args' = case (is_infix, map snd args) of
+        (True, [left_ty, right_ty]) ->
+            InfixPatSyn (pprParendIfaceType left_ty) (pprParendIfaceType right_ty)
+        (_, tys) ->
+            PrefixPatSyn (map pprParendIfaceType tys)
 
-    details = sep [ if is_infix then text "Infix" else empty
-                  , if has_wrap then text "HasWrapper" else empty
-                  ]
+    ty' = pprParendIfaceType ty
 
-    pp_tau = case map pprParendIfaceType (arg_tys ++ [ty]) of
-        (t:ts) -> fsep (t : map (arrow <+>) ts)
-        []     -> panic "pp_tau"
-
-    arg_tys = map snd args
+    pprCtxt [] = Nothing
+    pprCtxt ctxt = Just $ pprIfaceContext ctxt
 
 pprCType :: Maybe CType -> SDoc
 pprCType Nothing = ptext (sLit "No C type associated")
@@ -1154,7 +1150,7 @@ instance Outputable IfaceAT where
 
 pprIfaceDeclHead :: IfaceContext -> OccName -> [IfaceTvBndr] -> SDoc
 pprIfaceDeclHead context thing tyvars
-  = hsep [pprIfaceContext context, parenSymOcc thing (ppr thing),
+  = hsep [pprIfaceContextArr context, parenSymOcc thing (ppr thing),
           pprIfaceTvBndrs tyvars]
 
 pp_condecls :: OccName -> IfaceConDecls -> SDoc

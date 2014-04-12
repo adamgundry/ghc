@@ -8,16 +8,15 @@
 
 module StgCmmHeap (
         getVirtHp, setVirtHp, setRealHp,
-        getHpRelOffset, hpRel,
+        getHpRelOffset,
 
         entryHeapCheck, altHeapCheck, noEscapeHeapCheck, altHeapCheckReturnsTo,
         heapStackCheckGen,
         entryHeapCheck',
 
-        mkVirtHeapOffsets, mkVirtConstrOffsets,
         mkStaticClosureFields, mkStaticClosure,
 
-        allocDynClosure, allocDynClosureCmm,
+        allocDynClosure, allocDynClosureCmm, allocHeapClosure,
         emitSetDynHdr
     ) where
 
@@ -68,7 +67,7 @@ allocDynClosure
 
 allocDynClosureCmm
         :: Maybe Id -> CmmInfoTable -> LambdaFormInfo -> CmmExpr -> CmmExpr
-        -> [(CmmExpr, VirtualHpOffset)]
+        -> [(CmmExpr, ByteOff)]
         -> FCode CmmExpr -- returns Hp+n
 
 -- allocDynClosure allocates the thing in the heap,
@@ -89,61 +88,70 @@ allocDynClosureCmm
 -- significant - see test T4801.
 
 
-allocDynClosure mb_id info_tbl lf_info use_cc _blame_cc args_w_offsets
-  = do  { let (args, offsets) = unzip args_w_offsets
-        ; cmm_args <- mapM getArgAmode args     -- No void args
-        ; allocDynClosureCmm mb_id info_tbl lf_info
-                             use_cc _blame_cc (zip cmm_args offsets)
-        }
+allocDynClosure mb_id info_tbl lf_info use_cc _blame_cc args_w_offsets = do
+  let (args, offsets) = unzip args_w_offsets
+  cmm_args <- mapM getArgAmode args     -- No void args
+  allocDynClosureCmm mb_id info_tbl lf_info
+                     use_cc _blame_cc (zip cmm_args offsets)
 
-allocDynClosureCmm mb_id info_tbl lf_info use_cc _blame_cc amodes_w_offsets
-  = do  { virt_hp <- getVirtHp
 
-        -- SAY WHAT WE ARE ABOUT TO DO
-        ; let rep = cit_rep info_tbl
-        ; tickyDynAlloc mb_id rep lf_info
-        ; profDynAlloc rep use_cc
+allocDynClosureCmm mb_id info_tbl lf_info use_cc _blame_cc amodes_w_offsets = do
+  -- SAY WHAT WE ARE ABOUT TO DO
+  let rep = cit_rep info_tbl
+  tickyDynAlloc mb_id rep lf_info
+  let info_ptr = CmmLit (CmmLabel (cit_lbl info_tbl))
+  allocHeapClosure rep info_ptr use_cc amodes_w_offsets
 
-        -- FIND THE OFFSET OF THE INFO-PTR WORD
-        ; let   info_offset = virt_hp + 1
-                -- info_offset is the VirtualHpOffset of the first
-                -- word of the new object
-                -- Remember, virtHp points to last allocated word,
-                -- ie 1 *before* the info-ptr word of new object.
 
-                info_ptr = CmmLit (CmmLabel (cit_lbl info_tbl))
+-- | Low-level heap object allocation.
+allocHeapClosure
+  :: SMRep                            -- ^ representation of the object
+  -> CmmExpr                          -- ^ info pointer
+  -> CmmExpr                          -- ^ cost centre
+  -> [(CmmExpr,ByteOff)]              -- ^ payload
+  -> FCode CmmExpr                    -- ^ returns the address of the object
+allocHeapClosure rep info_ptr use_cc payload = do
+  profDynAlloc rep use_cc
 
-        -- ALLOCATE THE OBJECT
-        ; base <- getHpRelOffset info_offset
-        ; emitComment $ mkFastString "allocDynClosure"
-        ; emitSetDynHdr base info_ptr  use_cc
-        ; let (cmm_args, offsets) = unzip amodes_w_offsets
-        ; hpStore base cmm_args offsets
+  virt_hp <- getVirtHp
 
-        -- BUMP THE VIRTUAL HEAP POINTER
-        ; dflags <- getDynFlags
-        ; setVirtHp (virt_hp + heapClosureSize dflags rep)
+  -- Find the offset of the info-ptr word
+  let info_offset = virt_hp + 1
+            -- info_offset is the VirtualHpOffset of the first
+            -- word of the new object
+            -- Remember, virtHp points to last allocated word,
+            -- ie 1 *before* the info-ptr word of new object.
 
-        ; getHpRelOffset info_offset
-        }
+  base <- getHpRelOffset info_offset
+  emitComment $ mkFastString "allocHeapClosure"
+  emitSetDynHdr base info_ptr use_cc
+
+  -- Fill in the fields
+  hpStore base payload
+
+  -- Bump the virtual heap pointer
+  dflags <- getDynFlags
+  setVirtHp (virt_hp + heapClosureSizeW dflags rep)
+
+  return base
+
 
 emitSetDynHdr :: CmmExpr -> CmmExpr -> CmmExpr -> FCode ()
 emitSetDynHdr base info_ptr ccs
   = do dflags <- getDynFlags
-       hpStore base (header dflags) [0..]
+       hpStore base (zip (header dflags) [0, wORD_SIZE dflags ..])
   where
     header :: DynFlags -> [CmmExpr]
     header dflags = [info_ptr] ++ dynProfHdr dflags ccs
         -- ToDof: Parallel stuff
         -- No ticky header
 
-hpStore :: CmmExpr -> [CmmExpr] -> [VirtualHpOffset] -> FCode ()
 -- Store the item (expr,off) in base[off]
-hpStore base vals offs
-  = do dflags <- getDynFlags
-       let mk_store val off = mkStore (cmmOffsetW dflags base off) val
-       emit (catAGraphs (zipWith mk_store vals offs))
-
+hpStore :: CmmExpr -> [(CmmExpr, ByteOff)] -> FCode ()
+hpStore base vals = do
+  dflags <- getDynFlags
+  sequence_ $
+    [ emitStore (cmmOffsetB dflags base off) val | (val,off) <- vals ]
 
 -----------------------------------------------------------
 --              Layout of static closures

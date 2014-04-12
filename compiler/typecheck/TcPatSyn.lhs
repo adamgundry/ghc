@@ -16,7 +16,6 @@ import TysPrim
 import Name
 import SrcLoc
 import PatSyn
-import Maybes
 import NameSet
 import Panic
 import Outputable
@@ -36,6 +35,27 @@ import BuildTyCl
 #include "HsVersions.h"
 \end{code}
 
+Note [Pattern synonym typechecking]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Consider the following pattern synonym declaration
+
+        pattern P x = MkT [x] (Just 42)
+
+where
+        data T a where
+              MkT :: (Show a, Ord b) => [b] -> a -> T a
+
+The pattern synonym's type is described with five axes, given here for
+the above example:
+
+  Pattern type: T (Maybe t)
+  Arguments: [x :: b]
+  Universal type variables: [t]
+  Required theta: (Eq t, Num t)
+  Existential type variables: [b]
+  Provided theta: (Show (Maybe t), Ord b)
+
 \begin{code}
 tcPatSynDecl :: Located Name
              -> HsPatSynDetails (Located Name)
@@ -44,31 +64,32 @@ tcPatSynDecl :: Located Name
              -> TcM (PatSyn, LHsBinds Id)
 tcPatSynDecl lname@(L _ name) details lpat dir
   = do { traceTc "tcPatSynDecl {" $ ppr name $$ ppr lpat
+       ; tcCheckPatSynPat lpat
        ; pat_ty <- newFlexiTyVarTy openTypeKind
 
        ; let (arg_names, is_infix) = case details of
-                 PrefixPatSyn names -> (map unLoc names, False)
+                 PrefixPatSyn names      -> (map unLoc names, False)
                  InfixPatSyn name1 name2 -> (map unLoc [name1, name2], True)
-       ; ((lpat', args), wanted) <- captureConstraints $
-                                      tcPat PatSyn lpat pat_ty $ mapM tcLookupId arg_names
+       ; ((lpat', args), wanted) <- captureConstraints       $
+                                    tcPat PatSyn lpat pat_ty $
+                                    mapM tcLookupId arg_names
        ; let named_taus = (name, pat_ty):map (\arg -> (getName arg, varType arg)) args
 
        ; traceTc "tcPatSynDecl::wanted" (ppr named_taus $$ ppr wanted)
-       ; (qtvs, given_dicts, _mr_bites, ev_binds) <- simplifyInfer True False named_taus wanted
-       ; let req_dicts = given_dicts
+       ; (qtvs, req_dicts, _mr_bites, ev_binds) <- simplifyInfer True False named_taus wanted
 
        ; (ex_vars, prov_dicts) <- tcCollectEx lpat'
-       ; let univ_tvs = filter (not . (`elemVarSet` ex_vars)) qtvs
-             ex_tvs = varSetElems ex_vars
+       ; let univ_tvs   = filter (not . (`elemVarSet` ex_vars)) qtvs
+             ex_tvs     = varSetElems ex_vars
+             prov_theta = map evVarPred prov_dicts
+             req_theta  = map evVarPred req_dicts
 
-       ; pat_ty <- zonkTcType pat_ty
-       ; args <- mapM zonkId args
-
-       ; univ_tvs <- mapM zonkQuantifiedTyVar univ_tvs
-       ; let prov_theta = map evVarPred prov_dicts
-             req_theta = map evVarPred req_dicts
+       ; univ_tvs   <- mapM zonkQuantifiedTyVar univ_tvs
+       ; ex_tvs     <- mapM zonkQuantifiedTyVar ex_tvs
        ; prov_theta <- zonkTcThetaType prov_theta
-       ; req_theta <- zonkTcThetaType req_theta
+       ; req_theta  <- zonkTcThetaType req_theta
+       ; pat_ty     <- zonkTcType pat_ty
+       ; args       <- mapM zonkId args
 
        ; traceTc "tcPatSynDecl: ex" (ppr ex_tvs $$
                                      ppr prov_theta $$
@@ -92,7 +113,7 @@ tcPatSynDecl lname@(L _ name) details lpat dir
                                          prov_theta req_theta
                                          pat_ty
        ; m_wrapper <- tcPatSynWrapper lname lpat dir args
-                        univ_tvs ex_tvs theta pat_ty
+                                      univ_tvs ex_tvs theta pat_ty
        ; let binds = matcher_bind `unionBags` maybe emptyBag snd m_wrapper
 
        ; traceTc "tcPatSynDecl }" $ ppr name
@@ -104,6 +125,44 @@ tcPatSynDecl lname@(L _ name) details lpat dir
                         matcher_id (fmap fst m_wrapper)
        ; return (patSyn, binds) }
 
+\end{code}
+
+Note [Matchers and wrappers for pattern synonyms]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For each pattern synonym, we generate a single matcher function which
+implements the actual matching. For the above example, the matcher
+will have type:
+
+        $mP :: forall r t. (Eq t, Num t)
+            => T (Maybe t)
+            -> (forall b. (Show (Maybe t), Ord b) => b -> r)
+            -> r
+            -> r
+
+with the following implementation:
+
+        $mP @r @t $dEq $dNum scrut cont fail = case scrut of
+            MkT @b $dShow $dOrd [x] (Just 42) -> cont @b $dShow $dOrd x
+            _                                 -> fail
+
+For bidirectional pattern synonyms, we also generate a single wrapper
+function which implements the pattern synonym in an expression
+context. For our running example, it will be:
+
+        $WP :: forall t b. (Show (Maybe t), Ord b, Eq t, Num t)
+            => b -> T (Maybe t)
+        $WP x = MkT [x] (Just 42)
+
+N.b. the existential/universal and required/provided split does not
+apply to the wrapper since you are only putting stuff in, not getting
+stuff out.
+
+Injectivity of bidirectional pattern synonyms is checked in
+tcPatToExpr which walks the pattern and returns its corresponding
+expression when available.
+
+\begin{code}
 tcPatSynMatcher :: Located Name
                 -> LPat Id
                 -> [Var]
@@ -181,12 +240,11 @@ tcPatSynWrapper :: Located Name
                 -> TcM (Maybe (Id, LHsBinds Id))
 tcPatSynWrapper lname lpat dir args univ_tvs ex_tvs theta pat_ty
   = do { let argNames = mkNameSet (map Var.varName args)
-       ; m_expr <- runMaybeT $ tcPatToExpr argNames lpat
-       ; case (dir, m_expr) of
+       ; case (dir, tcPatToExpr argNames lpat) of
            (Unidirectional, _) ->
                return Nothing
            (ImplicitBidirectional, Nothing) ->
-               cannotInvertPatSynErr (unLoc lpat)
+               cannotInvertPatSynErr lpat
            (ImplicitBidirectional, Just lexpr) ->
                fmap Just $ tc_pat_syn_wrapper_from_expr lname lexpr args univ_tvs ex_tvs theta pat_ty }
 
@@ -199,7 +257,7 @@ tc_pat_syn_wrapper_from_expr :: Located Name
                              -> TcM (Id, LHsBinds Id)
 tc_pat_syn_wrapper_from_expr (L loc name) lexpr args univ_tvs ex_tvs theta pat_ty
   = do { let qtvs = univ_tvs ++ ex_tvs
-       ; (subst, qtvs') <- tcInstSigTyVars qtvs
+       ; (subst, qtvs') <- tcInstSkolTyVars qtvs
        ; let theta' = substTheta subst theta
              pat_ty' = substTy subst pat_ty
              args' = map (\arg -> setVarType arg $ substTy subst (varType arg)) args
@@ -227,67 +285,122 @@ tc_pat_syn_wrapper_from_expr (L loc name) lexpr args univ_tvs ex_tvs theta pat_t
        ; traceTc "tcPatSynDecl wrapper type" $ ppr (varType wrapper_id)
        ; return (wrapper_id, wrapper_binds) }
 
-tcNothing :: MaybeT TcM a
-tcNothing = MaybeT (return Nothing)
+\end{code}
 
-withLoc :: (a -> MaybeT TcM b) -> Located a -> MaybeT TcM (Located b)
-withLoc fn (L loc x) = MaybeT $ setSrcSpan loc $
-    do { y <- runMaybeT $ fn x
-       ; return (fmap (L loc) y) }
+Note [As-patterns in pattern synonym definitions]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-tcPatToExpr :: NameSet -> LPat Name -> MaybeT TcM (LHsExpr Name)
+The rationale for rejecting as-patterns in pattern synonym definitions
+is that an as-pattern would introduce nonindependent pattern synonym
+arguments, e.g. given a pattern synonym like:
+
+        pattern K x y = x@(Just y)
+
+one could write a nonsensical function like
+
+        f (K Nothing x) = ...
+
+or
+        g (K (Just True) False) = ...
+
+\begin{code}
+tcCheckPatSynPat :: LPat Name -> TcM ()
+tcCheckPatSynPat = go
+  where
+    go :: LPat Name -> TcM ()
+    go = addLocM go1
+
+    go1 :: Pat Name -> TcM ()
+    go1   (ConPatIn _ info)   = mapM_ go (hsConPatArgs info)
+    go1   VarPat{}            = return ()
+    go1   WildPat{}           = return ()
+    go1 p@(AsPat _ _)         = asPatInPatSynErr p
+    go1   (LazyPat pat)       = go pat
+    go1   (ParPat pat)        = go pat
+    go1   (BangPat pat)       = go pat
+    go1   (PArrPat pats _)    = mapM_ go pats
+    go1   (ListPat pats _ _)  = mapM_ go pats
+    go1   (TuplePat pats _ _) = mapM_ go pats
+    go1   LitPat{}            = return ()
+    go1   NPat{}              = return ()
+    go1   (SigPatIn pat _)    = go pat
+    go1   (ViewPat _ pat _)   = go pat
+    go1 p@SplicePat{}         = thInPatSynErr p
+    go1 p@QuasiQuotePat{}     = thInPatSynErr p
+    go1 p@NPlusKPat{}         = nPlusKPatInPatSynErr p
+    go1   ConPatOut{}         = panic "ConPatOut in output of renamer"
+    go1   SigPatOut{}         = panic "SigPatOut in output of renamer"
+    go1   CoPat{}             = panic "CoPat in output of renamer"
+
+asPatInPatSynErr :: OutputableBndr name => Pat name -> TcM a
+asPatInPatSynErr pat
+  = failWithTc $
+    hang (ptext (sLit "Pattern synonym definition cannot contain as-patterns (@):"))
+       2 (ppr pat)
+
+thInPatSynErr :: OutputableBndr name => Pat name -> TcM a
+thInPatSynErr pat
+  = failWithTc $
+    hang (ptext (sLit "Pattern synonym definition cannot contain Template Haskell:"))
+       2 (ppr pat)
+
+nPlusKPatInPatSynErr :: OutputableBndr name => Pat name -> TcM a
+nPlusKPatInPatSynErr pat
+  = failWithTc $
+    hang (ptext (sLit "Pattern synonym definition cannot contain n+k-pattern:"))
+       2 (ppr pat)
+
+tcPatToExpr :: NameSet -> LPat Name -> Maybe (LHsExpr Name)
 tcPatToExpr lhsVars = go
   where
-    go :: LPat Name -> MaybeT TcM (LHsExpr Name)
+    go :: LPat Name -> Maybe (LHsExpr Name)
     go (L loc (ConPatIn conName info))
-      = MaybeT . setSrcSpan loc . runMaybeT $ do
+      = do
           { let con = L loc (HsVar (unLoc conName))
           ; exprs <- mapM go (hsConPatArgs info)
           ; return $ foldl (\x y -> L loc (HsApp x y)) con exprs }
-    go p = withLoc go1 p
+    go (L loc p) = fmap (L loc) $ go1 p
 
-    go1 :: Pat Name -> MaybeT TcM (HsExpr Name)
+    go1 :: Pat Name -> Maybe (HsExpr Name)
     go1   (VarPat var)
-      | var `elemNameSet` lhsVars  = return (HsVar var)
-      | otherwise                  = tcNothing
-    go1 p@(AsPat _ _)              = asPatInPatSynErr p
-    go1   (LazyPat pat)            = fmap HsPar (go pat)
-    go1   (ParPat pat)             = fmap HsPar (go pat)
-    go1   (BangPat pat)            = fmap HsPar (go pat)
+      | var `elemNameSet` lhsVars  = return $ HsVar var
+      | otherwise                  = Nothing
+    go1   (LazyPat pat)            = fmap HsPar $ go pat
+    go1   (ParPat pat)             = fmap HsPar $ go pat
+    go1   (BangPat pat)            = fmap HsPar $ go pat
     go1   (PArrPat pats ptt)
       = do { exprs <- mapM go pats
-           ; return (ExplicitPArr ptt exprs) }
+           ; return $ ExplicitPArr ptt exprs }
     go1   (ListPat pats ptt reb)
       = do { exprs <- mapM go pats
-           ; return (ExplicitList ptt (fmap snd reb) exprs) }
+           ; return $ ExplicitList ptt (fmap snd reb) exprs }
     go1   (TuplePat pats box _)
       = do { exprs <- mapM go pats
            ; return (ExplicitTuple (map Present exprs) box)
            }
-    go1   (LitPat lit)  = return (HsLit lit)
-    go1   (NPat n Nothing _)       = return (HsOverLit n)
-    go1   (NPat n (Just neg) _)    = return (noLoc neg `HsApp` noLoc (HsOverLit n))
+    go1   (LitPat lit)             = return $ HsLit lit
+    go1   (NPat n Nothing _)       = return $ HsOverLit n
+    go1   (NPat n (Just neg) _)    = return $ noLoc neg `HsApp` noLoc (HsOverLit n)
     go1   (SigPatIn pat (HsWB ty _ _))
       = do { expr <- go pat
-           ; return (ExprWithTySig expr ty) }
+           ; return $ ExprWithTySig expr ty }
     go1   (ConPatOut{})            = panic "ConPatOut in output of renamer"
     go1   (SigPatOut{})            = panic "SigPatOut in output of renamer"
     go1   (CoPat{})                = panic "CoPat in output of renamer"
-    go1   _                        = tcNothing
+    go1   _                        = Nothing
 
-asPatInPatSynErr :: OutputableBndr name => Pat name -> MaybeT TcM a
-asPatInPatSynErr pat
-  = MaybeT . failWithTc $
-    hang (ptext (sLit "Pattern synonym definition cannot contain as-patterns (@):"))
-       2 (ppr pat)
-
--- TODO: Highlight sub-pattern that causes the problem
-cannotInvertPatSynErr :: OutputableBndr name => Pat name -> TcM a
-cannotInvertPatSynErr pat
-  = failWithTc $
+cannotInvertPatSynErr :: OutputableBndr name => LPat name -> TcM a
+cannotInvertPatSynErr (L loc pat)
+  = setSrcSpan loc $ failWithTc $
     hang (ptext (sLit "Right-hand side of bidirectional pattern synonym cannot be used as an expression"))
        2 (ppr pat)
 
+-- Walk the whole pattern and for all ConPatOuts, collect the
+-- existentially-bound type variables and evidence binding variables.
+--
+-- These are used in computing the type of a pattern synonym and also
+-- in generating matcher functions, since success continuations need
+-- to be passed these pattern-bound evidences.
 tcCollectEx :: LPat Id -> TcM (TyVarSet, [EvVar])
 tcCollectEx = return . go
   where

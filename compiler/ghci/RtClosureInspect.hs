@@ -513,8 +513,10 @@ repPrim t = rep where
     | t == threadIdPrimTyCon         = text "<ThreadId>"
     | t == weakPrimTyCon             = text "<Weak>"
     | t == arrayPrimTyCon            = text "<array>"
+    | t == smallArrayPrimTyCon       = text "<smallArray>"
     | t == byteArrayPrimTyCon        = text "<bytearray>"
     | t == mutableArrayPrimTyCon     = text "<mutableArray>"
+    | t == smallMutableArrayPrimTyCon = text "<smallMutableArray>"
     | t == mutableByteArrayPrimTyCon = text "<mutableByteArray>"
     | t == mutVarPrimTyCon           = text "<mutVar>"
     | t == mVarPrimTyCon             = text "<mVar>"
@@ -939,8 +941,7 @@ findPtrTyss i tys = foldM step (i, []) tys
 -- The types can contain skolem type variables, which need to be treated as normal vars.
 -- In particular, we want them to unify with things.
 improveRTTIType :: HscEnv -> RttiType -> RttiType -> Maybe TvSubst
-improveRTTIType _ base_ty new_ty
-  = U.tcUnifyTys (const U.BindMe) [base_ty] [new_ty]
+improveRTTIType _ base_ty new_ty = U.tcUnifyTy base_ty new_ty
 
 getDataConArgTys :: DataCon -> Type -> TR [Type]
 -- Given the result type ty of a constructor application (D a b c :: ty)

@@ -800,8 +800,21 @@ data DynFlags = DynFlags {
   rtldInfo              :: IORef (Maybe LinkerInfo),
 
   -- | Run-time compiler information
-  rtccInfo              :: IORef (Maybe CompilerInfo)
- }
+  rtccInfo              :: IORef (Maybe CompilerInfo),
+
+  -- Constants used to control the amount of optimization done.
+
+  -- | Max size, in bytes, of inline array allocations.
+  maxInlineAllocSize    :: Int,
+
+  -- | Only inline memcpy if it generates no more than this many
+  -- pseudo (roughly: Cmm) instructions.
+  maxInlineMemcpyInsns  :: Int,
+
+  -- | Only inline memset if it generates no more than this many
+  -- pseudo (roughly: Cmm) instructions.
+  maxInlineMemsetInsns  :: Int
+}
 
 class HasDynFlags m where
     getDynFlags :: m DynFlags
@@ -1282,7 +1295,7 @@ initDynFlags dflags = do
  refRtccInfo <- newIORef Nothing
  wrapperNum <- newIORef emptyModuleEnv
  canUseUnicodeQuotes <- do let enc = localeEncoding
-                               str = "‛’"
+                               str = "‘’"
                            (withCString enc str $ \cstr ->
                                 do str' <- peekCString enc cstr
                                    return (str == str'))
@@ -1449,7 +1462,11 @@ defaultDynFlags mySettings =
         avx512f = False,
         avx512pf = False,
         rtldInfo = panic "defaultDynFlags: no rtldInfo",
-        rtccInfo = panic "defaultDynFlags: no rtccInfo"
+        rtccInfo = panic "defaultDynFlags: no rtccInfo",
+
+        maxInlineAllocSize = 128,
+        maxInlineMemcpyInsns = 32,
+        maxInlineMemsetInsns = 32
       }
 
 defaultWays :: Settings -> [Way]
@@ -1735,7 +1752,10 @@ combineSafeFlags a b | a == Sf_SafeInferred = return b
 --     * function to test if the flag is on
 --     * function to turn the flag off
 unsafeFlags :: [(String, DynFlags -> SrcSpan, DynFlags -> Bool, DynFlags -> DynFlags)]
-unsafeFlags = [("-XTemplateHaskell", thOnLoc,
+unsafeFlags = [("-XGeneralizedNewtypeDeriving", newDerivOnLoc,
+                   xopt Opt_GeneralizedNewtypeDeriving,
+                   flip xopt_unset Opt_GeneralizedNewtypeDeriving),
+               ("-XTemplateHaskell", thOnLoc,
                    xopt Opt_TemplateHaskell,
                    flip xopt_unset Opt_TemplateHaskell)]
 
@@ -2429,6 +2449,9 @@ dynamic_flags = [
   , Flag "fmax-worker-args" (intSuffix (\n d -> d {maxWorkerArgs = n}))
 
   , Flag "fghci-hist-size" (intSuffix (\n d -> d {ghciHistSize = n}))
+  , Flag "fmax-inline-alloc-size"      (intSuffix (\n d -> d{ maxInlineAllocSize = n }))
+  , Flag "fmax-inline-memcpy-insns"    (intSuffix (\n d -> d{ maxInlineMemcpyInsns = n }))
+  , Flag "fmax-inline-memset-insns"    (intSuffix (\n d -> d{ maxInlineMemsetInsns = n }))
 
         ------ Profiling ----------------------------------------------------
 

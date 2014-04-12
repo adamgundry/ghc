@@ -562,7 +562,7 @@ mode_flags =
   , Flag "M"            (PassFlag (setMode doMkDependHSMode))
   , Flag "E"            (PassFlag (setMode (stopBeforeMode anyHsc)))
   , Flag "C"            (PassFlag (setMode (stopBeforeMode HCc)))
-  , Flag "S"            (PassFlag (setMode (stopBeforeMode As)))
+  , Flag "S"            (PassFlag (setMode (stopBeforeMode (As False))))
   , Flag "-make"        (PassFlag (setMode doMakeMode))
   , Flag "-interactive" (PassFlag (setMode doInteractiveMode))
   , Flag "-abi-hash"    (PassFlag (setMode doAbiHashMode))
@@ -629,7 +629,8 @@ doMake srcs  = do
         haskellish (f,Nothing) =
           looksLikeModuleName f || isHaskellUserSrcFilename f || '.' `notElem` f
         haskellish (_,Just phase) =
-          phase `notElem` [As, Cc, Cobjc, Cobjcpp, CmmCpp, Cmm, StopLn]
+          phase `notElem` [ As True, As False, Cc, Cobjc, Cobjcpp, CmmCpp, Cmm
+                          , StopLn]
 
     hsc_env <- GHC.getSession
 
@@ -835,7 +836,7 @@ the GC stats. As a result, this breaks things like `:set +s` in GHCi
 (#8754). As a hacky workaround, we instead call 'defaultHooks'
 directly to initalize the flags in the RTS.
 
-A biproduct of this, I believe, is that hooks are likely broken on OS
+A byproduct of this, I believe, is that hooks are likely broken on OS
 X when dynamically linking. But this probably doesn't affect most
 people since we're linking GHC dynamically, but most things themselves
 link statically.

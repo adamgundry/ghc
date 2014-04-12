@@ -103,6 +103,7 @@ module GHC (
         parseName,
         RunResult(..),  
         runStmt, runStmtWithLocation, runDecls, runDeclsWithLocation,
+        runTcInteractive,   -- Desired by some clients (Trac #8878)
         parseImportDecl, SingleStep(..),
         resume,
         Resume(resumeStmt, resumeThreadId, resumeBreakInfo, resumeSpan,
@@ -258,6 +259,7 @@ module GHC (
 import ByteCodeInstr
 import BreakArray
 import InteractiveEval
+import TcRnDriver       ( runTcInteractive )
 #endif
 
 import HscMain

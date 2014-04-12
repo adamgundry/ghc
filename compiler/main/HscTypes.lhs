@@ -1122,10 +1122,10 @@ shadowed by the second declaration.  But it has a respectable
 qualified name (Ghci1.T), and its source location says where it was
 defined.
 
-So the main invariant continues to hold, that in any session an original
-name M.T only refers to oe unique thing.  (In a previous iteration both
-the T's above were called :Interactive.T, albeit with different uniques,
-which gave rise to all sorts of trouble.)
+So the main invariant continues to hold, that in any session an
+original name M.T only refers to one unique thing.  (In a previous
+iteration both the T's above were called :Interactive.T, albeit with
+different uniques, which gave rise to all sorts of trouble.)
 
 The details are a bit tricky though:
 
@@ -1135,7 +1135,7 @@ The details are a bit tricky though:
  * ic_tythings contains only things from the 'interactive' package.
 
  * Module from the 'interactive' package (Ghci1, Ghci2 etc) never go
-   in the Home Package Table (HPT).  When you say :load, that's when
+   in the Home Package Table (HPT).  When you say :load, that's when we
    extend the HPT.
 
  * The 'thisPackage' field of DynFlags is *not* set to 'interactive'.
@@ -1143,10 +1143,13 @@ The details are a bit tricky though:
    package to which :load'ed modules are added to.
 
  * So how do we arrange that declarations at the command prompt get
-   to be in the 'interactive' package?  By setting 'thisPackage' just
-   before the typecheck/rename step for command-line processing;
-   see the calls to HscTypes.setInteractivePackage in
-   HscMain.hscDeclsWithLocation and hscStmtWithLocation.
+   to be in the 'interactive' package?  Simply by setting the tcg_mod
+   field of the TcGblEnv to "interactive:Ghci1".  This is done by the
+   call to initTc in initTcInteractive, initTcForLookup, which in 
+   turn get the module from it 'icInteractiveModule' field of the 
+   interactive context.
+
+   The 'thisPackage' field stays as 'main' (or whatever -package-name says.
 
  * The main trickiness is that the type environment (tcg_type_env and
    fixity envt (tcg_fix_env) now contains entities from all the

@@ -286,7 +286,8 @@ mkRhsClosure    dflags bndr _cc _bi
                                -- Just want the layout
     maybe_offset          = assocMaybe params_w_offsets (NonVoid selectee)
     Just the_offset       = maybe_offset
-    offset_into_int       = the_offset - fixedHdrSize dflags
+    offset_into_int       = bytesToWordsRoundUp dflags the_offset
+                             - fixedHdrSizeW dflags
 
 ---------- Note [Ap thunks] ------------------
 mkRhsClosure    dflags bndr _cc _bi
@@ -341,7 +342,7 @@ mkRhsClosure dflags bndr cc _ fvs upd_flag args body
         ; dflags <- getDynFlags
         ; let   name  = idName bndr
                 descr = closureDescription dflags mod_name name
-                fv_details :: [(NonVoid Id, VirtualHpOffset)]
+                fv_details :: [(NonVoid Id, ByteOff)]
                 (tot_wds, ptr_wds, fv_details)
                    = mkVirtHeapOffsets dflags (isLFThunk lf_info)
                                        (addIdReps (map unsafe_stripNV reduced_fvs))
@@ -434,7 +435,7 @@ closureCodeBody :: Bool            -- whether this is a top-level binding
                 -> [NonVoid Id]    -- incoming args to the closure
                 -> Int             -- arity, including void args
                 -> StgExpr
-                -> [(NonVoid Id, VirtualHpOffset)] -- the closure's free vars
+                -> [(NonVoid Id, ByteOff)] -- the closure's free vars
                 -> FCode ()
 
 {- There are two main cases for the code for closures.
@@ -514,10 +515,10 @@ closureCodeBody top_lvl bndr cl_info cc args arity body fv_details
 
 -- A function closure pointer may be tagged, so we
 -- must take it into account when accessing the free variables.
-bind_fv :: (NonVoid Id, VirtualHpOffset) -> FCode (LocalReg, WordOff)
+bind_fv :: (NonVoid Id, ByteOff) -> FCode (LocalReg, ByteOff)
 bind_fv (id, off) = do { reg <- rebindToReg id; return (reg, off) }
 
-load_fvs :: LocalReg -> LambdaFormInfo -> [(LocalReg, WordOff)] -> FCode ()
+load_fvs :: LocalReg -> LambdaFormInfo -> [(LocalReg, ByteOff)] -> FCode ()
 load_fvs node lf_info = mapM_ (\ (reg, off) ->
    do dflags <- getDynFlags
       let tag = lfDynTag dflags lf_info
@@ -551,7 +552,7 @@ mkSlowEntryCode bndr cl_info arg_regs -- function closure is already in `Node'
   | otherwise = return ()
 
 -----------------------------------------
-thunkCode :: ClosureInfo -> [(NonVoid Id, VirtualHpOffset)] -> CostCentreStack
+thunkCode :: ClosureInfo -> [(NonVoid Id, ByteOff)] -> CostCentreStack
           -> LocalReg -> Int -> StgExpr -> FCode ()
 thunkCode cl_info fv_details _cc node arity body
   = do { dflags <- getDynFlags
@@ -620,7 +621,7 @@ emitBlackHoleCode node = do
              -- work with profiling.
 
   when eager_blackholing $ do
-    emitStore (cmmOffsetW dflags node (fixedHdrSize dflags))
+    emitStore (cmmOffsetW dflags node (fixedHdrSizeW dflags))
                   (CmmReg (CmmGlobal CurrentTSO))
     emitPrimCall [] MO_WriteBarrier []
     emitStore node (CmmReg (CmmGlobal EagerBlackholeInfo))
@@ -672,7 +673,7 @@ pushUpdateFrame lbl updatee body
        updfr  <- getUpdFrameOff
        dflags <- getDynFlags
        let
-           hdr         = fixedHdrSize dflags * wORD_SIZE dflags
+           hdr         = fixedHdrSize dflags
            frame       = updfr + hdr + sIZEOF_StgUpdateFrame_NoHdr dflags
        --
        emitUpdateFrame dflags (CmmStackSlot Old frame) lbl updatee
@@ -681,7 +682,7 @@ pushUpdateFrame lbl updatee body
 emitUpdateFrame :: DynFlags -> CmmExpr -> CLabel -> CmmExpr -> FCode ()
 emitUpdateFrame dflags frame lbl updatee = do
   let
-           hdr         = fixedHdrSize dflags * wORD_SIZE dflags
+           hdr         = fixedHdrSize dflags
            off_updatee = hdr + oFFSET_StgUpdateFrame_updatee dflags
   --
   emitStore frame (mkLblExpr lbl)

@@ -23,7 +23,7 @@ module CoreSubst (
 	substTy, substCo, substExpr, substExprSC, substBind, substBindSC,
         substUnfolding, substUnfoldingSC,
 	lookupIdSubst, lookupTvSubst, lookupCvSubst, substIdOcc,
-        substTickish,
+        substTickish, substVarSet,
 
         -- ** Operations on substitutions
 	emptySubst, mkEmptySubst, mkSubst, mkOpenSubst, substInScope, isEmptySubst, 
@@ -355,7 +355,7 @@ instance Outputable Subst where
 %************************************************************************
 
 \begin{code}
--- | Apply a substititon to an entire 'CoreExpr'. Rememeber, you may only 
+-- | Apply a substitution to an entire 'CoreExpr'. Remember, you may only 
 -- apply the substitution /once/: see "CoreSubst#apply_once"
 --
 -- Do *not* attempt to short-cut in the case of an empty substitution!
@@ -402,8 +402,8 @@ subst_expr subst expr
 				 where
 				   (subst', bndrs') = substBndrs subst bndrs
 
--- | Apply a substititon to an entire 'CoreBind', additionally returning an updated 'Subst'
--- that should be used by subsequent substitutons.
+-- | Apply a substitution to an entire 'CoreBind', additionally returning an updated 'Subst'
+-- that should be used by subsequent substitutions.
 substBind, substBindSC :: Subst -> CoreBind -> (Subst, CoreBind)
 
 substBindSC subst bind 	  -- Short-cut if the substitution is empty
@@ -460,7 +460,7 @@ preserve occ info in rules.
 
 \begin{code}
 -- | Substitutes a 'Var' for another one according to the 'Subst' given, returning
--- the result and an updated 'Subst' that should be used by subsequent substitutons.
+-- the result and an updated 'Subst' that should be used by subsequent substitutions.
 -- 'IdInfo' is preserved by this process, although it is substituted into appropriately.
 substBndr :: Subst -> Var -> (Subst, Var)
 substBndr subst bndr
@@ -484,7 +484,7 @@ substRecBndrs subst bndrs
 \begin{code}
 substIdBndr :: SDoc 
             -> Subst		-- ^ Substitution to use for the IdInfo
-	    -> Subst -> Id 	-- ^ Substitition and Id to transform
+	    -> Subst -> Id 	-- ^ Substitution and Id to transform
 	    -> (Subst, Id)	-- ^ Transformed pair
 				-- NB: unfolding may be zapped
 
@@ -555,7 +555,7 @@ cloneRecIdBndrs subst us ids
 -- Just like substIdBndr, except that it always makes a new unique
 -- It is given the unique to use
 clone_id    :: Subst			-- Substitution for the IdInfo
-	    -> Subst -> (Id, Unique)	-- Substitition and Id to transform
+	    -> Subst -> (Id, Unique)	-- Substitution and Id to transform
 	    -> (Subst, Id)		-- Transformed pair
 
 clone_id rec_subst subst@(Subst in_scope idvs tvs cvs) (old_id, uniq)
@@ -1118,11 +1118,10 @@ to remain visible until Phase 1
 
 Note [Unfold compulsory unfoldings in LHSs]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 When the user writes `map coerce = coerce` as a rule, the rule will only ever
 match if we replace coerce by its unfolding on the LHS, because that is the
 core that the rule matching engine will find. So do that for everything that
-has a compulsory unfolding. Also see Note [Desugaring coerce as cast]
+has a compulsory unfolding. Also see Note [Desugaring coerce as cast] in Desugar
 
 %************************************************************************
 %*                                                                      *
@@ -1302,10 +1301,9 @@ exprIsLiteral_maybe env@(_, id_unf) e
       _         -> Nothing
 \end{code}
 
-Note [exprIsLiteral_maybe]
+Note [exprIsLambda_maybe]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-This function will, given an expression `e`, try to turn it into the form
+exprIsLambda_maybe will, given an expression `e`, try to turn it into the form
 `Lam v e'` (returned as `Just (v,e')`). Besides using lambdas, it looks through
 casts (using the Push rule), and it unfolds function calls if the unfolding
 has a greater arity than arguments are present.
@@ -1314,10 +1312,10 @@ Currently, it is used in Rules.match, and is required to make
 "map coerce = coerce" match.
 
 \begin{code}
--- See Note [exprIsLiteral_maybe]
 exprIsLambda_maybe :: InScopeEnv -> CoreExpr -> Maybe (Var, CoreExpr)
+    -- See Note [exprIsLambda_maybe]
 
--- The simpe case: It is a lambda
+-- The simple case: It is a lambda already
 exprIsLambda_maybe _ (Lam x e)
     = Just (x, e)
 

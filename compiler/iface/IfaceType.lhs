@@ -22,7 +22,7 @@ module IfaceType (
         toIfaceCoercion,
 
         -- Printing
-        pprIfaceType, pprParendIfaceType, pprIfaceContext,
+        pprIfaceType, pprParendIfaceType, pprIfaceContext, pprIfaceContextArr,
         pprIfaceIdBndr, pprIfaceTvBndr, pprIfaceTvBndrs,
         pprIfaceBndrs,
         tOP_PREC, tYCON_PREC, noParens, maybeParen, pprIfaceForAllPart,
@@ -31,6 +31,8 @@ module IfaceType (
     ) where
 
 import Coercion
+import TcType
+import DynFlags
 import TypeRep hiding( maybeParen )
 import Unique( hasKey )
 import TyCon
@@ -248,15 +250,18 @@ ppr_ty ctxt_prec ty@(IfaceForAllTy _ _)
  where
     (tvs, theta, tau) = splitIfaceSigmaTy ty
 
- -------------------
+-------------------
 -- needs to handle type contexts and coercion contexts, hence the
 -- generality
 pprIfaceForAllPart :: Outputable a => [IfaceTvBndr] -> [a] -> SDoc -> SDoc
 pprIfaceForAllPart tvs ctxt doc
-  = sep [ppr_tvs, pprIfaceContext ctxt, doc]
+  = sep [ppr_tvs, pprIfaceContextArr ctxt, doc]
   where
     ppr_tvs | null tvs  = empty
-            | otherwise = ptext (sLit "forall") <+> pprIfaceTvBndrs tvs <> dot
+            | otherwise = sdocWithDynFlags $ \ dflags ->
+            if gopt Opt_PrintExplicitForalls dflags
+            then ptext (sLit "forall") <+> pprIfaceTvBndrs tvs <> dot
+            else empty
 
 -------------------
 ppr_tc_app :: (Int -> a -> SDoc) -> Int -> IfaceTyCon -> [a] -> SDoc
@@ -386,14 +391,14 @@ instance Binary IfaceTyLit where
          _ -> panic ("get IfaceTyLit " ++ show tag)
 
 -------------------
-pprIfaceContext :: Outputable a => [a] -> SDoc
+pprIfaceContextArr :: Outputable a => [a] -> SDoc
 -- Prints "(C a, D b) =>", including the arrow
-pprIfaceContext []    = empty
-pprIfaceContext theta = ppr_preds theta <+> darrow
+pprIfaceContextArr []    = empty
+pprIfaceContextArr theta = pprIfaceContext theta <+> darrow
 
-ppr_preds :: Outputable a => [a] -> SDoc
-ppr_preds [pred] = ppr pred    -- No parens
-ppr_preds preds  = parens (sep (punctuate comma (map ppr preds)))
+pprIfaceContext :: Outputable a => [a] -> SDoc
+pprIfaceContext [pred] = ppr pred    -- No parens
+pprIfaceContext preds  = parens (sep (punctuate comma (map ppr preds)))
 
 instance Binary IfaceType where
     put_ bh (IfaceForAllTy aa ab) = do

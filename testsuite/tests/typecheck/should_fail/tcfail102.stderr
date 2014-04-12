@@ -4,11 +4,11 @@ tcfail102.hs:1:14: Warning:
 
 tcfail102.hs:9:15:
     Could not deduce (Integral (Ratio a))
-      arising from a use of the record selector ‛p’
+      arising from a use of the record selector ‘p’
     from the context (Integral a)
       bound by the type signature for
                  f :: Integral a => P (Ratio a) -> P (Ratio a)
       at tcfail102.hs:8:6-45
-    In the ‛p’ field of a record
+    In the ‘p’ field of a record
     In the expression: x {p = p x}
-    In an equation for ‛f’: f x = x {p = p x}
+    In an equation for ‘f’: f x = x {p = p x}

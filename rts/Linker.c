@@ -47,6 +47,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
+#include <libgen.h>
 
 #ifdef HAVE_SYS_STAT_H
 #include <sys/stat.h>
@@ -157,6 +158,7 @@ ObjectCode *unloaded_objects = NULL; /* initially empty */
 /* Type of the initializer */
 typedef void (*init_t) (int argc, char **argv, char **env);
 
+static HsInt isAlreadyLoaded( pathchar *path );
 static HsInt loadOc( ObjectCode* oc );
 static ObjectCode* mkOc( pathchar *path, char *image, int imageSize,
                          char *archiveMemberName
@@ -1162,8 +1164,25 @@ typedef struct _RtsSymbolVal {
       SymI_HasProto(stg_myThreadIdzh)                                   \
       SymI_HasProto(stg_labelThreadzh)                                  \
       SymI_HasProto(stg_newArrayzh)                                     \
+      SymI_HasProto(stg_copyArrayzh)                                    \
+      SymI_HasProto(stg_copyMutableArrayzh)                             \
+      SymI_HasProto(stg_copyArrayArrayzh)                               \
+      SymI_HasProto(stg_copyMutableArrayArrayzh)                        \
+      SymI_HasProto(stg_cloneArrayzh)                                   \
+      SymI_HasProto(stg_cloneMutableArrayzh)                            \
+      SymI_HasProto(stg_freezzeArrayzh)                                 \
+      SymI_HasProto(stg_thawArrayzh)                                    \
       SymI_HasProto(stg_newArrayArrayzh)                                \
       SymI_HasProto(stg_casArrayzh)                                     \
+      SymI_HasProto(stg_newSmallArrayzh)                                \
+      SymI_HasProto(stg_unsafeThawSmallArrayzh)                         \
+      SymI_HasProto(stg_cloneSmallArrayzh)                              \
+      SymI_HasProto(stg_cloneSmallMutableArrayzh)                       \
+      SymI_HasProto(stg_freezzeSmallArrayzh)                            \
+      SymI_HasProto(stg_thawSmallArrayzh)                               \
+      SymI_HasProto(stg_copySmallArrayzh)                               \
+      SymI_HasProto(stg_copySmallMutableArrayzh)                        \
+      SymI_HasProto(stg_casSmallArrayzh)                                \
       SymI_HasProto(stg_newBCOzh)                                       \
       SymI_HasProto(stg_newByteArrayzh)                                 \
       SymI_HasProto(stg_casIntArrayzh)                                  \
@@ -1262,6 +1281,9 @@ typedef struct _RtsSymbolVal {
       SymI_HasProto(stg_MUT_ARR_PTRS_DIRTY_info)                        \
       SymI_HasProto(stg_MUT_ARR_PTRS_FROZEN_info)                       \
       SymI_HasProto(stg_MUT_ARR_PTRS_FROZEN0_info)                      \
+      SymI_HasProto(stg_SMALL_MUT_ARR_PTRS_DIRTY_info)                  \
+      SymI_HasProto(stg_SMALL_MUT_ARR_PTRS_FROZEN_info)                 \
+      SymI_HasProto(stg_SMALL_MUT_ARR_PTRS_FROZEN0_info)                \
       SymI_HasProto(stg_MUT_VAR_CLEAN_info)                             \
       SymI_HasProto(stg_MUT_VAR_DIRTY_info)                             \
       SymI_HasProto(stg_WEAK_info)                                      \
@@ -1718,6 +1740,18 @@ typedef
 
 /* A list thereof. */
 static OpenedDLL* opened_dlls = NULL;
+
+/* A record for storing indirectly linked functions from DLLs. */
+typedef
+   struct _IndirectAddr {
+      void*                 addr;
+      struct _IndirectAddr* next;
+   }
+   IndirectAddr;
+
+/* A list thereof. */
+static IndirectAddr* indirects = NULL;
+
 #endif
 
 #  if defined(OBJFORMAT_ELF) || defined(OBJFORMAT_MACHO)
@@ -2189,6 +2223,15 @@ void freeObjectCode (ObjectCode *oc)
     stgFree(oc->image);
 #else
     VirtualFree(oc->image - PEi386_IMAGE_OFFSET, 0, MEM_RELEASE);
+
+    IndirectAddr *ia, *ia_next;
+    ia = indirects;
+    while (ia != NULL) {
+      ia_next = ia->next;
+      stgFree(ia);
+      ia = ia_next;
+    }
+
 #endif
 
 #if defined(powerpc_HOST_ARCH) || defined(x86_64_HOST_ARCH) || defined(arm_HOST_ARCH)
@@ -2261,6 +2304,23 @@ mkOc( pathchar *path, char *image, int imageSize,
    return oc;
 }
 
+/* -----------------------------------------------------------------------------
+ * Check if an object or archive is already loaded.
+ *
+ * Returns: 1 if the path is already loaded, 0 otherwise.
+ */
+static HsInt
+isAlreadyLoaded( pathchar *path )
+{
+    ObjectCode *o;
+    for (o = objects; o; o = o->next) {
+       if (0 == pathcmp(o->fileName, path)) {
+           return 1; /* already loaded */
+       }
+    }
+    return 0; /* not loaded yet */
+}
+
 HsInt
 loadArchive( pathchar *path )
 {
@@ -2272,7 +2332,7 @@ loadArchive( pathchar *path )
     size_t thisFileNameSize;
     char *fileName;
     size_t fileNameSize;
-    int isObject, isGnuIndex;
+    int isObject, isGnuIndex, isThin;
     char tmp[20];
     char *gnuFileIndex;
     int gnuFileIndexSize;
@@ -2299,14 +2359,26 @@ loadArchive( pathchar *path )
 #endif
 #endif
 
+    initLinker();
+
     IF_DEBUG(linker, debugBelch("loadArchive: start\n"));
     IF_DEBUG(linker, debugBelch("loadArchive: Loading archive `%" PATH_FMT" '\n", path));
+
+    /* Check that we haven't already loaded this archive.
+       Ignore requests to load multiple times */
+    if (isAlreadyLoaded(path)) {
+        IF_DEBUG(linker,
+                 debugBelch("ignoring repeated load of %" PATH_FMT "\n", path));
+        return 1; /* success */
+    }
 
     gnuFileIndex = NULL;
     gnuFileIndexSize = 0;
 
     fileNameSize = 32;
     fileName = stgMallocBytes(fileNameSize, "loadArchive(fileName)");
+
+    isThin = 0;
 
     f = pathopen(path, WSTR("rb"));
     if (!f)
@@ -2334,53 +2406,58 @@ loadArchive( pathchar *path )
     n = fread ( tmp, 1, 8, f );
     if (n != 8)
         barf("loadArchive: Failed reading header from `%s'", path);
-    if (strncmp(tmp, "!<arch>\n", 8) != 0) {
-
+    if (strncmp(tmp, "!<arch>\n", 8) == 0) {}
+#if !defined(mingw32_HOST_OS)
+    /* See Note [thin archives on Windows] */
+    else if (strncmp(tmp, "!<thin>\n", 8) == 0) {
+        isThin = 1;
+    }
+#endif
 #if defined(darwin_HOST_OS)
-        /* Not a standard archive, look for a fat archive magic number: */
-        if (ntohl(*(uint32_t *)tmp) == FAT_MAGIC) {
-            nfat_arch = ntohl(*(uint32_t *)(tmp + 4));
-            IF_DEBUG(linker, debugBelch("loadArchive: found a fat archive containing %d architectures\n", nfat_arch));
-            nfat_offset = 0;
+    /* Not a standard archive, look for a fat archive magic number: */
+    else if (ntohl(*(uint32_t *)tmp) == FAT_MAGIC) {
+        nfat_arch = ntohl(*(uint32_t *)(tmp + 4));
+        IF_DEBUG(linker, debugBelch("loadArchive: found a fat archive containing %d architectures\n", nfat_arch));
+        nfat_offset = 0;
 
-            for (i = 0; i < (int)nfat_arch; i++) {
-                /* search for the right arch */
-                n = fread( tmp, 1, 20, f );
-                if (n != 8)
-                    barf("loadArchive: Failed reading arch from `%s'", path);
-                cputype = ntohl(*(uint32_t *)tmp);
-                cpusubtype = ntohl(*(uint32_t *)(tmp + 4));
+        for (i = 0; i < (int)nfat_arch; i++) {
+            /* search for the right arch */
+            n = fread( tmp, 1, 20, f );
+            if (n != 8)
+                barf("loadArchive: Failed reading arch from `%s'", path);
+            cputype = ntohl(*(uint32_t *)tmp);
+            cpusubtype = ntohl(*(uint32_t *)(tmp + 4));
 
-                if (cputype == mycputype && cpusubtype == mycpusubtype) {
-                    IF_DEBUG(linker, debugBelch("loadArchive: found my archive in a fat archive\n"));
-                    nfat_offset = ntohl(*(uint32_t *)(tmp + 8));
-                    break;
-                }
+            if (cputype == mycputype && cpusubtype == mycpusubtype) {
+                IF_DEBUG(linker, debugBelch("loadArchive: found my archive in a fat archive\n"));
+                nfat_offset = ntohl(*(uint32_t *)(tmp + 8));
+                break;
             }
+        }
 
-            if (nfat_offset == 0) {
-               barf ("loadArchive: searched %d architectures, but no host arch found", (int)nfat_arch);
-            }
-            else {
-                n = fseek( f, nfat_offset, SEEK_SET );
-                if (n != 0)
-                    barf("loadArchive: Failed to seek to arch in `%s'", path);
-                n = fread ( tmp, 1, 8, f );
-                if (n != 8)
-                    barf("loadArchive: Failed reading header from `%s'", path);
-                if (strncmp(tmp, "!<arch>\n", 8) != 0) {
-                    barf("loadArchive: couldn't find archive in `%s' at offset %d", path, nfat_offset);
-                }
-            }
+        if (nfat_offset == 0) {
+           barf ("loadArchive: searched %d architectures, but no host arch found", (int)nfat_arch);
         }
         else {
-            barf("loadArchive: Neither an archive, nor a fat archive: `%s'", path);
+            n = fseek( f, nfat_offset, SEEK_SET );
+            if (n != 0)
+                barf("loadArchive: Failed to seek to arch in `%s'", path);
+            n = fread ( tmp, 1, 8, f );
+            if (n != 8)
+                barf("loadArchive: Failed reading header from `%s'", path);
+            if (strncmp(tmp, "!<arch>\n", 8) != 0) {
+                barf("loadArchive: couldn't find archive in `%s' at offset %d", path, nfat_offset);
+            }
         }
-
-#else
-        barf("loadArchive: Not an archive: `%s'", path);
-#endif
     }
+    else {
+        barf("loadArchive: Neither an archive, nor a fat archive: `%s'", path);
+    }
+#else
+    else {
+        barf("loadArchive: Not an archive: `%s'", path);
+    }
+#endif
 
     IF_DEBUG(linker, debugBelch("loadArchive: loading archive contents\n"));
 
@@ -2486,8 +2563,8 @@ loadArchive( pathchar *path )
                 if (n != 0 && gnuFileIndex[n - 1] != '\n') {
                     barf("loadArchive: GNU-variant filename offset %d invalid (range [0..%d]) while reading filename from `%s'", n, gnuFileIndexSize, path);
                 }
-                for (i = n; gnuFileIndex[i] != '/'; i++);
-                thisFileNameSize = i - n;
+                for (i = n; gnuFileIndex[i] != '\n'; i++);
+                thisFileNameSize = i - n - 1;
                 if (thisFileNameSize >= fileNameSize) {
                     /* Double it to avoid potentially continually
                        increasing it by 1 */
@@ -2575,9 +2652,53 @@ loadArchive( pathchar *path )
 #else
             image = stgMallocBytes(memberSize, "loadArchive(image)");
 #endif
-            n = fread ( image, 1, memberSize, f );
-            if (n != memberSize) {
-                barf("loadArchive: error whilst reading `%s'", path);
+
+#if !defined(mingw32_HOST_OS)
+            /*
+             * Note [thin archives on Windows]
+             * This doesn't compile on Windows because it assumes
+             * char* pathnames, and we use wchar_t* on Windows.  It's
+             * not trivial to fix, so I'm leaving it disabled on
+             * Windows for now --SDM
+             */
+            if (isThin) {
+                FILE *member;
+                char *pathCopy, *dirName, *memberPath;
+
+                /* Allocate and setup the dirname of the archive.  We'll need
+                   this to locate the thin member */
+                pathCopy = stgMallocBytes(strlen(path) + 1, "loadArchive(file)");
+                strcpy(pathCopy, path);
+                dirName = dirname(pathCopy);
+
+                /* Append the relative member name to the dirname.  This should be
+                   be the full path to the actual thin member. */
+                memberPath = stgMallocBytes(
+                    strlen(path) + 1 + strlen(fileName) + 1, "loadArchive(file)");
+                strcpy(memberPath, dirName);
+                memberPath[strlen(dirName)] = '/';
+                strcpy(memberPath + strlen(dirName) + 1, fileName);
+
+                member = pathopen(memberPath, WSTR("rb"));
+                if (!member)
+                    barf("loadObj: can't read `%s'", path);
+
+                n = fread ( image, 1, memberSize, member );
+                if (n != memberSize) {
+                    barf("loadArchive: error whilst reading `%s'", fileName);
+                }
+
+                fclose(member);
+                stgFree(memberPath);
+                stgFree(pathCopy);
+            }
+            else
+#endif
+            {
+                n = fread ( image, 1, memberSize, f );
+                if (n != memberSize) {
+                    barf("loadArchive: error whilst reading `%s'", path);
+                }
             }
 
             archiveMemberName = stgMallocBytes(pathlen(path) + thisFileNameSize + 3,
@@ -2619,14 +2740,16 @@ loadArchive( pathchar *path )
         }
         else {
             IF_DEBUG(linker, debugBelch("loadArchive: '%s' does not appear to be an object file\n", fileName));
-            n = fseek(f, memberSize, SEEK_CUR);
-            if (n != 0)
-                barf("loadArchive: error whilst seeking by %d in `%s'",
-                     memberSize, path);
+            if (!isThin || thisFileNameSize == 0) {
+                n = fseek(f, memberSize, SEEK_CUR);
+                if (n != 0)
+                    barf("loadArchive: error whilst seeking by %d in `%s'",
+                         memberSize, path);
+            }
         }
 
         /* .ar files are 2-byte aligned */
-        if (memberSize % 2) {
+        if (!(isThin && thisFileNameSize > 0) && memberSize % 2) {
             IF_DEBUG(linker, debugBelch("loadArchive: trying to read one pad byte\n"));
             n = fread ( tmp, 1, 1, f );
             if (n != 1) {
@@ -2687,24 +2810,10 @@ loadObj( pathchar *path )
 
    /* Check that we haven't already loaded this object.
       Ignore requests to load multiple times */
-   {
-       ObjectCode *o;
-       int is_dup = 0;
-       for (o = objects; o; o = o->next) {
-          if (0 == pathcmp(o->fileName, path)) {
-             is_dup = 1;
-             break; /* don't need to search further */
-          }
-       }
-       if (is_dup) {
-          IF_DEBUG(linker, debugBelch(
-            "GHCi runtime linker: warning: looks like you're trying to load the\n"
-            "same object file twice:\n"
-            "   %" PATH_FMT "\n"
-            "GHCi will ignore this, but be warned.\n"
-            , path));
-          return 1; /* success */
-       }
+   if (isAlreadyLoaded(path)) {
+       IF_DEBUG(linker,
+                debugBelch("ignoring repeated load of %" PATH_FMT "\n", path));
+       return 1; /* success */
    }
 
    r = pathstat(path, &st);
@@ -3698,15 +3807,20 @@ lookupSymbolInDLLs ( UChar *lbl )
            Long description: http://support.microsoft.com/kb/132044
            tl;dr:
              If C/C++ compiler sees __declspec(dllimport) ... foo ...
-             it generates call __imp_foo, and __imp_foo here has exactly
+             it generates call *__imp_foo, and __imp_foo here has exactly
              the same semantics as in __imp_foo = GetProcAddress(..., "foo")
          */
         if (sym == NULL && strncmp ((const char*)lbl, "__imp_", 6) == 0) {
             sym = GetProcAddress(o_dll->instance, (char*)(lbl+6));
             if (sym != NULL) {
+                IndirectAddr* ret;
+                ret = stgMallocBytes( sizeof(IndirectAddr), "lookupSymbolInDLLs" );
+                ret->addr = sym;
+                ret->next = indirects;
+                indirects = ret;
                 errorBelch("warning: %s from %S is linked instead of %s",
                               (char*)(lbl+6), o_dll->name, (char*)lbl);
-                return sym;
+                return (void*) & ret->addr;
                }
         }
 
