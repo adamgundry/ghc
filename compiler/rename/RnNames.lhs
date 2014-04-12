@@ -45,7 +45,8 @@ import Control.Monad
 import Data.Map         ( Map )
 import qualified Data.Map as Map
 import Data.Monoid      ( mconcat )
-import Data.List        ( partition, (\\), find )
+import Data.Ord         ( comparing )
+import Data.List        ( partition, (\\), find, sortBy )
 import qualified Data.Set as Set
 import System.FilePath  ((</>))
 import System.IO
@@ -1528,7 +1529,7 @@ findImportUsage imports rdr_env rdrs sel_names fld_env
     import_usage :: ImportMap
     import_usage = foldr (extendImportMap fld_env rdr_env . Right)
                        (foldr (extendImportMap fld_env rdr_env . Left) Map.empty rdrs)
-                       (nameSetToList sel_names)
+                       (sortBy (comparing nameOccName) $ nameSetToList sel_names)
 
     unused_decl decl@(L loc (ImportDecl { ideclHiding = imps }))
       = (decl, nubAvails used_avails, nameSetToList unused_imps)
