@@ -582,6 +582,7 @@ data ExtensionFlag
    | Opt_LambdaCase
    | Opt_MultiWayIf
    | Opt_NegativeLiterals
+   | Opt_OverloadedRecordFields
    | Opt_EmptyCase
    | Opt_PatternSynonyms
    deriving (Eq, Enum, Show)
@@ -2886,6 +2887,7 @@ xFlags = [
   ( "IncoherentInstances",              Opt_IncoherentInstances, nop ),
   ( "PackageImports",                   Opt_PackageImports, nop ),
   ( "NegativeLiterals",                 Opt_NegativeLiterals, nop ),
+  ( "OverloadedRecordFields",           Opt_OverloadedRecordFields, nop ),
   ( "EmptyCase",                        Opt_EmptyCase, nop ),
   ( "PatternSynonyms",                  Opt_PatternSynonyms, nop )
   ]
@@ -2969,6 +2971,13 @@ impliedFlags
     , (Opt_ImplicitParams, turnOn, Opt_FlexibleInstances)
 
     , (Opt_JavaScriptFFI, turnOn, Opt_InterruptibleFFI)
+
+    -- Overloaded record fields require field disambiguation (well
+    -- duh), and flexible contexts and constraint kinds (for the Has
+    -- class encoding and desugaring of r { f :: t } syntax).
+    , (Opt_OverloadedRecordFields, turnOn, Opt_DisambiguateRecordFields)
+    , (Opt_OverloadedRecordFields, turnOn, Opt_FlexibleContexts)
+    , (Opt_OverloadedRecordFields, turnOn, Opt_ConstraintKinds)
   ]
 
 optLevelFlags :: [([Int], GeneralFlag)]
