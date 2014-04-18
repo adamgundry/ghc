@@ -1529,7 +1529,7 @@ findImportUsage imports rdr_env rdrs sel_names fld_env
     import_usage :: ImportMap
     import_usage = foldr (extendImportMap fld_env rdr_env . Right)
                        (foldr (extendImportMap fld_env rdr_env . Left) Map.empty rdrs)
-                       (sortBy (comparing nameOccName) $ nameSetToList sel_names)
+                       (nameSetToList sel_names)
 
     unused_decl decl@(L loc (ImportDecl { ideclHiding = imps }))
       = (decl, nubAvails used_avails, nameSetToList unused_imps)
@@ -1626,7 +1626,7 @@ warnUnusedImport fld_env (L loc decl, used, unused)
                                    <+> quotes pp_mod),
                  ptext (sLit "To import instances alone, use:")
                                    <+> ptext (sLit "import") <+> pp_mod <> parens empty ]
-    msg2 = sep [pp_herald <+> quotes (pprWithCommas ppr_possible_field unused),
+    msg2 = sep [pp_herald <+> quotes (pprWithCommas ppr_possible_field sort_unused),
                     text "from module" <+> quotes pp_mod <+> pp_not_used]
     pp_herald  = text "The" <+> pp_qual <+> text "import of"
     pp_qual
@@ -1638,6 +1638,9 @@ warnUnusedImport fld_env (L loc decl, used, unused)
     ppr_possible_field n = case lookupNameEnv fld_env n of
                                Just (fld, p) -> ppr p <> parens (ppr fld)
                                Nothing  -> ppr n
+
+    -- Print unused names in a deterministic (lexicographic) order
+    sort_unused = sortBy (comparing nameOccName) unused
 \end{code}
 
 To print the minimal imports we walk over the user-supplied import
