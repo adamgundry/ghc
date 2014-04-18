@@ -20,7 +20,6 @@ import SrcLoc
 
 import Distribution.Simple.GHC ( componentGhcOptions )
 import Distribution.Simple.Configure ( getPersistBuildConfig )
-import Distribution.Simple.Compiler ( compilerVersion )
 import Distribution.Simple.Program.GHC ( renderGhcOptions )
 import Distribution.PackageDescription ( library, libBuildInfo )
 import Distribution.Simple.LocalBuildInfo
@@ -191,8 +190,7 @@ flagsFromCabal distPref = do
       let bi = libBuildInfo lib
           odir = buildDir lbi
           opts = componentGhcOptions V.normal lbi bi clbi odir
-          version = compilerVersion (compiler lbi)
-      in return $ renderGhcOptions version opts
+      in return $ renderGhcOptions (compiler lbi) opts
     _ -> error "no library"
 
 ----------------------------------------------------------------
@@ -257,7 +255,7 @@ boundValues mod group =
   let vals = case hs_valds group of
                ValBindsOut nest _sigs ->
                    [ x | (_rec, binds) <- nest
-                       , (_, bind) <- bagToList binds
+                       , bind <- bagToList binds
                        , x <- boundThings mod bind ]
                _other -> error "boundValues"
       tys = [ n | ns <- map (fst . hsLTyClDeclBinders) (tyClGroupConcat (hs_tyclds group))
