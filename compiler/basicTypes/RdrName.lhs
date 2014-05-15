@@ -414,6 +414,7 @@ data GlobalRdrElt
 data Parent = NoParent
             | ParentIs  { par_is :: Name }
             | FldParent { par_is :: Name, par_lbl :: Maybe FieldLabelString }
+              -- ^ See Note [Parents for record fields]
             deriving (Eq)
 
 instance Outputable Parent where
@@ -458,6 +459,34 @@ Note [Parents]
 
   class C          Class operations
                    Associated type constructors
+
+
+Note [Parents for record fields]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For record fields, in addition to the Name of the type constructor
+(stored in par_is), we use FldParent to store the field label.  This
+extra information is used for identifying overloaded record fields
+during renaming.
+
+In a definition arising from a normal module (without
+-XOverloadedRecordFields), par_lbl will be Nothing, meaning that the
+field's label is the same as the OccName of the selector's Name.  The
+GlobalRdrEnv will contain an entry like this:
+
+    "x" |->  GRE x (FldParent T Nothing) LocalDef
+
+When -XOverloadedRecordFields is enabled for the module that contains
+T, the selector's Name will be mangled (see comments in FieldLabel).
+Thus we store the actual field label in par_lbl, and the GlobalRdrEnv
+entry looks like this:
+
+    "x" |->  GRE $sel:x:T (FldParent T (Just "x")) LocalDef
+
+Note that the OccName used when adding a GRE to the environment
+(greOccName) now depends on the parent field: for FldParent it is the
+field label, if present, rather than the selector name.
+
 
 Note [Combining parents]
 ~~~~~~~~~~~~~~~~~~~~~~~~

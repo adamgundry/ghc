@@ -63,7 +63,8 @@ in scope in that module. To achieve this, instances are not exported
 using the normal mechanism (extending tcg_insts and
 tcg_fam_insts). Instead, only the dfun ids and axioms are exported
 (via tcg_binds for dfuns, and tcg_axioms for axioms). Special code in
-the constraint solver looks up the relevant instances.
+the constraint solver looks up the relevant instances (see "Looking up
+record field instances" in RnEnv).
 
 The difference between tcg_fam_insts and tcg_axioms is that the former
 will export the family instance as well as the underlying axiom,
@@ -424,7 +425,9 @@ looking up the instances: the bogus Ids are just vanilla bindings of
 \begin{code}
 -- | Typecheck the generated Has, Upd, FldTy and UpdTy instances.
 -- This adds the dfuns and axioms to the global environment, but does
--- not add user-visible instances.
+-- not add user-visible instances.  It is used exclusively for local
+-- data types (those defined in the current module); imported ones are
+-- handled by tcIfaceDataCons in TcIface.
 tcFldInsts :: [(Name, FldInstDetails)] -> TcM TcGblEnv
 tcFldInsts fld_insts
     = updGblEnv (\env -> env { tcg_axioms = axioms ++ tcg_axioms env }) $

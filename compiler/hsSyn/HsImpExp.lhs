@@ -108,13 +108,30 @@ data IE name
   = IEVar               name
   | IEThingAbs          name             -- ^ Class/Type (can't tell)
   | IEThingAll          name             -- ^ Class/Type plus all methods/constructors
-  | IEThingWith         name [name] (AvailFlds name)  -- ^ Class/Type plus some methods/constructors and record fields
+  | IEThingWith         name [name] (AvailFlds name)  -- ^ Class/Type plus some methods/constructors
+                                                      -- and record fields; see Note [IEThingWith]
   | IEModuleContents    ModuleName       -- ^ (Export Only)
   | IEGroup             Int HsDocString  -- ^ Doc section heading
   | IEDoc               HsDocString      -- ^ Some documentation
   | IEDocNamed          String           -- ^ Reference to named doc
   deriving (Eq, Data, Typeable)
 \end{code}
+
+Note [IEThingWith]
+~~~~~~~~~~~~~~~~~~
+
+A definition like
+
+    module M ( T(MkT, x) ) where
+      data T = MkT { x :: Int }
+
+gives rise to
+
+    IEThingWith T [MkT] [("x", Nothing)]         (without OverloadedRecordFields)
+    IEThingWith T [MkT] [("x", Just $sel:x:T)]   (with    OverloadedRecordFields)
+
+See Note [Representing fields in AvailInfo] in Avail for more details.
+
 
 \begin{code}
 ieName :: IE name -> name

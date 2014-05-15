@@ -205,7 +205,7 @@ data HsRecFields id arg         -- A bunch of record fields
 
 data HsRecField id arg = HsRecField {
         hsRecFieldLbl :: Located RdrName,
-        hsRecFieldSel :: Either id [(id, id)],
+        hsRecFieldSel :: Either id [(id, id)], -- Note [HsRecField selector]
         hsRecFieldArg :: arg,           -- Filled in by renamer
         hsRecPun      :: Bool           -- Note [Punning]
   } deriving (Data, Typeable)
@@ -221,6 +221,39 @@ data HsRecField id arg = HsRecField {
 --
 -- If the original field was qualified, we un-qualify it, thus
 --    T { A.x } means T { A.x = x }
+
+
+-- Note [HsRecField selector]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+-- A HsRecField always contains a label (in hsRecFieldLbl), which is
+-- the thing the user wrote, but thanks to OverloadedRecordFields this
+-- may not unambiguously correspond to a Name.  The hsRecFieldSel is
+-- filled in by the renamer (RnPat.rnHsRecFields1) thus:
+--
+--  * If the field is unambiguous, it uses `Left sel_name`
+--
+--  * If the field is ambiguous, there are multiple fields with the
+--    correct label in scope, it uses `Right xs` where `xs` is a list of
+--    (parent name, selector name) pairs.
+--
+-- The typechecker (tcExpr) then disambiguates the record update.
+--
+-- For example, suppose we have:
+--
+--     data S = MkS { x :: Int }
+--     data T = MkT { x :: Int }
+--
+--     f z = (z { x = 3 }) :: S
+--
+-- After the renamer, the HsRecField corresponding to the record
+-- update will have
+--
+--     hsRecFieldLbl = "x"
+--     hsRecFieldSel = Right [(S, $sel:x:S), (T, $sel:x:T)]
+--
+-- and the typechecker will determine that $sel:x:S is meant.
+
 
 hsRecFieldSelMissing :: Either id [(id, id)]
 hsRecFieldSelMissing = error "hsRecFieldSelMissing"

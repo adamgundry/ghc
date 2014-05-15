@@ -372,14 +372,35 @@ data HsExplicitFlag = Explicit | Implicit deriving (Data, Typeable)
 
 data ConDeclField name  -- Record fields have Haddoc docs on them
   = ConDeclField { cd_fld_lbl  :: Located RdrName,
-                   cd_fld_sel  :: name,  -- error thunk until after renaming
+                   cd_fld_sel  :: name,  -- See Note [ConDeclField selector]
                    cd_fld_type :: LBangType name, 
                    cd_fld_doc  :: Maybe LHsDocString }
   deriving (Data, Typeable)
 
 cd_fld_name :: ConDeclField name -> Located name
 cd_fld_name x = L (getLoc (cd_fld_lbl x)) $ cd_fld_sel x
+\end{code}
 
+Note [ConDeclField selector]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A ConDeclField always contains the field label as the user wrote it in
+cd_fld_lbl.  After the renamer, it will additionally contain the Name
+of the selector function in cd_fld_sel.  (Before the renamer,
+cd_fld_sel contains an error thunk.)
+
+Due to OverloadedRecordFields, the OccName of the selector function
+may have been mangled, which is why we keep the original field label
+separately.  For example, when OverloadedRecordFields is enabled
+
+    data T = MkT { x :: Int }
+
+gives
+
+    ConDeclField { cd_fld_lbl = "x", cd_fld_sel = $sel:x:T, ... }.
+
+
+\begin{code}
 -----------------------
 -- Combine adjacent for-alls. 
 -- The following awkward situation can happen otherwise:
